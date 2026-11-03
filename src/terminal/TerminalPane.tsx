@@ -8,6 +8,7 @@ import { acquireTerminal, releaseTerminal, type TerminalRuntime } from './runtim
 import { isCompositionKey, isNativeText, keyboardPayload, keyModifiers, pointerCell } from './keys';
 import { terminalOptions, terminalServerTheme } from './themes';
 import { applicationLinks, linkProtocol } from './links';
+import { TerminalVisuals } from './visuals';
 import '@xterm/xterm/css/xterm.css';
 import './terminal.css';
 
@@ -67,6 +68,7 @@ export function TerminalPane(props: TerminalPaneProps) {
   const { hostId, sessionId, blockId } = terminalRef;
   const container = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<TerminalRuntime | undefined>(undefined);
+  const visualsRef=useRef<TerminalVisuals|undefined>(undefined);
   const callbacks = useRef(props); callbacks.current = props;
   const settingsRef = useRef(settings); settingsRef.current = settings;
   const searchInput = useRef<HTMLInputElement>(null);
@@ -86,11 +88,13 @@ export function TerminalPane(props: TerminalPaneProps) {
   useEffect(() => {
     if (!container.current) return;
     const hostElement = container.current;
+    const isVisible=()=>callbacks.current.visible!==false;
     const runtime = acquireTerminal({ hostId, sessionId, blockId }, settingsRef.current, hostElement);
     const term = runtime.terminal;
     runtime.serverThemeSignature = undefined;
     hostElement.replaceChildren(runtime.element);
     runtimeRef.current = runtime;
+    const visuals=new TerminalVisuals(term,runtime.element,hostElement,settingsRef.current);visualsRef.current=visuals;
     let disposed = false, online = false, commandReady = false, disconnected = false, generation = 0, composing = false, deadKey = false, writing = false, replayingSnapshot = false, sawFrame = false;
     let inputQueue = Promise.resolve();
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -114,7 +118,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       commandWaiters.clear();
     };
     const waitForCommands = (): Promise<number> => {
-      if (disposed || !visible) return Promise.reject(new Error('The terminal pane is no longer visible.'));
+      if (disposed || !isVisible()) return Promise.reject(new Error('The terminal pane is no longer visible.'));
       if (online && commandReady) return Promise.resolve(generation);
       if (disconnected) return Promise.reject(new Error('The terminal is disconnected; wait for it to reconnect.'));
       return new Promise((resolve, reject) => {
@@ -133,7 +137,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     };
     // A failed send invalidates later queued input; none is retried after reconnect.
     const enqueue = (send: () => Promise<unknown>) => {
-      if (!online || !visible || disposed) return false;
+      if (!online || !isVisible() || disposed) return false;
       const inputGeneration = generation;
       inputQueue = inputQueue.then(async () => {
         if (disposed || !online || generation !== inputGeneration) return;
@@ -151,10 +155,11 @@ export function TerminalPane(props: TerminalPaneProps) {
       return true;
     };
     const sendSize = () => {
-      if (disposed || !visible || !document.hasFocus() || !hostElement.isConnected || hostElement.clientWidth === 0 || hostElement.clientHeight === 0) return;
-      runtime.fit.fit(); clearTimeout(resizeTimer);
+      if (disposed || !isVisible() || !document.hasFocus() || !hostElement.isConnected || hostElement.clientWidth === 0 || hostElement.clientHeight === 0) return;
+      if(settingsRef.current.smoothResize)runtime.fit.fit(); clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
-        if (disposed || !visible || !document.hasFocus()) return;
+        if (disposed || !isVisible() || !document.hasFocus()) return;
+        if(!settingsRef.current.smoothResize)runtime.fit.fit();
         const size = `${term.cols}/${term.rows}`;
         if (size === lastSize) return;
         lastSize = size;
@@ -164,7 +169,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       }, 100);
     };
     const startSubscription = () => {
-      if (!disposed && visible) void window.rex.request('subscribe', { ...ref, subscriptionId }).catch(fail);
+      if (!disposed) void window.rex.request('subscribe', { ...ref, subscriptionId }).catch(fail);
     };
     const drawNext = () => {
       if (disposed || writing) return;
@@ -183,7 +188,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       const selection = snapshot ? currentSelection(term) : undefined;
       if (frame.cols && frame.rows && (term.cols !== frame.cols || term.rows !== frame.rows)) term.resize(frame.cols, frame.rows);
       replayingSnapshot = snapshot;
-      if (snapshot) { term.reset(); runtime.boundary.reset(); }
+      if (snapshot) { term.reset(); runtime.boundary.reset();runtime.kitty.reset(); }
       if (frame.data) runtime.boundary.push(frame.data);
       const done = () => {
         writing = false; if (disposed) return;
@@ -199,7 +204,16 @@ export function TerminalPane(props: TerminalPaneProps) {
         drawNext();
       };
       writing = true;
-      if (frame.data) term.write(frame.data, done); else done();
+      if(frame.data){
+        let parts;try{parts=runtime.kitty.framer.push(frame.data);}catch(failure){setError(displayError(failure));done();return;}
+        const writePart=(index:number)=>{
+          if(disposed)return;
+          if(index>=parts.length){done();return;}
+          const part=parts[index];
+          if(part.kind==='text')term.write(part.data,()=>writePart(index+1));
+          else void runtime.kitty.command(part.data).then(move=>{if(move)term.write(move,()=>writePart(index+1));else writePart(index+1);}).catch(failure=>{if(!disposed)setError(`Image: ${displayError(failure)}`);writePart(index+1);});
+        };writePart(0);
+      }else done();
     };
     runtime.requestCursorReset = drawNext;
     const unsubscribe = window.rex.onTerminal((frame) => {
@@ -210,7 +224,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       if (recovered) { generation++; disconnected = false; pressedKeys.clear(); }
       online = true; setConnected(true); setError(undefined);
       if (recovered && callbacks.current.focused) enqueue(() => window.rex.request('focusEvent', { ...ref, focused: true }));
-      if (recovered && visible) {
+      if (recovered && isVisible()) {
         if (sawFrame) runtime.serverThemeSignature = undefined;
         synchronizeTheme(runtime, ref, settingsRef.current, (message) => { if (!disposed) setError(message); });
       }
@@ -226,10 +240,10 @@ export function TerminalPane(props: TerminalPaneProps) {
         return;
       }
       drawNext();
-      if (callbacks.current.focused && visible && document.activeElement === document.body) term.focus();
+      if (callbacks.current.focused && isVisible() && document.activeElement === document.body) term.focus();
     });
     const copy = () => {
-      if (term.hasSelection()) void window.rex.writeClipboard(term.getSelection()).catch((failure: unknown) => setError(displayError(failure)));
+      if (term.hasSelection()) void window.rex.writeClipboard(term.getSelection()).then(()=>visuals.copied()).catch((failure: unknown) => setError(displayError(failure)));
     };
     const paste = async (text?: string, commandGeneration?: number) => {
       const readyGeneration = commandGeneration ?? await waitForCommands();
@@ -290,7 +304,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     };
     commandRef.current = (command) => { void executeCommand(command).catch(reportCommandError); };
     const commandListener = (event: Event) => {
-      if (!visible || !hostElement.isConnected) return;
+      if (!isVisible() || !hostElement.isConnected) return;
       const detail = (event as CustomEvent<string | TerminalCommandRequest>).detail;
       const target = typeof detail === 'string' ? undefined : detail.target;
       const matches = target ? target.hostId === hostId && target.sessionId === sessionId && target.blockId === blockId : callbacks.current.focused;
@@ -313,7 +327,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       if (isNativeText(data) && (composing || performance.now() < nativeTextUntil)) enqueue(() => window.rex.request('input', { ...ref, data }));
     });
     term.attachCustomKeyEventHandler((event) => {
-      if (event.defaultPrevented || !visible || !online) return false;
+      if (event.defaultPrevented || !isVisible() || !online) return false;
       if (isCompositionKey(event) || composing || deadKey) {
         nativeTextUntil = performance.now() + 1500;
         if (event.key === 'Dead') deadKey = true;
@@ -330,7 +344,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       return false;
     });
     const clipboardPaste = (event: ClipboardEvent) => {
-      if (!visible) return;
+      if (!isVisible()) return;
       event.preventDefault(); event.stopImmediatePropagation();
       void paste(event.clipboardData?.types.includes('text/plain') ? event.clipboardData.getData('text/plain') : undefined).catch(reportCommandError);
     };
@@ -355,7 +369,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     };
     const stopMouse = (event: MouseEvent) => { event.preventDefault(); event.stopImmediatePropagation(); };
     const mouseDown = (event: MouseEvent) => {
-      if (!visible) return;
+      if (!isVisible()) return;
       if (event.button === 2 && !(event.shiftKey && tracking() && settingsRef.current.mouseReporting)) { stopMouse(event); return; }
       if (!tracking() || (event.button === 0 && event.shiftKey)) return;
       if (!settingsRef.current.mouseReporting && event.button === 0) {
@@ -367,7 +381,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       term.clearSelection(); sendMouse(event, 'press', pointerButton); stopMouse(event);
     };
     const mouseMove = (event: MouseEvent) => {
-      if (!visible) return;
+      if (!isVisible()) return;
       if (selectionAnchor !== undefined) {
         const at = cellAt(event), end = (term.buffer.active.viewportY + at.y) * term.cols + at.x, start = Math.min(selectionAnchor, end);
         term.select(start % term.cols, Math.floor(start / term.cols), Math.abs(selectionAnchor - end) + 1);
@@ -393,7 +407,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       setMenu({ x: Math.max(8, Math.min(event.clientX, window.innerWidth - 230)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 410)), selection: term.hasSelection() });
     };
     const wheel = (event: WheelEvent) => {
-      if (!visible) return;
+      if (!isVisible()) return;
       if (settingsRef.current.mouseReporting && tracking() && !event.shiftKey && online) {
         event.preventDefault(); event.stopImmediatePropagation();
         const lineHeight = screen.clientHeight / Math.max(1, term.rows);
@@ -418,7 +432,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     const bellListener = term.onBell(() => {
       if (replayingSnapshot) return;
       callbacks.current.onBell?.();
-      if (settingsRef.current.terminalBell && visible) {
+      if (settingsRef.current.terminalBell && isVisible()) {
         try {
           const audio = new AudioContext(), oscillator = audio.createOscillator(), gain = audio.createGain();
           oscillator.frequency.value = 880; gain.gain.value = .05; oscillator.connect(gain); gain.connect(audio.destination); oscillator.start();
@@ -444,9 +458,9 @@ export function TerminalPane(props: TerminalPaneProps) {
     } });
     const resultsListener = runtime.search.onDidChangeResults((results) => { if (!disposed) setSearchResults(results); });
     const observer = new ResizeObserver(sendSize); observer.observe(hostElement);
-    const visibility = () => { if (!document.hidden && visible) { lastSize = ''; sendSize(); } };
+    const visibility = () => { if (!document.hidden && isVisible()) { lastSize = ''; sendSize(); } };
     document.addEventListener('visibilitychange', visibility);
-    const windowFocus = () => { if (visible) { lastSize = ''; sendSize(); } };
+    const windowFocus = () => { if (isVisible()) { lastSize = ''; sendSize(); } };
     window.addEventListener('focus', windowFocus);
     const colorScheme = matchMedia('(prefers-color-scheme: light)');
     const updateColorScheme = () => {
@@ -454,11 +468,16 @@ export function TerminalPane(props: TerminalPaneProps) {
       const options = terminalOptions(settingsRef.current);
       term.options = options;
       hostElement.style.backgroundColor = options.theme?.background || '';
-      if (visible) synchronizeTheme(runtime, ref, settingsRef.current, (message) => { if (!disposed) setError(message); });
+      if (isVisible()) synchronizeTheme(runtime, ref, settingsRef.current, (message) => { if (!disposed) setError(message); });
     };
     colorScheme.addEventListener('change', updateColorScheme);
     const navigatorWithKeyboard = navigator as Navigator & { keyboard?: { getLayoutMap(): Promise<ReadonlyMap<string, string>> } };
     void navigatorWithKeyboard.keyboard?.getLayoutMap().then((value) => { layout = value; }).catch(() => {});
+    const visibilityChanged=(show:boolean)=>{
+      if(!show){generation++;pressedKeys.clear();rejectPendingCommands('The terminal pane was hidden before the command became ready.');clearTimeout(resizeTimer);void window.rex.request('releaseViewport',ref).catch(()=>{});}
+      else{lastSize='';sendSize();}
+    };
+    runtime.visibilityChanged=visibilityChanged;
     sendSize(); startSubscription();
     return () => {
       disposed = true; online = false; generation++;
@@ -481,13 +500,18 @@ export function TerminalPane(props: TerminalPaneProps) {
       term.attachCustomKeyEventHandler(() => false); releaseTerminal(runtime);
       if (runtime.requestCursorReset === drawNext) runtime.requestCursorReset = undefined;
       if (runtimeRef.current === runtime) runtimeRef.current = undefined;
+      if(runtime.visibilityChanged===visibilityChanged)runtime.visibilityChanged=undefined;
+      visuals.dispose();if(visualsRef.current===visuals)visualsRef.current=undefined;
     };
-  }, [hostId, sessionId, blockId, visible]);
+  }, [hostId, sessionId, blockId]);
 
+  useEffect(()=>{runtimeRef.current?.visibilityChanged?.(visible);},[visible]);
   useEffect(() => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
     runtime.terminal.options = terminalOptions(settings);
+    visualsRef.current?.apply(settings);
+    runtime.kitty.setEnabled(settings.graphicsEnabled);runtime.element.dataset.graphicsEnabled=String(settings.graphicsEnabled);
     runtime.element.style.setProperty('--terminal-cursor-period', `${Math.max(100, settings.cursorBlinkInterval || 500) * 2}ms`);
     runtime.element.style.fontStyle = settings.fontStyle || 'normal';
     runtime.element.style.setProperty('-webkit-font-smoothing', settings.fontSmoothing ? 'antialiased' : 'auto');

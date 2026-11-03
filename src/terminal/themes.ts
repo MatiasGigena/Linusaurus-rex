@@ -1,5 +1,6 @@
 import type { ITheme, ITerminalOptions } from '@xterm/xterm';
 import type { Settings } from '../shared/types';
+import { resolvedImportedTheme } from '../core/themeLibrary';
 
 export const TERMINAL_THEMES: Record<'graphite' | 'midnight' | 'light', ITheme> = {
   graphite: {
@@ -39,7 +40,7 @@ export function terminalThemeName(settings: Settings, systemLight = Boolean(glob
 
 export function terminalTheme(settings: Settings): ITheme {
   const name = terminalThemeName(settings);
-  const custom = (terminalAppearance(settings) === 'light' ? settings.customLightTheme : settings.customDarkTheme) ?? settings.customTheme;
+  const custom = resolvedImportedTheme(settings,terminalAppearance(settings));
   const theme: ITheme = {
     ...(TERMINAL_THEMES[name as keyof typeof TERMINAL_THEMES] ?? TERMINAL_THEMES.graphite),
     ...custom,
@@ -65,7 +66,7 @@ export function terminalOptions(settings: Settings): ITerminalOptions {
     fontFamily: settings.fontFamily, fontSize: settings.fontSize, lineHeight: settings.lineHeight ?? 1.2,
     cursorBlink: settings.cursorBlink ?? true, cursorStyle: settings.cursorStyle ?? 'block',
     scrollback: settings.scrollback ?? 10_000, scrollOnUserInput: true, convertEol: false,
-    fontWeight: settings.fontWeight as ITerminalOptions['fontWeight'], fontWeightBold: settings.fontWeightBold as ITerminalOptions['fontWeightBold'],
+    fontWeight: settings.fontWeight as ITerminalOptions['fontWeight'], fontWeightBold: (settings.boldPolicy==='never'?settings.fontWeight:settings.fontWeightBold) as ITerminalOptions['fontWeightBold'],
     letterSpacing: settings.letterSpacing, minimumContrastRatio: settings.minimumContrastRatio,
     smoothScrollDuration: settings.smoothScrollDuration,
     screenReaderMode: true, theme: terminalTheme(settings), allowProposedApi: true,

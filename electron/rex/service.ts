@@ -294,6 +294,15 @@ export class RexService {
     return expandEndpoint(endpoint, aliases);
   }
 
+  /** Stop claiming a hidden pane's grid while retaining its image-bearing live stream. */
+  async releaseViewport(host:RexHost,sessionId:string,blockId:string):Promise<void>{
+    this.dimensions.delete(refKey({host,sessionId,blockId}));
+    const pending=this.controls.get(JSON.stringify([host.id,host.endpoint]));
+    if(!pending||this.disposed)return;
+    const control=await pending;
+    if(control.connected)await control.call('session.disown_block',{session_id:sessionId,block_ids:[blockId]});
+  }
+
   private release(host: RexHost, sessionId: string, blockId: string) {
     const pending = this.controls.get(JSON.stringify([host.id, host.endpoint]));
     if (!pending || this.disposed) return;

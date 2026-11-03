@@ -1,0 +1,419 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { createServer } from "vite";
+import react from "@vitejs/plugin-react";
+import { chromium } from "@playwright/test";
+import { deflateSync } from "node:zlib";
+const source = `import React from 'react';import{createRoot}from'react-dom/client';import{TerminalPane,dispatchTerminalCommandAsync}from'/src/terminal/TerminalPane.tsx';import{getCachedTerminal}from'/src/terminal/runtime.ts';import{DEFAULT_SETTINGS}from'/src/shared/types.ts';
+const ref={hostId:'graphics',sessionId:'test',blockId:'test'};let subscription,update,show;const listeners=new Set(),requests=[];window.rex={request:async(method,args)=>{requests.push({method,args});if(method==='subscribe'){subscription=args.subscriptionId;setTimeout(()=>emit({kind:'snapshot',data:'ready> ',cols:80,rows:24}),20)}},onTerminal:callback=>{listeners.add(callback);return()=>listeners.delete(callback)},writeClipboard:async()=>{},readClipboard:async()=>''};function emit(frame){for(const callback of listeners)callback({subscriptionId:subscription,...frame})}
+function Fixture(){const[settings,setSettings]=React.useState({...DEFAULT_SETTINGS,ligatures:false}),[visible,setVisible]=React.useState(true);show=setVisible;update=patch=>setSettings(previous=>({...previous,...patch}));return React.createElement(TerminalPane,{pane:{id:'test',label:'Graphics',rect:[0,0,1,1]},terminalRef:ref,settings,visible,focused:true,showHeader:true,onFocus(){},onClose(){},onZoom(){}})}createRoot(document.getElementById('root')).render(React.createElement(Fixture));window.fixture={emit,show:value=>show(value),update:patch=>update(patch),runtime:()=>getCachedTerminal(ref),command:dispatchTerminalCommandAsync,requests};`;
+const html =
+  '<!doctype html><style>html,body,#root{height:100%;margin:0}.terminal-pane{height:100%;display:flex;flex-direction:column;position:relative}.terminal-container{flex:1;min-height:0}.terminal-emulator,.xterm{height:100%}.pane-header{height:25px}.terminal-pane[aria-hidden="true"]{display:none}</style><div id="root"></div><script type="module" src="/fixture.js"></script>';
+
+test(
+  "real terminal renders Kitty, Sixel and inline PNG images plus Linux visual settings",
+  { skip: process.env.TERMINAL_UI_TEST !== "1", timeout: 40000 },
+  async () => {
+    const server = await createServer({
+      configFile: false,
+      root: process.cwd(),
+      cacheDir: "node_modules/.vite-graphics-test",
+      plugins: [
+        react(),
+        {
+          name: "fixture",
+          configureServer(server) {
+            server.middlewares.use("/graphics", (_req, res) => {
+              res.setHeader("Content-Type", "text/html");
+              res.end(html);
+            });
+          },
+          resolveId(id) {
+            return id === "/fixture.js" ? "\0graphics-fixture" : undefined;
+          },
+          load(id) {
+            return id === "\0graphics-fixture" ? source : undefined;
+          },
+        },
+      ],
+      server: {
+        host: "127.0.0.1",
+        port: 0,
+        hmr: false,
+        watch: {
+          ignored: [
+            "**/dist/**",
+            "**/dist-electron/**",
+            "**/release/**",
+            "**/test-results*/**",
+          ],
+        },
+      },
+    });
+    await server.listen();
+    const address = server.httpServer!.address() as { port: number };
+    const browser = await chromium.launch({
+      executablePath: process.env.CHROMIUM_PATH || "/usr/bin/chromium",
+      headless: true,
+    });
+    try {
+      const page = await browser.newPage({
+          viewport: { width: 900, height: 600 },
+        }),
+        errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      page.on("console", (message) => {
+        if (["error", "warn"].includes(message.type()))
+          console.log("graphics browser", message.text());
+      });
+      await page.goto(`http://127.0.0.1:${address.port}/graphics`);
+      await page
+        .waitForFunction(
+          () =>
+            (window as any).fixture
+              ?.runtime()
+              ?.terminal.buffer.active.getLine(0)
+              ?.translateToString(true)
+              .includes("ready>"),
+          undefined,
+          { timeout: 7000 },
+        )
+        .catch(async (failure) => {
+          console.log(
+            "Graphics initialization",
+            errors,
+            await page.evaluate(() => {
+              const t = (window as any).fixture?.runtime()?.terminal;
+              return (
+                t &&
+                Array.from(
+                  { length: Math.min(t.buffer.active.length, 40) },
+                  (_, i) => t.buffer.active.getLine(i)?.translateToString(true),
+                )
+              );
+            }),
+          );
+          throw failure;
+        });
+      const emit = async (data: string) => {
+        await page.evaluate(
+          (data) => (window as any).fixture.emit({ kind: "output", data }),
+          data,
+        );
+      };
+      // Raw RGB, with APC boundaries split across frames, and no cursor movement.
+      const initialCursor = await page.evaluate(() => {
+        const b = (window as any).fixture.runtime().terminal.buffer.active;
+        return [b.cursorX, b.cursorY];
+      });
+      const kitty =
+        "\x1b_Ga=T,f=24,s=2,v=1,i=7,c=4,r=2,C=1;" +
+        Buffer.from([255, 0, 0, 0, 255, 0]).toString("base64") +
+        "\x1b\\";
+      for (const part of [
+        kitty.slice(0, 1),
+        kitty.slice(1, 5),
+        kitty.slice(5, -1),
+        kitty.slice(-1),
+      ])
+        await emit(part);
+      await page.locator('canvas[data-kitty-image="7"]').waitFor();
+      assert.deepEqual(
+        await page
+          .locator('canvas[data-kitty-image="7"]')
+          .evaluate((canvas) =>
+            Array.from(
+              (canvas as HTMLCanvasElement)
+                .getContext("2d")!
+                .getImageData(0, 0, 2, 1).data,
+            ),
+          ),
+        [255, 0, 0, 255, 0, 255, 0, 255],
+      );
+      assert.deepEqual(
+        await page.evaluate(() => {
+          const b = (window as any).fixture.runtime().terminal.buffer.active;
+          return [b.cursorX, b.cursorY];
+        }),
+        initialCursor,
+      );
+      // Multipart transfer and zlib decompression are real decoded pixels.
+      const encoded = deflateSync(Buffer.from([0, 0, 255, 255])).toString(
+        "base64",
+      );
+      const split = Math.floor(encoded.length / 8) * 4;
+      await emit(
+        "\x1b_Ga=t,f=32,s=1,v=1,i=8,o=z,m=1;" +
+          encoded.slice(0, split) +
+          "\x1b\\",
+      );
+      await emit("\x1b_Gm=0;" + encoded.slice(split) + "\x1b\\");
+      await emit("\x1b_Ga=p,i=8,p=2,c=2,r=2,C=1;\x1b\\");
+      await page.locator('canvas[data-kitty-image="8"]').waitFor();
+      assert.deepEqual(
+        await page
+          .locator('canvas[data-kitty-image="8"]')
+          .evaluate((canvas) =>
+            Array.from(
+              (canvas as HTMLCanvasElement)
+                .getContext("2d")!
+                .getImageData(0, 0, 1, 1).data,
+            ),
+          ),
+        [0, 0, 255, 255],
+      );
+      await page.evaluate(() => (window as any).fixture.show(false));
+      await page.waitForFunction(() =>
+        (window as any).fixture.requests.some(
+          (request: any) => request.method === "releaseViewport",
+        ),
+      );
+      const hiddenResizes = await page.evaluate(
+        () =>
+          (window as any).fixture.requests.filter(
+            (request: any) => request.method === "resize",
+          ).length,
+      );
+      await emit(
+        "\x1b_Ga=T,f=24,s=1,v=1,i=9,c=1,r=1,C=1;" +
+          Buffer.from([255, 255, 0]).toString("base64") +
+          "\x1b\\",
+      );
+      await page
+        .locator('canvas[data-kitty-image="9"]')
+        .waitFor({ state: "attached" });
+      await page.waitForTimeout(120);
+      assert.equal(
+        await page.evaluate(
+          () =>
+            (window as any).fixture.requests.filter(
+              (request: any) => request.method === "resize",
+            ).length,
+        ),
+        hiddenResizes,
+        "Hidden streams must not claim a viewport",
+      );
+      await page.evaluate(() => (window as any).fixture.show(true));
+      await page.locator('canvas[data-kitty-image="8"]').waitFor();
+      await page.locator('canvas[data-kitty-image="9"]').waitFor();
+      assert.equal(
+        await page.evaluate(
+          () =>
+            (window as any).fixture.requests.filter(
+              (request: any) => request.method === "subscribe",
+            ).length,
+        ),
+        1,
+        "Tab switches must preserve the graphics-bearing data channel",
+      );
+      await emit("\x1b_Ga=d,d=I,i=7;\x1b\\");
+      await page
+        .locator('canvas[data-kitty-image="7"]')
+        .waitFor({ state: "detached" });
+      // The released official addon handles Sixel and IIP; it does not generate duplicate program replies.
+      await page.waitForTimeout(200);
+      await emit('\x1b[1;1H\x1bPq"1;1;8;6#0;2;100;0;0#0!8~\x1b\\');
+      await page.waitForFunction(
+        () => (window as any).fixture.runtime().images.storageUsage > 0,
+      );
+      const png = await page.evaluate(() => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 2;
+        canvas.height = 2;
+        const c = canvas.getContext("2d")!;
+        c.fillStyle = "#0000ff";
+        c.fillRect(0, 0, 2, 2);
+        return canvas.toDataURL().split(",")[1];
+      });
+      const usage = await page.evaluate(
+        () => (window as any).fixture.runtime().images.storageUsage,
+      );
+      await emit(
+        "\x1b[3;1H\x1b]1337;File=size=" +
+          Buffer.from(png, "base64").length +
+          ";inline=1;width=3;height=2;preserveAspectRatio=0:" +
+          png +
+          "\x07",
+      );
+      await page.waitForFunction(
+        (usage) =>
+          (window as any).fixture.runtime().images.storageUsage > usage,
+        usage,
+      );
+      await emit("\x1b_Ga=T,f=100,i=10,c=2,r=2,C=1;" + png + "\x1b\\");
+      await page.locator('canvas[data-kitty-image="10"]').waitFor();
+      assert.deepEqual(
+        await page
+          .locator('canvas[data-kitty-image="10"]')
+          .evaluate((canvas) =>
+            Array.from(
+              (canvas as HTMLCanvasElement)
+                .getContext("2d")!
+                .getImageData(0, 0, 1, 1).data,
+            ),
+          ),
+        [0, 0, 255, 255],
+      );
+      assert.equal(
+        await page.evaluate(
+          () =>
+            (window as any).fixture.requests.filter(
+              (request: any) => request.method === "input",
+            ).length,
+        ),
+        0,
+      );
+      // Color mapping affects existing cells and restores the raw RGB attributes when disabled.
+      await emit("\x1b[6;1H\x1b[38;2;254;1;2mRGB_COLOR\x1b[0m");
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll(".xterm-rows span")].some(
+          (span) => span.textContent === "RGB_COLOR",
+        ),
+      );
+      const rgb = page
+        .locator(".xterm-rows span")
+        .filter({ hasText: "RGB_COLOR" })
+        .first();
+      const original = await rgb.evaluate(
+        (span) => getComputedStyle(span).color,
+      );
+      await page.evaluate(() =>
+        (window as any).fixture.update({ forceThemePalette: true }),
+      );
+      await page.waitForFunction(() => {
+        const span = [...document.querySelectorAll(".xterm-rows span")].find(
+          (span) => span.textContent === "RGB_COLOR",
+        );
+        return span && getComputedStyle(span).color !== "rgb(254, 1, 2)";
+      });
+      await page.evaluate(() =>
+        (window as any).fixture.update({ forceThemePalette: false }),
+      );
+      await page.waitForFunction(() => {
+        const span = [...document.querySelectorAll(".xterm-rows span")].find(
+          (span) => span.textContent === "RGB_COLOR",
+        );
+        return span && getComputedStyle(span).color === "rgb(254, 1, 2)";
+      });
+      assert.equal(
+        await rgb.evaluate((span) => getComputedStyle(span).color),
+        original,
+      );
+      await page.evaluate(() => {
+        const media = window.matchMedia.bind(window);
+        window.matchMedia = (query: string) =>
+          query === "(color-gamut: p3)"
+            ? ({ ...media(query), matches: true } as MediaQueryList)
+            : media(query);
+        (window as any).fixture.update({ displayP3: true });
+      });
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector(".terminal-emulator")
+            ?.getAttribute("data-color-space") === "display-p3",
+      );
+      assert.match(
+        await rgb.evaluate((span) => (span as HTMLElement).style.color),
+        /^color\(display-p3/,
+      );
+      await page.evaluate(() =>
+        (window as any).fixture.update({
+          displayP3: false,
+          boldPolicy: "never",
+          italicPolicy: "never",
+          matchProgramBackground: true,
+          paddingColor: "extend",
+          selectionRounded: true,
+        }),
+      );
+      await emit("\x1b[44m\x1b[2J\x1b[H\x1b[1;3mBOLD_ITALIC\x1b[0m");
+      await page.waitForFunction(() =>
+        document
+          .querySelector(".terminal-pane")
+          ?.hasAttribute("data-program-background"),
+      );
+      assert.match(
+        await page
+          .locator(".terminal-container")
+          .evaluate(
+            (element) => (element as HTMLElement).style.backgroundImage,
+          ),
+        /linear-gradient/,
+      );
+      assert.equal(
+        await page
+          .locator(".terminal-emulator")
+          .getAttribute("data-bold-policy"),
+        "never",
+      );
+      assert.equal(
+        await page
+          .locator(".terminal-emulator")
+          .getAttribute("data-italic-policy"),
+        "never",
+      );
+      const emphasis = page
+        .locator(".xterm-rows span")
+        .filter({ hasText: "BOLD_ITALIC" })
+        .first();
+      assert.equal(
+        await emphasis.evaluate(
+          (element) => getComputedStyle(element).fontStyle,
+        ),
+        "normal",
+      );
+      await page.evaluate(() =>
+        (window as any).fixture.update({ italicPolicy: "always" }),
+      );
+      await page.waitForFunction(() => {
+        const span = [...document.querySelectorAll(".xterm-rows span")].find(
+          (span) => span.textContent === "BOLD_ITALIC",
+        );
+        return span && getComputedStyle(span).fontStyle === "italic";
+      });
+      await page.evaluate(() => {
+        const f = (window as any).fixture;
+        f.runtime().terminal.select(0, 0, 4);
+      });
+      await page.evaluate(() => (window as any).fixture.command("copy"));
+      await page.locator(".terminal-copy-shine").waitFor();
+      assert.equal(
+        await page
+          .locator(".xterm-selection div")
+          .first()
+          .evaluate((element) => getComputedStyle(element).borderRadius),
+        "4px",
+      );
+      assert.equal(
+        await page
+          .locator(".xterm-selection div")
+          .first()
+          .evaluate(
+            (element) => getComputedStyle(element, "::after").animationName,
+          ),
+        "terminal-copy-shine",
+      );
+      await page.evaluate(() =>
+        (window as any).fixture.update({ cursorEffect: "comet" }),
+      );
+      await emit("\x1b[3;12H");
+      await page.waitForFunction(() => {
+        const canvas = document.querySelector<HTMLCanvasElement>(
+          ".terminal-cursor-effect",
+        );
+        return (
+          canvas &&
+          canvas
+            .getContext("2d")!
+            .getImageData(0, 0, canvas.width, canvas.height)
+            .data.some((value, index) => index % 4 === 3 && value > 0)
+        );
+      });
+      assert.deepEqual(errors, []);
+    } finally {
+      await browser.close();
+      await server.close();
+    }
+  },
+);
