@@ -49,3 +49,17 @@
 .kitty-image-layer canvas { position:absolute; image-rendering:auto; }
 .terminal-emulator[data-graphics-enabled='false'] .xterm-image-layer { display:none !important; }
 @media (prefers-reduced-motion:reduce) { .terminal-copy-shine .xterm-selection div::after {animation:none;} .terminal-cursor-effect {display:none;} }
+/* Keep source canvases for bounded image storage and inspection; paint visible
+   images in the three semantic Kitty layers around native DOM text. */
+.kitty-image-layer { opacity:0; }
+.xterm-screen[data-kitty-composition='true'] { isolation:isolate; }
+.xterm-screen[data-kitty-composition='true'] > .xterm-rows:not(.kitty-composition-cursor) { z-index:1; }
+.xterm-screen[data-kitty-composition='true'] > .xterm-selection { z-index:3; }
+.xterm-screen[data-kitty-composition='true'] > .xterm-image-layer { z-index:2; }
+.xterm-screen[data-kitty-composition='true'] > .xterm-rows > div > span:not(.xterm-cursor) { background-color:transparent !important; }
+.kitty-composition-underlay,.kitty-composition-overlay,.kitty-composition-cursor { position:absolute; left:0; top:0; pointer-events:none; }
+.kitty-composition-underlay { z-index:0; }
+.kitty-composition-overlay { z-index:2; }
+.kitty-composition-cursor { z-index:4; width:100%; height:100%; }
+.xterm-screen[data-kitty-composition='true'] > .xterm-rows:not(.kitty-composition-cursor) { position:relative; }
+.xterm-screen[data-kitty-composition='true'] > .xterm-selection div { background-color:var(--terminal-selection-color) !important; }

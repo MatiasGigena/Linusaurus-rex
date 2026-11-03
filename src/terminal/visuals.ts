@@ -94,7 +94,10 @@ export function supportsDisplayP3(): boolean {
     globalThis.matchMedia?.("(color-gamut: p3)").matches,
   );
 }
-function cellBackground(cell: IBufferCell | undefined, theme: ITheme): string {
+export function cellBackground(
+  cell: IBufferCell | undefined,
+  theme: ITheme,
+): string {
   if (!cell) return theme.background || "#353b41";
   const inverse = !!cell.isInverse();
   if (inverse ? cell.isFgRGB() : cell.isBgRGB()) {
@@ -159,6 +162,7 @@ export class TerminalVisuals {
     this.element.dataset.boldPolicy = settings.boldPolicy;
     this.element.dataset.italicPolicy = settings.italicPolicy;
     this.element.dataset.selectionRounded = String(settings.selectionRounded);
+    this.element.dataset.forceThemePalette = String(settings.forceThemePalette);
     this.element.style.setProperty(
       "font-synthesis-weight",
       settings.boldPolicy === "font" ? "none" : "auto",
@@ -212,6 +216,10 @@ export class TerminalVisuals {
     );
   }
   render() {
+    const screen = this.element.querySelector<HTMLElement>(".xterm-screen"),
+      composed = screen?.hasAttribute("data-kitty-composition");
+    // Read native styles without the compositor's paint-only background mask.
+    if (composed) screen!.removeAttribute("data-kitty-composition");
     const settings = this.settings,
       p3 = settings.displayP3 && supportsDisplayP3();
     const fallback = parseColor(this.theme.background || "#353b41")!;
@@ -270,6 +278,8 @@ export class TerminalVisuals {
       old.appliedBackground = span.style.backgroundColor;
     }
     this.backgrounds(p3);
+    if (composed) screen!.dataset.kittyComposition = "true";
+    this.element.dispatchEvent(new Event("rex-terminal-visuals"));
   }
   private backgrounds(p3: boolean) {
     const buffer = this.term.buffer.active,

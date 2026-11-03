@@ -1,5 +1,6 @@
 import type { IBufferCell, IMarker, Terminal } from "@xterm/xterm";
 import { KITTY_DIACRITICS } from "./kitty-diacritics";
+import { KittyCompositor, type KittyDrawOperation } from "./kitty-compositor";
 
 export type GraphicsPart =
   { kind: "text"; data: string } | { kind: "kitty"; data: string };
@@ -272,6 +273,7 @@ interface VirtualPlacement {
   id: number;
   cols: number;
   rows: number;
+  z: number;
   source: [number, number, number, number];
 }
 const MAX_FRAMES = 64,
@@ -294,16 +296,25 @@ export class KittyGraphics {
   private subscriptions: { dispose(): void }[] = [];
   private enabled = true;
   private disposed = false;
+  private compositor: KittyCompositor;
   constructor(
     private term: Terminal,
     private element: HTMLDivElement,
   ) {
     this.layer = document.createElement("div");
     this.layer.className = "kitty-image-layer";
+    this.layer.setAttribute("aria-hidden", "true");
     element.appendChild(this.layer);
     this.virtualCanvas = document.createElement("canvas");
     this.virtualCanvas.dataset.kittyVirtual = "true";
     this.layer.appendChild(this.virtualCanvas);
+    this.compositor = new KittyCompositor(term, element);
+    const styleChanged = () => this.render();
+    element.addEventListener("rex-terminal-visuals", styleChanged);
+    this.subscriptions.push({
+      dispose: () =>
+        element.removeEventListener("rex-terminal-visuals", styleChanged),
+    });
     this.subscriptions.push(
       term.onRender(() => this.render()),
       term.onScroll(() => this.render()),
@@ -325,7 +336,7 @@ export class KittyGraphics {
     this.layer.hidden = !enabled;
     if (!enabled)
       for (const image of this.images.values()) this.cancelTimer(image);
-    else this.render();
+    this.render();
   }
   reset(preserveFramer = false) {
     if (!preserveFramer) this.framer.reset();
@@ -339,6 +350,7 @@ export class KittyGraphics {
     this.layer.replaceChildren(this.virtualCanvas);
     this.virtualCanvas.width = 0;
     this.virtualCanvas.height = 0;
+    this.compositor.paint([], 0, 0, false);
   }
   async command(sequence: string): Promise<string> {
     const { keys, payload } = parseKittyCommand(sequence),
@@ -364,10 +376,6 @@ export class KittyGraphics {
     let effective = keys,
       id = this.imageId(keys);
     if (["t", "T", "f"].includes(action)) {
-      if (keys.t && keys.t !== "d")
-        throw new Error(
-          "Kitty images must use direct payloads; file and shared-memory transfers are disabled.",
-        );
       if (this.chunk) {
         this.chunk.payload += payload;
         if (this.chunk.payload.length > MAX_SEQUENCE) {
@@ -382,6 +390,10 @@ export class KittyGraphics {
       }
       const encoded = this.chunk?.payload || payload;
       this.chunk = undefined;
+      if (effective.t && effective.t !== "d")
+        throw new Error(
+          "Rex must resolve file/shared-memory images into direct payloads before relaying them to a client.",
+        );
       id = this.imageId(effective);
       const canvas = await decodeKittyImage(effective, encoded);
       if (this.disposed) return "";
@@ -443,6 +455,7 @@ export class KittyGraphics {
         cols,
         rows,
         source,
+        z: Number(effective.z) || 0,
       });
       this.render();
       return "";
@@ -908,12 +921,13 @@ export class KittyGraphics {
           this.dropImage(imageId);
     this.render();
   }
-  private renderVirtual(cw: number, ch: number) {
+  private renderVirtual(cw: number, ch: number): KittyDrawOperation[] {
+    const operations: KittyDrawOperation[] = [];
     if (!this.virtual.size) {
       this.virtualCanvas.width = 0;
       this.virtualCanvas.height = 0;
       this.virtualOrigins.clear();
-      return;
+      return operations;
     }
     const width = Math.max(0, Math.ceil(cw * this.term.cols)),
       height = Math.max(0, Math.ceil(ch * this.term.rows));
@@ -927,7 +941,7 @@ export class KittyGraphics {
     const context = this.virtualCanvas.getContext("2d")!;
     context.clearRect(0, 0, width, height);
     this.virtualOrigins.clear();
-    if (!this.virtual.size) return;
+    if (!this.virtual.size) return operations;
     const buffer = this.term.buffer.active;
     for (let y = 0; y < this.term.rows; y++) {
       const line = buffer.getLine(buffer.viewportY + y);
@@ -995,19 +1009,28 @@ export class KittyGraphics {
           ),
           w = source[2] * scale,
           h = source[3] * scale;
-        context.save();
-        context.beginPath();
-        context.rect(x * cw, y * ch, cw, ch);
-        context.clip();
-        context.drawImage(
-          image.frames[image.current].canvas,
-          ...source,
-          x * cw + (prototype.cols * cw - w) / 2 - col * cw,
-          y * ch + (prototype.rows * ch - h) / 2 - row * ch,
-          w,
-          h,
-        );
-        context.restore();
+        const draw = (target: CanvasRenderingContext2D) => {
+          target.save();
+          target.beginPath();
+          target.rect(x * cw, y * ch, cw, ch);
+          target.clip();
+          target.drawImage(
+            image.frames[image.current].canvas,
+            ...source,
+            x * cw + (prototype.cols * cw - w) / 2 - col * cw,
+            y * ch + (prototype.rows * ch - h) / 2 - row * ch,
+            w,
+            h,
+          );
+          target.restore();
+        };
+        draw(context);
+        operations.push({
+          imageId: id,
+          placementId: prototype.id,
+          z: prototype.z,
+          draw,
+        });
       }
     }
     // Hide protocol glyphs in the DOM only. Buffer/search/copy contents remain authoritative.
@@ -1019,6 +1042,7 @@ export class KittyGraphics {
           /\u{10eeee}\p{Mark}*/gu,
           "\u00a0",
         );
+    return operations;
   }
   private underlinePlacementId(
     cell: IBufferCell,
@@ -1082,7 +1106,7 @@ export class KittyGraphics {
       height: `${box.height}px`,
     });
     this.removePlacements((p) => !p.parent && p.marker.isDisposed);
-    this.renderVirtual(cw, ch);
+    const operations = this.renderVirtual(cw, ch);
     for (const p of this.placements) {
       const budget = Math.max(
         1,
@@ -1092,7 +1116,31 @@ export class KittyGraphics {
         const image = this.images.get(p.imageId);
         if (image) this.paint(p, image);
       }
-      const position = this.position(p);
+      const position = this.position(p),
+        image = this.images.get(p.imageId);
+      if (position && image && p.screen === this.term.buffer.active.type) {
+        const x = position.x * cw + p.offsetX,
+          y = position.y * ch + p.offsetY,
+          width = p.cols * cw,
+          height = p.rows * ch,
+          scale = Math.min(width / p.source[2], height / p.source[3]),
+          w = p.source[2] * scale,
+          h = p.source[3] * scale;
+        operations.push({
+          imageId: p.imageId,
+          placementId: p.id,
+          z: p.z,
+          draw: (context) =>
+            context.drawImage(
+              image.frames[image.current].canvas,
+              ...p.source,
+              x + (width - w) / 2,
+              y + (height - h) / 2,
+              w,
+              h,
+            ),
+        });
+      }
       Object.assign(p.canvas.style, {
         display:
           position && p.screen === this.term.buffer.active.type
@@ -1103,9 +1151,10 @@ export class KittyGraphics {
         width: `${p.cols * cw}px`,
         height: `${p.rows * ch}px`,
         objectFit: "contain",
-        zIndex: String(Math.max(-2, Math.min(2, p.z))),
+        zIndex: "0",
       });
     }
+    this.compositor.paint(operations, box.width, box.height, this.enabled);
     for (const image of this.images.values()) this.schedule(image);
   }
   dispose() {
@@ -1113,6 +1162,7 @@ export class KittyGraphics {
     this.reset();
     this.subscriptions.forEach((subscription) => subscription.dispose());
     this.layer.remove();
+    this.compositor.dispose();
   }
 }
 
