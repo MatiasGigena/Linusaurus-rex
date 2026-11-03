@@ -110,7 +110,7 @@ npm run test:ui
 npm run test:actions
 ```
 
-The final source run passed **63/63 tests with zero skips or failures**, plus the installed-Rex Electron smoke and native-action fixtures.
+The final source run passed **63/63 tests with zero skips or failures**, plus the installed-Rex Electron smoke and native-action fixtures. Both fixtures also passed against the actual **0.2.0 AppImage**. AppImage and Debian builds succeeded; Debian version, amd64 architecture and dependency metadata were verified.
 
 Browser tests use `/usr/bin/chromium`, or the executable selected with `CHROMIUM_PATH`. Electron checks require a graphical display. Installed-server tests create their own sessions and remove only the returned IDs. They cover ordered VT/resume, primary/alternate screens, input/resize, API 8 without a CLI, client actions, Lua sequences/modes, directory listing and advanced layouts. Browser tests exercise rendering, selection/search, theme/cursor preferences, Unicode widths, link handling and reconnect/tab state. Electron smoke tests open the desktop application.
 

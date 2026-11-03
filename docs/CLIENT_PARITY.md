@@ -520,7 +520,7 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 
 ## Validation boundary
 
-Final source verification passed **63/63 automated tests, zero failures and zero skips**, with both integration and browser tests enabled. The installed-Rex Electron smoke and native-action fixtures also passed. Packaged-app validation is a separate check.
+Final source verification passed **63/63 automated tests, zero failures and zero skips**, with both integration and browser tests enabled. The installed-Rex Electron smoke and native-action fixtures also passed against both the source build and the actual 0.2.0 AppImage. AppImage and Debian builds succeeded; Debian version/amd64/dependency metadata was inspected. A Debian installation/runtime test is not claimed.
 
 Protocol evidence is separate from source-level feature inventory. The opt-in installed-Rex tests create isolated sessions, remember the returned IDs, and remove only those sessions. They do not restart/reconfigure the server or mutate the user’s four existing sessions.
 
@@ -533,6 +533,7 @@ Protocol evidence is separate from source-level feature inventory. The opt-in in
 | Installed Rex Unicode cursor probe | Isolated Python raw-mode DSR probe: `A🦕B` and `A🫠B` end at column 5; `A👩‍💻B` ends at column 7; `AéB` ends at column 4 on the tested server. Client Unicode-width selection is checked against server behavior, not assumed from ideal grapheme width. |
 | Feature/keymap/activity/launch tests | See `tests/features*.test.ts`, `tests/workspace.test.ts`, `tests/terminal.*.test.ts` for focused behavior, validated launch arguments/selection, and optional real-server native-client action tests. |
 | Source Electron fixtures | `npm run test:ui` and `npm run test:actions` passed against installed Rex, covering actual launch/session/block selection, reverse actions, terminal/search/path/font/layout UI and moving a tab to a native window. |
-| Packaged-app verification | Re-run both Electron fixtures against the packaged executable. Source test results do not themselves establish AppImage/Debian runtime validation. Physical trackpad/compositor behavior and comprehensive AT-SPI/graphics coverage remain outside these checks. |
+| Packaged AppImage verification | Both `tests/electron.smoke.ts` and `tests/electron.actions.ts` passed against the actual 0.2.0 AppImage and installed Rex. Coverage includes CLI help/profile/font/size/block selection, background search, reverse actions, multi-window settings, diagnostics and literal tab transfer. A screenshot was captured. |
+| Debian package verification | The 0.2.0 amd64 package built successfully; `dpkg-deb` version, architecture and dependencies were verified. No installed-Debian runtime test is claimed. Physical trackpad/compositor behavior and comprehensive AT-SPI/graphics coverage remain outside these checks. |
 
 This inventory accounts for 98 action rows and 108 tabulated setting rows from the official references, plus the prose-only theme-import/remote-host entries and the example-specific features above.
