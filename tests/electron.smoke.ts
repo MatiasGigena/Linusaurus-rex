@@ -161,19 +161,21 @@ try {
   await app.evaluate(async ({ clipboard, ClipboardItem }) => {
     const items = await clipboard.read();
     const backup = await Promise.all(
-      items.map(
-        async (item) =>
-          new ClipboardItem(
-            Object.fromEntries(
-              await Promise.all(
-                item.types.map(async (type) => [
-                  type,
-                  await item.getType(type),
-                ]),
+      items
+        .filter((item) => item.types.length > 0)
+        .map(
+          async (item) =>
+            new ClipboardItem(
+              Object.fromEntries(
+                await Promise.all(
+                  item.types.map(async (type) => [
+                    type,
+                    await item.getType(type),
+                  ]),
+                ),
               ),
             ),
-          ),
-      ),
+        ),
     );
     (
       globalThis as typeof globalThis & {
