@@ -1,6 +1,6 @@
 {
   "name": "linusaurus-rex",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A Linux desktop companion for Rex terminal sessions",
   "private": true,
   "type": "module",
@@ -14,19 +14,23 @@
     "build:electron": "esbuild electron/main.ts --bundle --platform=node --format=esm --packages=external --outfile=dist-electron/main.js && esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "test:integration": "REX_INTEGRATION=1 tsx --test tests/rex.integration.test.ts",
+    "test:integration": "REX_INTEGRATION=1 tsx --test tests/rex.integration.test.ts tests/features.integration.test.ts",
     "test:ui": "npm run build && tsx tests/electron.smoke.ts",
     "start": "electron .",
     "package": "npm run build && electron-builder --linux AppImage deb --publish never",
-    "package:dir": "npm run build && electron-builder --linux dir --publish never"
+    "package:dir": "npm run build && electron-builder --linux dir --publish never",
+    "test:actions": "npm run build && tsx tests/electron.actions.ts",
+    "test:terminal": "TERMINAL_UI_TEST=1 tsx --test tests/terminal.browser.test.ts"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-ligatures": "^0.10.0",
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
     "khostty-libghostty-vt-wasm": "^0.1.0",
     "lucide-react": "^0.468.0",
+    "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "ws": "^8.22.1"
@@ -34,6 +38,7 @@
   "devDependencies": {
     "@playwright/test": "^1.56.0",
     "@types/node": "^22.10.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/ws": "^8.18.2",
@@ -41,6 +46,7 @@
     "electron": "^45.2.1",
     "electron-builder": "^26.18.0",
     "esbuild": "^0.25.0",
+    "prettier": "^3.9.10",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0"
