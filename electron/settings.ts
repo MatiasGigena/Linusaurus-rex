@@ -36,7 +36,7 @@ export function validateSettings(value: unknown): Settings {
     fontSize: [8, 48, true], interfaceZoom: [.7, 1.5], scrollback: [100, 100_000, true], lineHeight: [1, 2],
     tabIcons: [0, 8, true], paddingX: [0, 80, true], paddingY: [0, 80, true], highlightOpacity: [0, 1], inactivePaneFade: [0, .8],
     fontWeight: [100, 900, true], fontWeightBold: [100, 900, true], letterSpacing: [-2, 8], minimumContrastRatio: [1, 21], smoothScrollDuration: [0, 1000, true],
-    cursorBlinkInterval:[100,2000,true],sidebarWidth:[190,500],
+    cursorBlinkInterval:[100,2000,true],sidebarWidth:[190,500],inactiveWindowFade:[0,.8],
   };
   const enums: Record<string, string[]> = {
     theme: ['graphite', 'midnight', 'light', 'system'], appearance: ['system', 'dark', 'light'], cursorStyle: ['block', 'underline', 'bar'],
@@ -72,7 +72,7 @@ export function validateSettings(value: unknown): Settings {
       if (notificationInput[key] === undefined) continue;
       const item = notificationInput[key];
       if (typeof fallback === 'boolean' && typeof item !== 'boolean') throw new Error(`Invalid notification ${key}`);
-      if (key === 'position' && !['top-right', 'top-left', 'bottom-right', 'bottom-left'].includes(String(item))) throw new Error('Invalid notification position');
+      if (key === 'position' && !['top-right', 'top-left', 'bottom-right', 'bottom-left', 'top-center', 'bottom-center'].includes(String(item))) throw new Error('Invalid notification position');
       (result.notifications as unknown as Record<string, unknown>)[key] = item;
     }
     const kinds=['working','blocked','error','done']as const;

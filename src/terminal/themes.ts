@@ -56,7 +56,7 @@ export function terminalTheme(settings: Settings): ITheme {
   }
   // Supplying a complete standard cube also clears a previously imported
   // extended palette when the preference is disabled.
-  theme.extendedAnsi = settings.useExtendedPalette ? extended : [...DEFAULT_EXTENDED_ANSI];
+  theme.extendedAnsi = settings.useExtendedPalette && (terminalAppearance(settings) === 'light' ? settings.useExtendedLightPalette : settings.useExtendedDarkPalette) ? extended : [...DEFAULT_EXTENDED_ANSI];
   return theme;
 }
 
