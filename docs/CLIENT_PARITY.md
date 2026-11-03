@@ -523,7 +523,7 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 
 ## Validation boundary
 
-The 0.4 source run passed **111/111 automated tests, zero failures and zero skips**, with installed-Rex integration, browser pixel checks and public-release metadata verification enabled. New coverage includes host-scoped reconnects, server-normalized file/temp/shared-memory images, Kitty image/text layers, and actual same-user systemd lifecycle/origin editing and crash recovery.
+The 0.4.1 source run passed **113/113 automated tests, zero failures and zero skips**, with installed-Rex integration, browser pixel checks and public-release metadata verification enabled. New coverage includes host-scoped reconnects, server-normalized file/temp/shared-memory images, Kitty image/text layers, and actual same-user systemd lifecycle/origin editing and crash recovery.
 
 The actual 0.4 AppImage passed all seven native fixtures on authenticated private Xvfb displays: smoke, actions, services/tutorial, installed-Rex graphics, image/text layering, systemd origins and accessibility. Private displays and clipboards prevent physical typing from entering automated tests. The accessibility fixture scanned **15 views with zero axe violations**, and verified terminal input/output through Chromium and native AT-SPI (**233 owned nodes**). Incomplete/manual-review results remain in the accessibility report, including contrast indeterminacy for gradient-selected tabs and terminal text overlapped by image/cursor canvases. No accessibility rules are disabled. These checks do not claim universal WCAG or compositor conformance.
 
