@@ -419,6 +419,19 @@ export class LinuxServerManager {
           throw new Error(
             `Rex has ${before.sessionCount} existing session${before.sessionCount === 1 ? "" : "s"}. Close them yourself before stopping or restarting; their programs will never be ended by this client.`,
           );
+        const help = (await this.options.call(host, "help.all", {})) as {
+          methods?: {
+            name: string;
+            input_schema?: { properties?: Record<string, unknown> };
+          }[];
+        };
+        if (
+          !help.methods?.find((method) => method.name === "server.stop")
+            ?.input_schema?.properties?.if_idle
+        )
+          throw new Error(
+            "This Rex version does not advertise atomic idle shutdown. Update Rex before using lifecycle controls.",
+          );
         // The server performs this test atomically, refusing races and other clients.
         await this.options.call(host, "server.stop", { if_idle: true });
         for (let attempt = 0; attempt < 50; attempt++) {

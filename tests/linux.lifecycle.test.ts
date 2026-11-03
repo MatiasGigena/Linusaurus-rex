@@ -247,3 +247,39 @@ test("uninspectable local endpoints cannot be treated as stopped or launched ove
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("older servers without atomic idle shutdown are never stopped as a fallback", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "linusaurus-life-old-"));
+  const calls: string[] = [];
+  const manager = new LinuxServerManager({
+    directory,
+    call: async (_host, method) => {
+      calls.push(method);
+      if (method === "server.status") return { pid: 10, session_count: 0 };
+      if (method === "server.version") return { version: "old" };
+      if (method === "help.all")
+        return {
+          methods: [{ name: "server.stop", input_schema: { properties: {} } }],
+        };
+      throw new Error("Must not stop");
+    },
+    process: async () => ({
+      endpoint: "unix:///tmp/old-rex.sock",
+      executable: "/usr/bin/rex",
+      args: ["server", "run"],
+      env: {},
+    }),
+  });
+  try {
+    await assert.rejects(
+      manager.perform(
+        { id: "old", label: "Old", endpoint: "unix:///tmp/old-rex.sock" },
+        "stop",
+      ),
+      /does not advertise atomic/,
+    );
+    assert.equal(calls.includes("server.stop"), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

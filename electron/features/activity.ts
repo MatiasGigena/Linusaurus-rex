@@ -80,6 +80,7 @@ export class ActivityRegistry {
     this.publish(hostId, sessionId, blockId, pane);
   }
   clearHost(hostId: string) {
+    for(const key of this.panes.keys())if(key.startsWith(`${hostId}/`)){this.panes.delete(key);this.unread.delete(key);}
     for (const [key, target] of this.targets) if (target.hostId === hostId) { this.targets.delete(key); this.panes.delete(key); this.unread.delete(key); }
     this.publishBadge();
   }

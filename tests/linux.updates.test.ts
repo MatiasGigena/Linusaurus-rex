@@ -284,3 +284,47 @@ test("cancel aborts the in-flight release request without changing canceled stat
     manager.dispose();
   }
 });
+
+test("automatic update idleness follows program status including seeded history and cleared hosts", async () => {
+  const { ActivityRegistry } = await import("../electron/features/activity.js");
+  const { DEFAULT_SETTINGS } = await import("../src/shared/types.js");
+  const registry = new ActivityRegistry(
+    () => {},
+    () => {},
+    () => DEFAULT_SETTINGS.notifications,
+  );
+  registry.seed(
+    "host",
+    "session",
+    "block",
+    { records: [{ id: "compile", state: "working" }] },
+    undefined,
+    undefined,
+  );
+  assert.equal(registry.isIdle(), false);
+  registry.apply("host", "session", {
+    creator_name: "com.superlogical.terminal",
+    block_id: "block",
+    name: "program_status_changed",
+    payload: { id: "compile", record: { state: "blocked" } },
+  });
+  assert.equal(registry.isIdle(), false);
+  registry.apply("host", "session", {
+    creator_name: "com.superlogical.terminal",
+    block_id: "block",
+    name: "program_status_changed",
+    payload: { id: "compile", record: { state: "done" } },
+  });
+  assert.equal(registry.isIdle(), true);
+  registry.seed(
+    "other",
+    "session",
+    "block",
+    { records: [{ id: "other", state: "working" }] },
+    undefined,
+    undefined,
+  );
+  assert.equal(registry.isIdle(), false);
+  registry.clearHost("other");
+  assert.equal(registry.isIdle(), true);
+});
