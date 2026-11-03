@@ -241,9 +241,6 @@ export class LinuxServerManager {
       endpoint,
       arguments: [],
       origins: [],
-      ...(host.websocketOrigins !== undefined
-        ? { pendingOrigins: validateOrigins(host.websocketOrigins) }
-        : {}),
     };
     if (!info.local) {
       info.reason =
@@ -319,6 +316,14 @@ export class LinuxServerManager {
       info.canManage = true;
       info.reason =
         "Start creates an isolated local server with its own state/configuration directory. Existing installed server state is not overwritten.";
+    }
+    if (host.websocketOrigins !== undefined) {
+      const pending = validateOrigins(host.websocketOrigins);
+      if (
+        JSON.stringify([...pending].sort()) !==
+        JSON.stringify([...info.origins].sort())
+      )
+        info.pendingOrigins = pending;
     }
     return info;
   }

@@ -218,3 +218,32 @@ test(
     }
   },
 );
+
+test("uninspectable local endpoints cannot be treated as stopped or launched over", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "linusaurus-life-denied-"));
+  let launched = false;
+  const manager = new LinuxServerManager({
+    directory,
+    call: async () => {
+      throw new Error("Unexpected server response: 403 Forbidden");
+    },
+    launch: async () => {
+      launched = true;
+    },
+  });
+  try {
+    const host = {
+      id: "denied",
+      label: "Denied",
+      endpoint: "unix:///tmp/denied-rex.sock",
+    };
+    assert.equal((await manager.status(host)).canManage, false);
+    await assert.rejects(
+      manager.perform(host, "start"),
+      /cannot be inspected safely/,
+    );
+    assert.equal(launched, false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
