@@ -102,7 +102,7 @@ npm run package:dir   # Unpacked Linux application
 
 Packaging may download Electron/build tools. Packages do not include the Rex server. A launcher for a built checkout can be installed with `node scripts/install-desktop.mjs`, or pass an absolute AppImage path. It writes to your user application/icon directories under `$XDG_DATA_HOME` or `~/.local/share`; keep the target at that path.
 
-The checked-in [Linux release workflow](.github/workflows/release.yml) accepts a pushed stable `vX.Y.Z` tag or a manual run for an existing matching tag. It verifies the tag against `package.json`, tests/builds the x86-64 AppImage and Debian package, computes/verifies `SHA256SUMS`, then uploads a draft release before publishing it. Existing published release assets are not overwritten. The public [v0.4.1 release](https://github.com/MatiasGigena/Linusaurus-rex/releases/tag/v0.4.1) contains both Linux packages. The release normalizes filenames before checksumming and verify actual remote draft assets before publishing.
+The checked-in [Linux release workflow](.github/workflows/release.yml) accepts a pushed stable `vX.Y.Z` tag or a manual run for an existing matching tag. It verifies the tag against `package.json`, tests/builds the x86-64 AppImage and Debian package, computes/verifies `SHA256SUMS`, then uploads a draft release before publishing it. Existing published release assets are not overwritten. The public [v0.4.1 release](https://github.com/MatiasGigena/Linusaurus-rex/releases/tag/v0.4.1) contains both Linux packages. The [release workflow run](https://github.com/MatiasGigena/Linusaurus-rex/actions/runs/41697062769) normalized filenames before checksumming and verified the uploaded draft assets before publishing.
 
 
 ```bash
