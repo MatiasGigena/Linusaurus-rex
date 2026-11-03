@@ -23,7 +23,8 @@
     "test:terminal": "TERMINAL_UI_TEST=1 tsx --test tests/*browser.test.ts",
     "test:accessibility": "npm run build && tsx tests/electron.accessibility.ts",
     "test:services": "npm run build && tsx tests/electron.services.ts",
-    "test:graphics": "npm run build && tsx tests/electron.graphics.ts"
+    "test:graphics": "npm run build && tsx tests/electron.graphics.ts",
+    "test:layers": "npm run build && tsx tests/electron.layers.ts"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
