@@ -915,3 +915,96 @@
     transition: none !important;
   }
 }
+/* Secondary text remains readable at the small sizes used by terminal chrome. */
+:root:not([data-theme="light"]) {
+  --muted: #a6b3bc;
+  --faint: #9eacb6;
+}
+:root[data-theme="light"] {
+  --muted: #4b626e;
+  --faint: #536b78;
+  --green: #2f6343;
+}
+.quick-switcher,
+.sidebar-section-label,
+.session-count,
+.session-label,
+.window-item:not(.is-selected),
+.new-workspace-button kbd,
+.server-status,
+.sidebar-build,
+.toolbar-subtitle,
+.toolbar-connection,
+.workspace-status,
+.workspace-statusbar,
+.statusbar,
+.status-breadcrumb,
+.status-version,
+.status-version kbd,
+kbd,
+.palette-item-content small,
+.palette-item kbd,
+.palette-search kbd,
+.command-dialog .dialog-footer,
+.command-dialog .dialog-footer kbd,
+.form-hint,
+.settings-host span,
+.pane-header,
+.sidebar-filter input::placeholder {
+  color: var(--muted);
+}
+:root[data-theme="light"] .preferences-tabs button.is-active {
+  color: var(--green);
+}
+:root[data-theme="light"] .workspace-statusbar,
+:root[data-theme="light"] .statusbar {
+  background: #e4ebee;
+}
+:root[data-theme="light"] .new-workspace-button {
+  color: var(--green);
+}
+:root[data-theme="light"] .window-item:not(.is-selected) {
+  color: var(--muted);
+}
+:root[data-theme="light"] :is(button, a, select, input):focus-visible {
+  outline-color: var(--green);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.dialog-header p,
+.settings-section-label {
+  color: var(--muted);
+}
+:root[data-theme="light"] .brand-name span,
+:root[data-theme="light"] .beta-label {
+  color: var(--muted);
+}
+:root[data-theme="light"] .host-name {
+  color: var(--text);
+}
+:root[data-theme="light"] .status-activity {
+  color: var(--green);
+}
+:root[data-theme="light"] .quick-switcher {
+  background: #f2f5f6;
+}
+:root[data-theme="light"] .quick-switcher:hover {
+  background: #fff;
+}
+:root[data-theme="light"] .quick-switcher kbd {
+  background: #dfe7ea;
+}
+:root[data-theme="light"] .form-input,
+:root[data-theme="light"] .form-select {
+  border-color: #718793;
+}

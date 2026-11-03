@@ -130,12 +130,17 @@ export function ThemeLibrary({
         </div>
       ))}
       {draft.themeLibrary.length > 0 ? (
-        <div className="theme-library-list" aria-label="Saved themes">
+        <div
+          className="theme-library-list"
+          role="list"
+          aria-label="Saved themes"
+        >
           {draft.themeLibrary.map((theme: LibraryTheme) => (
-            <div className="theme-library-entry" key={theme.id}>
+            <div className="theme-library-entry" role="listitem" key={theme.id}>
               <div
                 className="theme-swatches"
-                aria-label={`${theme.name} colors`}
+                role="img"
+                aria-label={`${theme.name} colors: background ${theme.colors.background || "default"}, foreground ${theme.colors.foreground || "default"}`}
                 style={{ background: theme.colors.background || "#353b41" }}
               >
                 {[

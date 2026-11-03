@@ -1183,7 +1183,13 @@ export function SettingsDialog({
               </Section>
               {preview && (
                 <Section title="REVIEW CHANGES">
-                  <pre className="settings-output">{preview.output}</pre>
+                  <pre
+                    className="settings-output"
+                    tabIndex={0}
+                    aria-label="Agent integration status"
+                  >
+                    {preview.output}
+                  </pre>
                   <button
                     className="button button-primary"
                     type="button"
@@ -1208,7 +1214,11 @@ export function SettingsDialog({
                 </Section>
               )}
               <Section title="CURRENT INTEGRATION STATUS">
-                <pre className="settings-output">
+                <pre
+                  className="settings-output"
+                  tabIndex={0}
+                  aria-label="Agent integration status"
+                >
                   {integrationOutput || "Checking installed agents…"}
                 </pre>
               </Section>
