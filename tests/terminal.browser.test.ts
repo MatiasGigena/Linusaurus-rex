@@ -1,0 +1,169 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { createServer } from 'vite';
+import react from '@vitejs/plugin-react';
+import { chromium } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+
+const fixture = `<!doctype html><html><head><style>
+html,body,#root{height:100%;margin:0;background:#353b41}.terminal-pane{height:100%;position:relative;display:flex;flex-direction:column}.terminal-container{flex:1;min-height:0}.terminal-emulator .xterm{height:100%}.icon-button{border:0;background:transparent;color:inherit;display:inline-flex;align-items:center;justify-content:center}
+</style></head><body><div id="root"></div><script type="module">
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {TerminalPane,dispatchTerminalCommand} from '/src/terminal/TerminalPane.tsx';
+import {getCachedTerminal} from '/src/terminal/runtime.ts';
+import {DEFAULT_SETTINGS} from '/src/shared/types.ts';
+const ref={hostId:'test',sessionId:'test',blockId:'test'};
+const requests=[],listeners=new Set(); let currentSubscription; let first=true; let clipboard='PASTE_FROM_CLIPBOARD';
+window.rex={request:async(method,args)=>{requests.push({method,args}); if(method==='key' && window.fixture?.failNextKey){const message=window.fixture.failNextKey;window.fixture.failNextKey=undefined;throw new Error(message)} if(method==='subscribe'){currentSubscription=args.subscriptionId;if(first){first=false;setTimeout(()=>emit({kind:'snapshot',data:'alpha alpha\\r\\nready> ',cols:80,rows:24}),10)}} return method==='key'?{handled:true}:undefined},onTerminal:cb=>{listeners.add(cb);return()=>listeners.delete(cb)},onCommand:()=>()=>{},readClipboard:async()=>clipboard,writeClipboard:async text=>{clipboard=text}};
+function emit(frame){for(const fn of listeners)fn({subscriptionId:currentSubscription,...frame})}
+let update,show; function Fixture(){const [settings,setSettings]=React.useState(DEFAULT_SETTINGS),[visible,setVisible]=React.useState(true);update=patch=>setSettings(s=>({...s,...patch}));show=setVisible;return React.createElement(TerminalPane,{pane:{id:'test',label:'Test terminal',rect:[0,0,1,1]},terminalRef:ref,settings,visible,focused:true,showHeader:false,onFocus(){},onClose(){},onZoom(){}})}
+createRoot(document.getElementById('root')).render(React.createElement(Fixture));
+window.fixture={requests,emit,update:patch=>update(patch),show:value=>show(value),term:()=>getCachedTerminal(ref)?.terminal,command:dispatchTerminalCommand};
+</script></body></html>`;
+
+test('terminal appends streams, retains selection/settings, routes mouse/keys, and searches output', { skip: process.env.TERMINAL_UI_TEST !== '1', timeout: 40_000 }, async () => {
+  const source = fixture.split('<script type="module">')[1].split('</script>')[0];
+  const html = fixture.replace(/<script type="module">[\s\S]*<\/script>/, '<script type="module" src="/@id/__x00__terminal-test-fixture"></script>');
+  const server = await createServer({ configFile: false, root: process.cwd(), cacheDir: 'node_modules/.vite-terminal-test', optimizeDeps: { include: ['react', 'react-dom/client', 'react/jsx-runtime', '@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-search', '@xterm/addon-web-links', '@xterm/addon-ligatures', 'lucide-react'] }, plugins: [react(), {
+    name: 'terminal-fixture',
+    resolveId(id) { if (id === '\0terminal-test-fixture') return id; },
+    load(id) { if (id === '\0terminal-test-fixture') return source; },
+    configureServer(vite) { vite.middlewares.use('/terminal-fixture', (request, response) => { response.setHeader('Content-Type', 'text/html'); void vite.transformIndexHtml(request.url || '/terminal-fixture', html).then(content => response.end(content)); }); },
+  }], server: { host: '127.0.0.1', port: 5189 } });
+  await server.listen();
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true });
+  const page = await browser.newPage({ viewport: { width: 900, height: 560 } });
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  try {
+    const address = server.httpServer!.address() as { port: number };
+    await page.addInitScript({ content: "Object.defineProperty(window, 'queryLocalFonts', { value: async function(){ return []; } });" });
+    await page.goto(`http://127.0.0.1:${address.port}/terminal-fixture`);
+    await page.waitForFunction(() => (window as any).fixture?.term()?.buffer.active.getLine(0)?.translateToString(true) === 'alpha alpha', undefined, { timeout: 6000 }).catch(failure => { throw new Error(String(failure) + ' Renderer errors: ' + JSON.stringify(errors)); });
+    await page.evaluate(() => { const f = (window as any).fixture; f.term().select(0, 0, 5); f.emit({ kind: 'output', data: 'STREAM' }); });
+    await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(1)?.translateToString(true).includes('STREAM'));
+    assert.equal(await page.evaluate(() => (window as any).fixture.term().getSelection()), 'alpha');
+    await page.evaluate(() => { const f = (window as any).fixture; f.savedTerminal = f.term(); f.update({ fontSize: 17, theme: 'midnight', letterSpacing: 1 }); });
+    await page.waitForFunction(() => (window as any).fixture.term().options.fontSize === 17);
+    assert.equal(await page.evaluate(() => (window as any).fixture.savedTerminal === (window as any).fixture.term()), true);
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[6n\x1b[c' }));
+    await page.waitForTimeout(150);
+    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'input').length), 0, 'parser replies must not enter the server input stream');
+    await page.locator('.xterm-helper-textarea').focus();
+    await page.keyboard.type('a');
+    await page.waitForFunction(() => (window as any).fixture.requests.some((r: any) => r.method === 'key' && r.args.event.key === 'key_a' && r.args.event.action === 'release'));
+    assert.equal(await page.evaluate(() => (window as any).fixture.requests.find((r: any) => r.method === 'key' && r.args.event.key === 'key_a').args.event.text), 'a');
+    await page.evaluate(() => { (window as any).fixture.failNextKey = 'Lua action failed: deliberate test failure'; });
+    await page.keyboard.press('b');
+    await page.getByText('Lua action failed: deliberate test failure').waitFor();
+    await page.keyboard.press('c');
+    await page.waitForFunction(() => (window as any).fixture.requests.some((r: any) => r.method === 'key' && r.args.event.key === 'key_c'));
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[?1000h\x1b[?1006h' }));
+    await page.waitForFunction(() => (window as any).fixture.term().modes.mouseTrackingMode === 'vt200');
+    const screen = await page.locator('.xterm-screen').boundingBox();
+    assert.ok(screen);
+    await page.mouse.click(screen.x + 30, screen.y + 30);
+    await page.waitForFunction(() => (window as any).fixture.requests.filter((r: any) => r.method === 'mouse').length >= 2);
+    const mouse = await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'mouse').map((r: any) => r.args.event));
+    assert.deepEqual(mouse.slice(-2).map((e: any) => [e.action, e.button]), [['press', 'left'], ['release', 'left']]);
+    await page.mouse.wheel(0, 65);
+    await page.waitForFunction(() => (window as any).fixture.requests.some((r: any) => r.method === 'wheel' && r.args.event.delta_y === 1));
+    await page.keyboard.down('Shift');
+    await page.mouse.click(screen.x + 35, screen.y + 35, { button: 'right' });
+    await page.keyboard.up('Shift');
+    await page.waitForFunction(() => (window as any).fixture.requests.some((r: any) => r.method === 'mouse' && r.args.event.button === 'right'));
+    assert.equal(await page.getByRole('menu', { name: 'Terminal actions' }).count(), 0, 'Shift+right-click is delivered to the program');
+    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'mouse' && r.args.event.button === 'right').every((r: any) => !r.args.event.mods.includes('shift'))), true);
+    const count = await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'mouse').length);
+    await page.mouse.click(screen.x + 35, screen.y + 35, { button: 'right' });
+    await page.getByRole('menu', { name: 'Terminal actions' }).waitFor();
+    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'mouse').length), count, 'normal right-click opens a local menu');
+    await page.getByRole('menuitem', { name: /Find in terminal/ }).click();
+    await page.getByRole('textbox', { name: 'Find terminal text' }).fill('alpha');
+    await page.waitForFunction(() => document.querySelector('.terminal-search-count')?.textContent === '1/2');
+    await page.getByRole('button', { name: 'Next match' }).click();
+    await page.waitForFunction(() => document.querySelector('.terminal-search-count')?.textContent === '2/2');
+    await page.getByRole('button', { name: 'Regular expression' }).click();
+    await page.getByRole('textbox', { name: 'Find terminal text' }).fill('[');
+    await page.getByText('Invalid regex').waitFor();
+    await page.getByRole('button', { name: 'Close terminal search' }).click();
+    await page.evaluate(() => (window as any).fixture.command('paste'));
+    await page.waitForFunction(() => (window as any).fixture.requests.some((r: any) => r.method === 'paste' && r.args.text === 'PASTE_FROM_CLIPBOARD'));
+    const pasted = await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'paste').length);
+    await page.evaluate(() => (window as any).fixture.command('paste', {hostId:'test',sessionId:'test',blockId:'other-pane'}));
+    await page.waitForTimeout(50);
+    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'paste').length), pasted, 'a scoped command must not run in the wrong pane');
+    await page.evaluate(() => (window as any).fixture.command('paste', {hostId:'test',sessionId:'test',blockId:'test'}));
+    await page.waitForFunction((count) => (window as any).fixture.requests.filter((r: any) => r.method === 'paste').length === count+1, pasted);
+    await page.evaluate(() => (window as any).fixture.show(false));
+    await page.waitForTimeout(100);
+    await page.evaluate(() => (window as any).fixture.show(true));
+    await page.waitForTimeout(150);
+    assert.equal(await page.evaluate(() => (window as any).fixture.savedTerminal === (window as any).fixture.term()), true, 'tab visibility must preserve the emulator');
+    await page.evaluate(() => (window as any).fixture.update({ theme: 'system', appearance: 'dark', darkTheme: 'midnight', lightTheme: 'light', useExtendedPalette: true, customTheme: { palette16: '#123456', palette255: '#abcdef' } }));
+    await page.waitForFunction(() => (window as any).fixture.term().options.theme.extendedAnsi?.[0] === '#123456');
+    assert.equal(await page.evaluate(() => (window as any).fixture.term().options.theme.background), '#10151f');
+    await page.waitForFunction(() => (window as any).fixture.requests.some((r: any) => r.method === 'invokeAction' && r.args.args.palette?.includes('255=#abcdef')));
+    await page.evaluate(() => (window as any).fixture.update({ useExtendedPalette: false, forceCursorStyle: false }));
+    await page.waitForFunction(() => (window as any).fixture.term().options.theme.extendedAnsi?.[0] === '#000000');
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[?25h\x1b[1;1H\x1b[5 q' }));
+    await page.locator('.xterm-cursor-bar').waitFor();
+    await page.evaluate(() => (window as any).fixture.update({ forceCursorStyle: true, cursorStyle: 'underline', cursorBlink: true, cursorBlinkInterval: 250 }));
+    await page.locator('.xterm-cursor-underline').waitFor();
+    assert.equal(await page.locator('.xterm-cursor-blink').evaluate((cursor) => getComputedStyle(cursor).animationDuration), '0.5s');
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[6 q' }));
+    await page.waitForTimeout(60);
+    assert.equal(await page.locator('.xterm-cursor-underline').count(), 1);
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[' }));
+    await page.waitForTimeout(30);
+    await page.evaluate(() => (window as any).fixture.update({ forceCursorStyle: true, cursorStyle: 'bar' }));
+    await page.waitForTimeout(30);
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '6 qZ' }));
+    await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(0)?.translateToString(true).includes('Z'));
+    assert.equal(await page.evaluate(() => (window as any).fixture.term().buffer.active.getLine(0)?.translateToString(true).includes('6 q')), false, 'cursor preference must not split a server escape sequence');
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[?25l' }));
+    await page.waitForFunction(() => document.querySelectorAll('.xterm-cursor').length === 0);
+    await page.evaluate(() => (window as any).fixture.update({ fontStyle: 'italic', fontSmoothing: false }));
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.terminal-emulator')!).fontStyle === 'italic');
+    assert.equal(await page.locator('.terminal-emulator').evaluate((element) => getComputedStyle(element).getPropertyValue('-webkit-font-smoothing')), 'auto');
+    await page.evaluate(() => (window as any).fixture.update({ fontFamily: '"FiraCode Nerd Font Mono", monospace', fontSize: 22, fontStyle: 'normal', ligatures: false }));
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[?1000l\x1b[?25l\x1b[2J\x1b[H!= -> ===' }));
+    await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(0)?.translateToString(true) === '!= -> ===');
+    await page.waitForTimeout(100);
+    const plain = await page.locator('.xterm-screen').screenshot({ animations: 'disabled' });
+    await page.evaluate(() => (window as any).fixture.update({ ligatures: true }));
+    await page.waitForFunction(() => (document.querySelector('.terminal-emulator') as HTMLElement)?.style.fontVariantLigatures === 'normal');
+    await page.waitForTimeout(150);
+    const ligatured = await page.locator('.xterm-screen').screenshot({ animations: 'disabled' });
+    let fontAvailable = false;
+    try { fontAvailable = /FiraCode/i.test(execFileSync('fc-match', ['-f', '%{family}', 'FiraCode Nerd Font Mono'], { encoding: 'utf8' })); } catch {}
+    if (fontAvailable) assert.equal(plain.equals(ligatured), false, 'programming ligatures must change the rendered font glyphs');
+    await page.evaluate(() => (window as any).fixture.update({ openLinks: false, appLinks: 'ask' }));
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[2J\x1b[Hvscode://file/tmp/client.ts:7\r\nmailto:hello@example.com\r\n\x1b]8;;vscode://file/tmp/osc8.ts\x1b\\Open in editor\x1b]8;;\x1b\\' }));
+    await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(2)?.translateToString(true) === 'Open in editor');
+    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'openExternal').length), 0, 'terminal output must never open applications by itself');
+    const linkGrid = await page.locator('.xterm-screen').boundingBox(); assert.ok(linkGrid);
+    const dimensions = await page.evaluate(() => ({ cols: (window as any).fixture.term().cols, rows: (window as any).fixture.term().rows }));
+    for (let row = 0; row < 3; row++) {
+      await page.mouse.move(linkGrid.x + linkGrid.width / dimensions.cols * 4, linkGrid.y + linkGrid.height / dimensions.rows * (row + .5));
+      await page.waitForTimeout(70);
+      await page.mouse.click(linkGrid.x + linkGrid.width / dimensions.cols * 4, linkGrid.y + linkGrid.height / dimensions.rows * (row + .5));
+    }
+    await page.waitForFunction(() => (window as any).fixture.requests.filter((r: any) => r.method === 'openExternal').length === 3);
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'openExternal').map((r: any) => r.args.url)), ['vscode://file/tmp/client.ts:7', 'mailto:hello@example.com', 'vscode://file/tmp/osc8.ts']);
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[2J\x1b[HA🦕B' }));
+    await page.waitForTimeout(60);
+    assert.equal(await page.evaluate(() => (window as any).fixture.term().buffer.active.cursorX), 4, 'dinosaur emoji width must match the installed Rex DSR');
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[2J\x1b[HA🫠B' }));
+    await page.waitForTimeout(60);
+    assert.equal(await page.evaluate(() => (window as any).fixture.term().buffer.active.cursorX), 4, 'Unicode14 emoji width must match the installed Rex DSR');
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[2J\x1b[HA👩‍💻B' }));
+    await page.waitForTimeout(60);
+    assert.equal(await page.evaluate(() => (window as any).fixture.term().buffer.active.cursorX), 6, 'ZWJ emoji width must match the installed Rex DSR');
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[2J\x1b[HAéB' }));
+    await page.waitForTimeout(60);
+    assert.equal(await page.evaluate(() => (window as any).fixture.term().buffer.active.cursorX), 3, 'combining accents must not add a terminal column');
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await server.close(); }
+});
