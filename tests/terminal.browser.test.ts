@@ -41,6 +41,22 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     await page.addInitScript({ content: "Object.defineProperty(window, 'queryLocalFonts', { value: async function(){ return []; } });" });
     await page.goto(`http://127.0.0.1:${address.port}/terminal-fixture`);
     await page.waitForFunction(() => (window as any).fixture?.term()?.buffer.active.getLine(0)?.translateToString(true) === 'alpha alpha', undefined, { timeout: 6000 }).catch(failure => { throw new Error(String(failure) + ' Renderer errors: ' + JSON.stringify(errors)); });
+    // Reading the buffer alone races the snapshot's subsequent viewport fit.
+    // Drain writes, render with loaded fonts, then wait for that fit's resize.
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      const term = (window as any).fixture.term();
+      await new Promise<void>((resolve) => term.write('', resolve));
+      await new Promise<void>((resolve) => {
+        const listener = term.onRender(() => { listener.dispose(); resolve(); });
+        term.refresh(0, term.rows - 1);
+      });
+    });
+    await page.waitForFunction(() => {
+      const f = (window as any).fixture, term = f.term();
+      const resize = f.requests.filter((request: any) => request.method === 'resize').at(-1);
+      return resize?.args.cols === term.cols && resize?.args.rows === term.rows;
+    });
     await page.evaluate(() => { const f = (window as any).fixture; f.term().select(0, 0, 5); f.emit({ kind: 'output', data: 'STREAM' }); });
     await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(1)?.translateToString(true).includes('STREAM'));
     assert.equal(await page.evaluate(() => (window as any).fixture.term().getSelection()), 'alpha');
