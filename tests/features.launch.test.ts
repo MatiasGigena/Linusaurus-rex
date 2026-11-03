@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {parseLaunchArgs,prepareLaunchSettings,resolveLaunchSelection,type LaunchBackend} from '../electron/features/launch.js';
+import {applicationLaunchArgs,parseLaunchArgs,prepareLaunchSettings,resolveLaunchSelection,type LaunchBackend} from '../electron/features/launch.js';
 import {validateSettings} from '../electron/settings.js';
 import {DEFAULT_SETTINGS,type Host,type SessionView} from '../src/shared/types.js';
 
 test('launch options validate values, conflicts, separate profiles, and Electron switches',()=>{
+  assert.deepEqual(applicationLaunchArgs(['/electron','--inspect=9229','--remote-debugging-port=0','--no-sandbox','/repo','--font','/repo'],'/repo',false),['--inspect=9229','--remote-debugging-port=0','--no-sandbox','--font','/repo']);
+  assert.deepEqual(applicationLaunchArgs(['/app','--font','/repo'],'/repo',true),['--font','/repo']);
   assert.deepEqual(parseLaunchArgs(['--endpoint=https://root@rex.example','--session','project','--block','block-123','--font','Fira Code','--font-size=18','--config','profile/settings.json','--window-size','1280x800'],'/tmp/launch-test'),{
     endpoint:'https://root@rex.example',session:'project',block:'block-123',font:'Fira Code',fontSize:18,config:'/tmp/launch-test/profile/settings.json',windowSize:{width:1280,height:800},help:false,
   });

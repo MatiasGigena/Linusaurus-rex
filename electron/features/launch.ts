@@ -26,6 +26,17 @@ const valueOptions=new Set(['endpoint','session','new','block','font','font-size
 const ignoredValues=new Set(['--inspect','--inspect-brk','--remote-debugging-port','--user-data-dir','--js-flags']);
 const ignoredFlags=new Set(['--remote-debugging-pipe','--no-sandbox','--disable-dev-shm-usage','--enable-logging','--disable-gpu','--enable-automation','--no-startup-window']);
 
+/** Electron automation may leave debugging switches before its app argument. */
+export function applicationLaunchArgs(argv:readonly string[],appPath:string,packaged:boolean):string[]{
+  const args=argv.slice(1);if(packaged)return args;
+  for(let index=0;index<args.length;index++){
+    const argument=args[index];
+    if(argument.startsWith('--')&&!argument.includes('=')&&valueOptions.has(argument.slice(2))){index++;continue;}
+    if(!argument.startsWith('-')&&resolve(argument)===resolve(appPath)){args.splice(index,1);break;}
+  }
+  return args;
+}
+
 /** Accept only application options; known Electron debugging switches are ignored. */
 export function parseLaunchArgs(argv:readonly string[],cwd=process.cwd()):LaunchOptions {
   const result:LaunchOptions={help:false};

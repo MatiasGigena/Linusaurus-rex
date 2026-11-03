@@ -1,12 +1,12 @@
 import { app, BrowserWindow, globalShortcut, Menu, nativeTheme, Tray, type MenuItemConstructorOptions } from 'electron';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CHANNELS } from './channels.js';
 import { getHostCredentials,registerIpc } from './ipc.js';
 import { SettingsStore } from './settings.js';
 import type { Selection, Settings } from '../src/shared/types.js';
 import {RexService} from './rex/service.js';
-import {LAUNCH_HELP,parseLaunchArgs,prepareLaunchSettings,resolveLaunchSelection,type LaunchOptions} from './features/launch.js';
+import {LAUNCH_HELP,applicationLaunchArgs,parseLaunchArgs,prepareLaunchSettings,resolveLaunchSelection,type LaunchOptions} from './features/launch.js';
 
 const directory=dirname(fileURLToPath(import.meta.url));
 const windows=new Set<BrowserWindow>();
@@ -33,7 +33,7 @@ function activeWindow(){const focused=BrowserWindow.getFocusedWindow();return fo
 function showWindow(){const window=activeWindow();if(!window){void createWindow();return;}if(window.isMinimized())window.restore();window.show();window.focus();}
 function toggleVisibility(){const window=activeWindow();if(window?.isVisible()&&window.isFocused())window.hide();else showWindow();}
 function command(name:string){return()=>activeWindow()?.webContents.send(CHANNELS.command,name);}
-function buildMenu(){
+function buildMenu(settings:Settings){
   const template:MenuItemConstructorOptions[]=[
     {label:'File',submenu:[
       {label:'New Window',click:()=>void createWindow()},
@@ -51,12 +51,13 @@ function buildMenu(){
       {label:'Split Right',click:command('split-right')},{label:'Split Below',click:command('split-below')},
       {label:'Zoom Pane',click:command('zoom')},
       {type:'separator'}, {label:'Settings…',click:command('settings')},
-      {role:'togglefullscreen'},...(!app.isPackaged?[{role:'toggleDevTools' as const}]:[]),
+      {role:'togglefullscreen'},...(!app.isPackaged||settings.developerMode?[{role:'toggleDevTools' as const}]:[]),
     ]},
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 function applySettings(settings:Settings){
+  buildMenu(settings);
   nativeTheme.themeSource=settings.appearance;
   for(const window of windows){if(!window.isDestroyed())window.webContents.setZoomFactor(settings.interfaceZoom);}
   if(registeredAccelerator!==settings.globalShortcut){
@@ -95,7 +96,7 @@ async function createWindow(initialSelection?:Selection,size?:{width:number;heig
   window.on('closed',()=>{disposers.get(window.id)?.();disposers.delete(window.id);windows.delete(window);if(lastWindow===window)lastWindow=[...windows][0];});
   await window.loadURL(url);
 }
-function applicationArgs(argv:readonly string[]){const args=argv.slice(1);if(!app.isPackaged&&args[0]&&!args[0].startsWith('-')&&resolve(args[0])===resolve(app.getAppPath()))args.shift();return args;}
+function applicationArgs(argv:readonly string[]){return applicationLaunchArgs(argv,app.getAppPath(),app.isPackaged);}
 function startupError(error:unknown){console.error(`Linusaurus Rex: ${error instanceof Error?error.message:String(error)}`);app.exit(2);}
 async function launch(options:LaunchOptions){
   const prepared=prepareLaunchSettings(store.get(),options);
@@ -115,7 +116,7 @@ if(options?.help){console.log(LAUNCH_HELP);app.exit(0);}
 else if(options&&!app.requestSingleInstanceLock())app.quit();
 else if(options){
   app.on('second-instance',(_event,argv,cwd)=>{void(async()=>{const requested=parseLaunchArgs(applicationArgs(argv),cwd);if(requested.config&&requested.config!==preferencesPath)throw new Error('Quit the running app before selecting a different --config preferences file.');if(requested.endpoint||requested.session||requested.newSession||requested.block||requested.font||requested.fontSize||requested.windowSize)await launch(requested);else showWindow();})().catch(error=>console.error(`Linusaurus Rex: ${error instanceof Error?error.message:String(error)}`));});
-  app.whenReady().then(async()=>{preferencesPath=options!.config||join(app.getPath('userData'),'settings.json');store=new SettingsStore(preferencesPath);await store.load();store.onChange(applySettings);buildMenu();applySettings(store.get());await launch(options!);}).catch(startupError);
+  app.whenReady().then(async()=>{preferencesPath=options!.config||join(app.getPath('userData'),'settings.json');store=new SettingsStore(preferencesPath);await store.load();store.onChange(applySettings);applySettings(store.get());await launch(options!);}).catch(startupError);
   app.on('window-all-closed',()=>{if(!store?.get().closeToTray)app.quit();});
   app.on('before-quit',()=>{quitting=true;globalShortcut.unregisterAll();tray?.destroy();tray=undefined;for(const dispose of disposers.values())dispose();disposers.clear();});
 }
