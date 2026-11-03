@@ -235,6 +235,22 @@ try {
     .getByRole("dialog", { name: "Connection diagnostics", exact: true })
     .waitFor();
   await page.getByRole("button", { name: "Done", exact: true }).click();
+  const movedWindow = app.waitForEvent("window");
+  await perform(
+    "client.tab.move_to_new_window",
+    { window_id: backgroundTab.id },
+    firstId,
+    backgroundBlock,
+  );
+  const moved = await movedWindow;
+  moved.setDefaultTimeout(15_000);
+  moved.on("pageerror", (error) => errors.push(error.message));
+  await visiblePane(moved, backgroundBlock).waitFor();
+  await visiblePane(page, launchBlock).waitFor();
+  await visiblePane(other, secondBlock).waitFor();
+  console.log(
+    "PASS: moving a tab opens its native window and selects the remaining tab in the original window",
+  );
   assert.deepEqual(errors, []);
   console.log(
     "PASS: reverse native-window action, diagnostics, and live settings broadcast preserve both selections",
