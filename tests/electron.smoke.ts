@@ -74,13 +74,28 @@ try {
   assert.equal((await page.evaluate(() => window.rex.getSettings())).fontSize, 16);
 
   await page.locator('.terminal-pane').first().click({ position: { x: 40, y: 65 } });
-  const originalClipboard = await page.evaluate(() => window.rex.readClipboard());
+  await app.evaluate(async ({ clipboard, ClipboardItem }) => {
+    const items = await clipboard.read();
+    const backup = await Promise.all(items.map(async (item) => new ClipboardItem(Object.fromEntries(
+      await Promise.all(item.types.map(async (type) => [type, await item.getType(type)])),
+    ))));
+    (globalThis as typeof globalThis & { clipboardBackup?: Electron.ClipboardItem[] }).clipboardBackup = backup;
+  });
   try {
     await page.evaluate(() => window.rex.writeClipboard("printf '\\nCLIPBOARD_%s\\n' OK"));
+    assert.equal(await page.evaluate(() => window.rex.readClipboard()), "printf '\\nCLIPBOARD_%s\\n' OK");
     await page.keyboard.press('Control+Shift+V');
+    await waitForTerminal('CLIPBOARD_%s');
     await page.keyboard.press('Enter');
     await waitForTerminal('CLIPBOARD_OK');
-  } finally { await page.evaluate((text) => window.rex.writeClipboard(text), originalClipboard); }
+  } finally {
+    await app.evaluate(async ({ clipboard }) => {
+      const state = globalThis as typeof globalThis & { clipboardBackup?: Electron.ClipboardItem[] };
+      if (state.clipboardBackup?.length) await clipboard.write(state.clipboardBackup);
+      else clipboard.clear();
+      delete state.clipboardBackup;
+    });
+  }
 
   await page.keyboard.press('Control+Shift+N');
   await page.getByRole('textbox', { name: 'Session name' }).fill(`created-in-ui-${Date.now()}`);

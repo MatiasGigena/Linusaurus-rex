@@ -23,13 +23,13 @@ export function registerIpc(window: BrowserWindow, store: SettingsStore, allowed
     subscriptions.clear();
   };
   contents.on('did-start-loading', clearSubscriptions);
-  ipcMain.handle(CHANNELS.readClipboard, (event) => {
+  ipcMain.handle(CHANNELS.readClipboard, async (event) => {
     verify(event);
-    return string(clipboard.readText(), 'clipboard content', 1024 * 1024, true);
+    return string(await clipboard.readText(), 'clipboard content', 1024 * 1024, true);
   });
-  ipcMain.handle(CHANNELS.writeClipboard, (event, value: unknown) => {
+  ipcMain.handle(CHANNELS.writeClipboard, async (event, value: unknown) => {
     verify(event);
-    clipboard.writeText(string(value, 'clipboard content', 1024 * 1024, true));
+    await clipboard.writeText(string(value, 'clipboard content', 1024 * 1024, true));
   });
   ipcMain.handle(CHANNELS.getSettings, (event) => { verify(event); return store.get(); });
   ipcMain.handle(CHANNELS.setSettings, async (event, value: unknown) => {
