@@ -1,6 +1,6 @@
 {
   "name": "linusaurus-rex",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "A Linux desktop companion for Rex terminal sessions",
   "private": true,
   "type": "module",
