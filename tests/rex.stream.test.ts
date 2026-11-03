@@ -91,3 +91,97 @@ test('remote control negotiates revision 7 and carries authentication without ex
     assert.equal(socketAddress('unix:///tmp/a%20b.sock', '/api/control'), 'ws+unix:///tmp/a b.sock:/api/control');
   } finally { control.dispose(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
+
+test('Rex login accounts use a secondary WebSocket subprotocol rather than HTTP credentials', async () => {
+  const server = new WebSocketServer({ port: 0, host: '127.0.0.1', handleProtocols: protocols => protocols.has('rex.control.v1') ? 'rex.control.v1' : false });
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address();
+  assert.ok(typeof address === 'object' && address);
+  let protocols: string | undefined, authorization: string | undefined;
+  server.on('connection', (socket, request) => {
+    protocols = request.headers['sec-websocket-protocol']; authorization = request.headers.authorization;
+    socket.once('message', () => socket.send(JSON.stringify({ type: 'welcome', protocol: 'rex.control.v1', api_revision: 10 })));
+  });
+  const control = new RexControl(`http://verification-account@127.0.0.1:${address.port}`);
+  try {
+    await control.readyPublic();
+    assert.equal(protocols, 'rex.control.v1,rex.as.verification-account');
+    assert.equal(authorization, undefined);
+    assert.equal(socketAddress('https://root@example.com', '/api/data'), 'wss://example.com/api/data');
+    assert.throws(() => socketAddress('https://root:password@example.com', '/api/data'), /separately/);
+  } finally { control.dispose(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+import { expandEndpoint, RexService } from '../electron/rex/service.js';
+
+test('bare remote hosts resolve saved endpoint arrays before documented default ports', () => {
+  assert.deepEqual(expandEndpoint('root@studio.example'), ['https://root@studio.example/', 'https://root@studio.example:7297/', 'http://root@studio.example:7297/']);
+  assert.deepEqual(expandEndpoint('work', [{ label: 'work', endpoints: ['https://rex.example', 'unix:///tmp/forward.sock'] }]), ['https://rex.example', 'unix:///tmp/forward.sock']);
+  assert.deepEqual(expandEndpoint('https://studio.example'), ['https://studio.example']);
+  assert.throws(() => expandEndpoint('https://user:password@host/path').map(address => socketAddress(address, '/api/control')), /separately/);
+  assert.throws(() => expandEndpoint('one', [{ label: 'one', endpoints: ['two'] }, { label: 'two', endpoints: ['one'] }]), /cycle/);
+});
+
+function fallbackService(fail: (endpoint: string) => boolean, gateway = false) {
+  const attempts: string[] = [];
+  const service = new RexService({
+    credentials: gateway ? async () => ({ token: 'gateway-secret' }) : undefined,
+    controlFactory: (endpoint) => {
+      attempts.push(endpoint);
+      const control = {
+        endpoint, connected: true,
+        readyPublic: async () => { if (fail(endpoint)) throw new Error('ECONNREFUSED'); return { protocol: 'rex.control.v1', api_revision: 10 }; },
+        call: async (method: string) => method === 'hosts.list' ? { hosts: [] } : { rex_version: 'verification' },
+        dispose: () => { control.connected = false; },
+      };
+      return control as unknown as RexControl;
+    },
+  });
+  return { service, attempts };
+}
+
+test('implicit endpoint fallback prefers its last working address while explicit TLS never downgrades', async () => {
+  const host = { id: 'remote', label: 'Remote', endpoint: 'example.test' };
+  const { service, attempts } = fallbackService(endpoint => endpoint === 'https://example.test/');
+  try {
+    assert.equal((await service.status(host)).connected, true);
+    assert.deepEqual(attempts.filter(endpoint => !endpoint.startsWith('unix:')), ['https://example.test/', 'https://example.test:7297/']);
+    service.reconnect(host); attempts.length = 0;
+    assert.equal((await service.status(host)).connected, true);
+    assert.deepEqual(attempts.filter(endpoint => !endpoint.startsWith('unix:')), ['https://example.test:7297/']);
+  } finally { service.dispose(); }
+  const explicit = fallbackService(() => true);
+  try {
+    assert.equal((await explicit.service.status({ ...host, endpoint: 'https://example.test' })).connected, false);
+    assert.deepEqual(explicit.attempts, ['https://example.test']);
+  } finally { explicit.service.dispose(); }
+});
+
+test('implicit address fallback cannot send gateway credentials over unrequested plaintext', async () => {
+  const { service, attempts } = fallbackService(endpoint => endpoint.startsWith('https:'), true);
+  try {
+    assert.equal((await service.status({ id: 'remote', label: 'Remote', endpoint: 'example.test' })).connected, false);
+    assert.deepEqual(attempts.filter(endpoint => !endpoint.startsWith('unix:')), ['https://example.test/', 'https://example.test:7297/']);
+    assert.ok(!attempts.some(endpoint => endpoint.startsWith('http:') || endpoint.startsWith('ws:')));
+  } finally { service.dispose(); }
+});
+
+test('REX_SERVER selects the default host while saved endpoints override it and retain secure fallback rules', async () => {
+  const previous = process.env.REX_SERVER;
+  const direct = fallbackService(() => false);
+  const secured = fallbackService(endpoint => endpoint.startsWith('https:'), true);
+  try {
+    process.env.REX_SERVER = 'https://account@environment.example';
+    const fallback = { id: 'local', label: 'Default', endpoint: '' };
+    assert.equal((await direct.service.status(fallback)).endpoint, 'https://account@environment.example');
+    assert.equal((await direct.service.control(fallback)).endpoint, 'https://account@environment.example');
+    assert.equal((await direct.service.status({ ...fallback, id: 'explicit', endpoint: 'unix:///tmp/explicit.sock' })).endpoint, 'unix:///tmp/explicit.sock');
+    assert.deepEqual(direct.attempts, ['https://account@environment.example', 'unix:///tmp/explicit.sock']);
+    process.env.REX_SERVER = 'environment.example';
+    assert.equal((await secured.service.status(fallback)).connected, false);
+    assert.deepEqual(secured.attempts.filter(endpoint => !endpoint.startsWith('unix:')), ['https://environment.example/', 'https://environment.example:7297/']);
+  } finally {
+    direct.service.dispose(); secured.service.dispose();
+    if (previous === undefined) delete process.env.REX_SERVER; else process.env.REX_SERVER = previous;
+  }
+});

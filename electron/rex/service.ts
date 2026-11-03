@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { normalizeView } from './normalize.js';
 import { RexControl, localEndpoint, type RexCredentials } from './control.js';
 import { RexTerminalStream, type FrameKind, type FrameSize } from './stream.js';
@@ -23,6 +24,7 @@ export class RexService {
   private options: RexServiceOptions;
   private reconnectTokens = new Map<string, string>();
   private streams = new Set<RexTerminalStream>();
+  private preferredEndpoints = new Map<string, string>();
 
   constructor(options: RexServiceOptions = {}) { this.options = options; }
 
@@ -48,7 +50,7 @@ export class RexService {
       const control = await this.control(host);
       const result = await control.call<{ version?: string; rex_version?: string }>('server.version', {});
       return { connected: true, endpoint: control.endpoint, version: result.version || result.rex_version };
-    } catch (error) { return { connected: false, endpoint: host.endpoint || localEndpoint(), error: errorMessage(error) }; }
+    } catch (error) { return { connected: false, endpoint: effectiveEndpoint(host.endpoint) || localEndpoint(), error: errorMessage(error) }; }
   }
 
   async sessions(host: RexHost): Promise<SessionSummary[]> {
@@ -217,15 +219,30 @@ export class RexService {
       this.controls.delete(key);
     }
     const pending = (async () => {
-      const endpoint = await this.resolveEndpoint(host);
       const credentials = await this.options.credentials?.(host);
-      const control = this.options.controlFactory
-        ? this.options.controlFactory(endpoint, credentials, this.reconnectTokens.get(key), this.options.apiRevisions)
-        : new RexControl(endpoint, credentials, this.reconnectTokens.get(key), this.options.apiRevisions);
-      let welcome;
-      try { welcome = await control.readyPublic(); }
-      catch (error) { control.dispose(); this.reconnectTokens.delete(key); throw error; }
-      if (welcome.client?.reconnect_token) this.reconnectTokens.set(key, welcome.client.reconnect_token);
+      const candidates = await this.resolveEndpoints(host);
+      const preferred = this.preferredEndpoints.get(key);
+      const endpoints = preferred && candidates.includes(preferred) ? [preferred, ...candidates.filter(endpoint => endpoint !== preferred)] : candidates;
+      const implicit = !explicitEndpoint(effectiveEndpoint(host.endpoint));
+      const protectedGateway = credentials && (credentials.username !== undefined || Boolean(credentials.password) || Boolean(credentials.token) || Object.keys(credentials.headers || {}).length > 0);
+      let control: RexControl | undefined;
+      let lastError: unknown;
+      for (const endpoint of endpoints) {
+        if (implicit && protectedGateway && /^(http|ws):\/\//.test(endpoint)) continue;
+        const candidate = this.options.controlFactory
+          ? this.options.controlFactory(endpoint, credentials, preferred === endpoint ? this.reconnectTokens.get(key) : undefined, this.options.apiRevisions)
+          : new RexControl(endpoint, credentials, preferred === endpoint ? this.reconnectTokens.get(key) : undefined, this.options.apiRevisions);
+        try {
+          const welcome = await candidate.readyPublic();
+          if (welcome.client?.reconnect_token) this.reconnectTokens.set(key, welcome.client.reconnect_token);
+          this.preferredEndpoints.set(key, endpoint);
+          control = candidate; break;
+        } catch (error) {
+          candidate.dispose(); this.reconnectTokens.delete(key); lastError = error;
+          if (/Unexpected server response: (401|403)/.test(errorMessage(error))) break;
+        }
+      }
+      if (!control) throw lastError || new Error('No secure Rex endpoint could be reached. Enter an explicit HTTPS address.');
       await this.options.onControl?.(host, control);
       if (this.disposed) { control.dispose(); throw new Error('Rex client has been closed.'); }
       // A reconnect discards the old client's viewport preferences. Restore
@@ -261,16 +278,20 @@ export class RexService {
     }
   }
 
-  private async resolveEndpoint(host: RexHost): Promise<string> {
-    if (!host.endpoint) return localEndpoint();
-    if (/^(unix|wss?|https?|tcp):\/\//.test(host.endpoint) || host.endpoint.startsWith('/')) return host.endpoint;
-    if (/^[^\s/:]+:\d+$/.test(host.endpoint) || /^\[[^\]]+\]:\d+$/.test(host.endpoint)) return `ws://${host.endpoint}`;
-    const local = await this.control({ id: '__local-discovery', label: 'Local server', endpoint: '' });
-    const result = await local.call<{ hosts?: { label?: string; endpoint?: string; address?: string; url?: string }[] }>('hosts.list', {});
-    const found = result.hosts?.find(item => item.label === host.endpoint);
-    const endpoint = found?.endpoint || found?.address || found?.url;
-    if (!endpoint) throw new Error('Saved Rex host was not found. Enter its Unix socket or HTTPS/WSS endpoint.');
-    return endpoint;
+  private async resolveEndpoints(host: RexHost): Promise<string[]> {
+    const endpoint = effectiveEndpoint(host.endpoint);
+    if (!endpoint) return [localEndpoint()];
+    if (explicitEndpoint(endpoint)) return expandEndpoint(endpoint);
+    let aliases: SavedHost[] = [];
+    // Alias lookup is optional: a remote connection must not depend on a
+    // running local server, and this temporary discovery client owns no pane.
+    if (existsSync(localEndpoint().slice(7))) {
+      const discovery = this.options.controlFactory ? this.options.controlFactory(localEndpoint(), undefined, undefined, this.options.apiRevisions) : new RexControl(localEndpoint(), undefined, undefined, this.options.apiRevisions);
+      try { await discovery.readyPublic(); aliases = (await discovery.call<{ hosts?: SavedHost[] }>('hosts.list', {})).hosts || []; }
+      catch { /* Try the documented remote hostname addresses below. */ }
+      finally { discovery.dispose(); }
+    }
+    return expandEndpoint(endpoint, aliases);
   }
 
   private release(host: RexHost, sessionId: string, blockId: string) {
@@ -281,6 +302,39 @@ export class RexService {
       await control.call('session.disown_block', { session_id: sessionId, block_ids: [blockId] });
     }).catch(() => {});
   }
+}
+
+export interface SavedHost { label: string; endpoints?: string[]; endpoint?: string; address?: string; url?: string }
+/** An explicit saved endpoint takes precedence over the process-wide default. */
+export function effectiveEndpoint(endpoint: string): string {
+  return endpoint || process.env.REX_SERVER?.trim() || '';
+}
+function explicitEndpoint(value: string): boolean {
+  return !value || /^(unix|wss?|https?|tcp):\/\//.test(value) || value.startsWith('/') || /^[^\s/:]+:\d+$/.test(value) || /^\[[^\]]+\]:\d+$/.test(value);
+}
+/** Resolve saved aliases before the documented implicit HTTPS/HTTP ports. */
+export function expandEndpoint(value: string, aliases: SavedHost[] = [], seen = new Set<string>()): string[] {
+  if (!value) return [localEndpoint()];
+  if (/^(unix|wss?|https?|tcp):\/\//.test(value) || value.startsWith('/')) return [value];
+  if (/^[^\s/:]+:\d+$/.test(value) || /^\[[^\]]+\]:\d+$/.test(value)) return [`ws://${value}`];
+  const alias = aliases.find(host => host.label.toLowerCase() === value.toLowerCase());
+  if (alias) {
+    const key = alias.label.toLowerCase();
+    if (seen.has(key) || seen.size > 8) throw new Error('Saved Rex host aliases form a cycle.');
+    const next = new Set(seen).add(key);
+    const addresses = alias.endpoints || [alias.endpoint || alias.address || alias.url || ''];
+    const endpoints = addresses.filter(Boolean).flatMap(address => expandEndpoint(address, aliases, next));
+    if (!endpoints.length) throw new Error('The saved Rex host has no endpoint.');
+    return [...new Set(endpoints)];
+  }
+  let url: URL;
+  try { url = new URL(`https://${value}`); }
+  catch { throw new Error('Enter a hostname, saved Rex host, or explicit Unix/HTTPS/WSS endpoint.'); }
+  if (!url.hostname || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('Enter a hostname without a path or password. Save gateway credentials separately.');
+  const first = url.href;
+  url.port = '7297'; const second = url.href;
+  url.protocol = 'http:'; const third = url.href;
+  return [first, second, third];
 }
 
 export function parseCommand(command: string): string[] {

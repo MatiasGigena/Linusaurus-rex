@@ -19,7 +19,10 @@ export function socketAddress(endpoint: string, path: string): string {
   const url = new URL(endpoint.startsWith('tcp://') ? `ws://${endpoint.slice(6)}` : endpoint);
   if (!['https:', 'wss:', 'http:', 'ws:'].includes(url.protocol)) throw new Error('Unsupported Rex endpoint scheme.');
   url.protocol = ['https:', 'wss:'].includes(url.protocol) ? 'wss:' : 'ws:';
-  if (url.username || url.password) throw new Error('Save remote credentials separately from the host endpoint.');
+  if (url.password) throw new Error('Save remote credentials separately from the host endpoint.');
+  // A URL username selects a Rex login-server account. It is not HTTP Basic
+  // authentication, and must never be left in the WebSocket request URL.
+  url.username = '';
   url.pathname = path; url.search = ''; url.hash = '';
   return url.href;
 }
@@ -27,7 +30,16 @@ export function openSocket(endpoint: string, path: string, protocol: string, cre
   const headers = { ...credentials?.headers };
   if (credentials?.token) headers.Authorization = `Bearer ${credentials.token}`;
   else if (credentials?.username !== undefined) headers.Authorization = `Basic ${Buffer.from(`${credentials.username}:${credentials.password || ''}`).toString('base64')}`;
-  return new WebSocket(socketAddress(endpoint, path), protocol, {
+  let account: string | undefined;
+  if (!endpoint.startsWith('unix://') && !endpoint.startsWith('/')) {
+    const url = new URL(endpoint.startsWith('tcp://') ? `ws://${endpoint.slice(6)}` : endpoint);
+    if (url.username) {
+      account = decodeURIComponent(url.username);
+      if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]{1,128}$/.test(account)) throw new Error('Invalid Rex account selector.');
+    }
+  }
+  const protocols = account ? [protocol, `rex.as.${account}`] : [protocol];
+  return new WebSocket(socketAddress(endpoint, path), protocols, {
     headers, handshakeTimeout: 6_000, maxPayload: 256 * 1024 * 1024,
     perMessageDeflate: false,
   });
