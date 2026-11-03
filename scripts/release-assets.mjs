@@ -142,17 +142,70 @@ export function verifyReleaseAssets(release, manifest, records) {
 }
 const defaultGh = async (args) =>
   (await execute("gh", args, { maxBuffer: 8 * 1024 * 1024 })).stdout;
+function releaseMetadata(value) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    typeof value.tag_name !== "string" ||
+    typeof value.draft !== "boolean" ||
+    !Array.isArray(value.assets)
+  )
+    throw new Error("GitHub returned invalid release metadata.");
+  return value;
+}
+async function findRelease(gh, tag) {
+  let response;
+  try {
+    response = await gh(["api", `repos/${REPOSITORY}/releases/tags/${tag}`]);
+  } catch (error) {
+    if (!/\bHTTP\s+404\b/.test(String(error.stderr || error.message)))
+      throw error;
+  }
+  if (response !== undefined) {
+    const release = releaseMetadata(JSON.parse(response));
+    if (release.tag_name !== tag)
+      throw new Error("GitHub returned a release for another tag.");
+    return release;
+  }
+  // GitHub's tag route excludes drafts even for authenticated maintainers.
+  // Read one JSON page per call, supporting older gh versions without --slurp.
+  const matches = [];
+  for (let page = 1; page <= 100; page++) {
+    const releases = JSON.parse(
+      await gh([
+        "api",
+        `repos/${REPOSITORY}/releases?per_page=100&page=${page}`,
+      ]),
+    );
+    if (!Array.isArray(releases) || releases.length > 100)
+      throw new Error("GitHub returned an invalid release list page.");
+    for (const value of releases) {
+      const release = releaseMetadata(value);
+      if (release.tag_name === tag) matches.push(release);
+    }
+    if (matches.length > 1)
+      throw new Error(
+        "Multiple GitHub releases match the exact tag; inspect them manually.",
+      );
+    if (releases.length < 100) return matches[0];
+  }
+  throw new Error(
+    "The GitHub release list exceeds the bounded 100-page discovery limit.",
+  );
+}
 export async function publishRelease({ directory, tag, sha, gh = defaultGh }) {
   let records = await packages(directory);
   const marker = ownershipMarker(tag, sha);
-  const metadata = async () =>
-    JSON.parse(await gh(["api", `repos/${REPOSITORY}/releases/tags/${tag}`]));
-  let release;
-  try {
-    release = await metadata();
-  } catch (error) {
-    if (!/404/.test(String(error.stderr || error.message))) throw error;
-  }
+  const metadata = async () => {
+    const release = await findRelease(gh, tag);
+    if (!release)
+      throw new Error(
+        "The release is missing after draft creation; retry after inspecting the draft.",
+      );
+    return release;
+  };
+  let release = await findRelease(gh, tag);
   if (release) assertOwnedDraft(release, tag, sha);
   else {
     const notes = join(directory, `.release-notes-${randomUUID()}.md`);
@@ -294,7 +347,7 @@ export async function publishRelease({ directory, tag, sha, gh = defaultGh }) {
     "--draft=false",
     "--latest",
   ]);
-  return release.html_url;
+  return `https://github.com/${REPOSITORY}/releases/tag/${tag}`;
 }
 if (
   process.argv[1] &&

@@ -8,6 +8,8 @@ Uploads remain in a draft until the helper verifies GitHub's actual asset names,
 
 An interrupted job can resume its own draft, identified by an ownership marker bound to the exact tag and commit. It reuses already completed, digest-verified uploads, uploads missing files, and removes only failed empty `starter` uploads. It does not clobber completed assets. Published releases and drafts without the matching ownership marker are refused. If an unrelated draft or an inconsistent completed manifest exists, inspect it manually rather than replacing published downloads.
 
+GitHub's release-by-tag API excludes drafts even when the caller can list them. On a tag-route HTTP 404, the helper searches authenticated release-list pages for the exact tag, then applies the same draft and commit ownership checks before every mutation. Each page is a separate JSON response, compatible with the installed `gh` CLI; duplicate matches, malformed pages, authentication failures and a search exceeding 100 pages stop publication. The successful output always uses the canonical tagged release URL, since a draft's temporary `untagged-*` URL changes when published.
+
 Local checks:
 
 ```bash

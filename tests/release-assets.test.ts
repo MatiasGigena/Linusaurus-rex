@@ -337,6 +337,8 @@ test("a new draft is created with commit ownership and remains unpublished if Gi
     let published = false;
     const gh = async (args: string[]) => {
       if (args[0] === "api") {
+        if (args[1].includes("releases?"))
+          return JSON.stringify(release ? [release] : []);
         if (!release)
           throw Object.assign(new Error("Release not found"), {
             stderr: "HTTP 404",
@@ -381,6 +383,187 @@ test("a new draft is created with commit ownership and remains unpublished if Gi
     );
     assert.equal(published, false);
     assert.equal(release!.draft, true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("draft creation and uploads succeed when the tag route stays404 and authenticated page2 contains the draft", async () => {
+  const directory = await fixture();
+  try {
+    await prepareRelease(directory, tag);
+    let release: ReleaseMetadata | undefined;
+    const calls: string[][] = [],
+      uploaded = new Map<string, Buffer>(),
+      unrelated = { tag_name: "v9.9.9", draft: false, assets: [] };
+    const gh = async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === "api") {
+        if (args[1].includes("/releases/tags/"))
+          throw Object.assign(new Error("Not Found"), { stderr: "HTTP 404" });
+        if (args[1].endsWith("releases?per_page=100&page=1"))
+          return JSON.stringify(Array.from({ length: 100 }, () => unrelated));
+        if (args[1].endsWith("releases?per_page=100&page=2"))
+          return JSON.stringify(release ? [release] : []);
+        throw new Error(`Unexpected API route: ${args[1]}`);
+      }
+      if (args[1] === "create") {
+        const body = await readFile(
+          args[args.indexOf("--notes-file") + 1],
+          "utf8",
+        );
+        release = {
+          tag_name: tag,
+          draft: true,
+          body,
+          assets: [],
+          html_url:
+            "https://github.com/MatiasGigena/Linusaurus-rex/releases/tag/untagged-draft",
+        };
+        return "";
+      }
+      if (args[1] === "upload") {
+        const name = basename(args[3]),
+          bytes = await readFile(args[3]);
+        assert.equal(uploaded.has(name), false);
+        uploaded.set(name, bytes);
+        release!.assets.push(remoteAsset(name, bytes));
+        return "";
+      }
+      if (args[1] === "download") {
+        await writeFile(
+          args[args.indexOf("--output") + 1],
+          uploaded.get(args[args.indexOf("--pattern") + 1])!,
+        );
+        return "";
+      }
+      if (args[1] === "edit") {
+        verifyReleaseAssets(
+          release!,
+          uploaded.get("SHA256SUMS")!.toString(),
+          await packages(directory),
+        );
+        release!.draft = false;
+        return "";
+      }
+      throw new Error(`Unexpected GH operation: ${args.join(" ")}`);
+    };
+    assert.equal(
+      await publishRelease({ directory, tag, sha, gh }),
+      `https://github.com/MatiasGigena/Linusaurus-rex/releases/tag/${tag}`,
+    );
+    assert.equal(release?.draft, false);
+    assert.equal(calls.filter((args) => args[1] === "create").length, 1);
+    assert.ok(
+      calls.filter((args) => args[0] === "api" && args[1].endsWith("&page=2"))
+        .length > 1,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("authenticated draft discovery refuses duplicate exact tags, malformed pages and API failures before mutation", async () => {
+  const directory = await fixture();
+  try {
+    await prepareRelease(directory, tag);
+    const owned = {
+        tag_name: tag,
+        draft: true,
+        body: ownershipMarker(tag, sha),
+        assets: [],
+      },
+      other = { ...owned, tag_name: "v8.8.8" };
+    for (const scenario of [
+      {
+        pages: [
+          [{ ...owned }, ...Array.from({ length: 99 }, () => other)],
+          [{ ...owned }],
+        ],
+        message: /Multiple/,
+      },
+      { pages: [{}], message: /invalid release list/ },
+      { pages: [[null]], message: /invalid release metadata/ },
+      {
+        pages: [[{ tag_name: tag, draft: true }]],
+        message: /invalid release metadata/,
+      },
+      {
+        pages: [[...Array.from({ length: 101 }, () => other)]],
+        message: /invalid release list/,
+      },
+      {
+        pages: [[{ ...owned, body: "Maintainer notes" }]],
+        message: /not owned/,
+      },
+      { pages: [[{ ...owned, draft: false }]], message: /immutable/ },
+    ]) {
+      let page = 0;
+      await assert.rejects(
+        publishRelease({
+          directory,
+          tag,
+          sha,
+          gh: async (args) => {
+            assert.equal(
+              args[0],
+              "api",
+              "Invalid discovery must not mutate GitHub",
+            );
+            if (args[1].includes("/tags/"))
+              throw Object.assign(new Error("Not Found"), {
+                stderr: "HTTP 404",
+              });
+            assert.equal(
+              args[1],
+              `repos/MatiasGigena/Linusaurus-rex/releases?per_page=100&page=${page + 1}`,
+            );
+            return JSON.stringify(scenario.pages[page++]);
+          },
+        }),
+        scenario.message,
+      );
+    }
+    for (const code of [401, 403, 500]) {
+      let count = 0;
+      await assert.rejects(
+        publishRelease({
+          directory,
+          tag,
+          sha,
+          gh: async (args) => {
+            count++;
+            assert.equal(args[0], "api");
+            throw Object.assign(new Error(`HTTP ${code}`), {
+              stderr: `HTTP ${code}`,
+            });
+          },
+        }),
+        new RegExp(`HTTP ${code}`),
+      );
+      assert.equal(
+        count,
+        1,
+        "Only an actual tag HTTP404 may invoke draft list fallback",
+      );
+    }
+    let pages = 0;
+    await assert.rejects(
+      publishRelease({
+        directory,
+        tag,
+        sha,
+        gh: async (args) => {
+          assert.equal(args[0], "api");
+          if (args[1].includes("/tags/"))
+            throw Object.assign(new Error("Not Found"), { stderr: "HTTP 404" });
+          pages++;
+          return JSON.stringify(Array.from({ length: 100 }, () => other));
+        },
+      }),
+      /bounded 100-page/,
+    );
+    assert.equal(pages, 100);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
