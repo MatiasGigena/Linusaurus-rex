@@ -291,7 +291,29 @@ export interface UpdateState {
   installKind: "appimage" | "deb" | "development";
   canApply: boolean;
 }
+export interface ServerServiceInfo {
+  unit: string;
+  scope: "user" | "system";
+  activeState: string;
+  subState?: string;
+  restart: string;
+  fragmentPath?: string;
+  dropInPaths: string[];
+  configuredOrigins: string[];
+  canManage: boolean;
+  reason?: string;
+}
+export interface ServerOriginPreview {
+  previewId: string;
+  unit: string;
+  path: string;
+  before: string | null;
+  after: string;
+  backupPath?: string;
+  restartRequired: true;
+}
 export interface ServerManagementInfo {
+  service?: ServerServiceInfo;
   local: boolean;
   running: boolean;
   canManage: boolean;
@@ -330,6 +352,15 @@ export interface TerminalFrame {
 type SessionRef = { hostId: string; sessionId: string };
 type WindowRef = SessionRef & { windowId: string };
 export interface RexMethods {
+  previewServerOrigins: {
+    args: { hostId: string; origins: string[] };
+    result: ServerOriginPreview;
+  };
+  applyServerOrigins: {
+    args: { hostId: string; previewId: string };
+    result: ServerManagementInfo;
+  };
+
   createTutorial: {
     args: { hostId: string };
     result: { sessionId: string; windowId: string; blockId: string };
@@ -373,7 +404,7 @@ export interface RexMethods {
   unsubscribe: { args: { subscriptionId: string }; result: void };
   input: { args: TerminalRef & { data: string }; result: void };
   resize: { args: TerminalRef & { cols: number; rows: number }; result: void };
-  releaseViewport:{args:TerminalRef;result:void};
+  releaseViewport: { args: TerminalRef; result: void };
   key: {
     args: TerminalRef & { event: RexKeyEvent; prefix?: string[] };
     result: { handled: boolean };
