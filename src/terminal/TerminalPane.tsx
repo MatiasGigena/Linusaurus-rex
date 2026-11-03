@@ -20,6 +20,24 @@ export interface TerminalPaneProps {
 export function dispatchTerminalCommand(command: string, target?: TerminalRef): void {
   window.dispatchEvent(new CustomEvent('rex-terminal-command', { detail: target ? { command, target } : command }));
 }
+interface TerminalCommandRequest {
+  command: string;
+  target?: TerminalRef;
+  acknowledge?(completion: Promise<void>): void;
+}
+/** Resolves when a ready pane accepts the command, without waiting behind its current key RPC. */
+export function dispatchTerminalCommandAsync(command: string, target?: TerminalRef): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let accepted = false;
+    const detail: TerminalCommandRequest = { command, target, acknowledge(completion) {
+      if (accepted) return;
+      accepted = true;
+      void completion.then(resolve, reject);
+    } };
+    window.dispatchEvent(new CustomEvent('rex-terminal-command', { detail }));
+    if (!accepted) reject(new Error('The target terminal pane is not visible or is no longer available.'));
+  });
+}
 function currentSelection(term: Terminal) {
   const position = term.getSelectionPosition();
   return position && { position, text: term.getSelection() };
@@ -73,7 +91,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     runtime.serverThemeSignature = undefined;
     hostElement.replaceChildren(runtime.element);
     runtimeRef.current = runtime;
-    let disposed = false, online = false, generation = 0, composing = false, deadKey = false, writing = false, replayingSnapshot = false, sawFrame = false;
+    let disposed = false, online = false, commandReady = false, disconnected = false, generation = 0, composing = false, deadKey = false, writing = false, replayingSnapshot = false, sawFrame = false;
     let inputQueue = Promise.resolve();
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -84,17 +102,38 @@ export function TerminalPane(props: TerminalPaneProps) {
     let layout: ReadonlyMap<string, string> | undefined;
     let pointerButton: 'left' | 'middle' | 'right' | undefined;
     let selectionAnchor: number | undefined;
+    let promptNavigationMarker: TerminalRuntime['prompts'][number] | undefined;
+    let promptNavigationViewport = -1;
     let lastMouseCell = '', lastSize = '';
     const pressedKeys = new Set<string>();
+    const commandWaiters = new Set<{ resolve(generation: number): void; reject(failure: Error): void; timer: ReturnType<typeof setTimeout> }>();
     const ref = { hostId, sessionId, blockId };
     const subscriptionId = crypto.randomUUID();
+    const rejectPendingCommands = (message: string) => {
+      for (const waiter of commandWaiters) { clearTimeout(waiter.timer); waiter.reject(new Error(message)); }
+      commandWaiters.clear();
+    };
+    const waitForCommands = (): Promise<number> => {
+      if (disposed || !visible) return Promise.reject(new Error('The terminal pane is no longer visible.'));
+      if (online && commandReady) return Promise.resolve(generation);
+      if (disconnected) return Promise.reject(new Error('The terminal is disconnected; wait for it to reconnect.'));
+      return new Promise((resolve, reject) => {
+        const waiter = { resolve, reject, timer: setTimeout(() => {
+          commandWaiters.delete(waiter);
+          reject(new Error('The terminal did not become ready within 10 seconds.'));
+        }, 10_000) };
+        commandWaiters.add(waiter);
+      });
+    };
+    const reportCommandError = (failure: unknown) => { if (!disposed) setError(displayError(failure)); };
     const fail = (failure: unknown) => {
-      generation++; online = false;
+      generation++; online = false; commandReady = false; disconnected = true;
+      rejectPendingCommands(displayError(failure));
       if (!disposed) { setConnected(false); setError(displayError(failure)); }
     };
     // A failed send invalidates later queued input; none is retried after reconnect.
     const enqueue = (send: () => Promise<unknown>) => {
-      if (!online || !visible || disposed) return;
+      if (!online || !visible || disposed) return false;
       const inputGeneration = generation;
       inputQueue = inputQueue.then(async () => {
         if (disposed || !online || generation !== inputGeneration) return;
@@ -109,6 +148,7 @@ export function TerminalPane(props: TerminalPaneProps) {
           }
         }
       });
+      return true;
     };
     const sendSize = () => {
       if (disposed || !visible || !document.hasFocus() || !hostElement.isConnected || hostElement.clientWidth === 0 || hostElement.clientHeight === 0) return;
@@ -136,6 +176,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       }
       if (!pendingFrames.length) return;
       const frame = pendingFrames.shift()!;
+      const frameGeneration = generation;
       pendingBytes -= frame.data?.length ?? 0;
       const before = term.buffer.active, atBottom = before.viewportY >= before.baseY, previousScroll = before.viewportY;
       const snapshot = !frame.kind || frame.kind === 'snapshot';
@@ -150,6 +191,11 @@ export function TerminalPane(props: TerminalPaneProps) {
         replayingSnapshot = false;
         if (!atBottom || !settingsRef.current.scrollOnOutput) term.scrollToLine(previousScroll);
         if (snapshot || frame.kind === 'resize') { if (snapshot) lastSize = ''; resizeAnimation = requestAnimationFrame(sendSize); }
+        if (frame.kind !== 'resize' && online && generation === frameGeneration && !commandReady && !pendingFrames.some((pending) => !pending.kind || pending.kind === 'snapshot')) {
+          commandReady = true;
+          for (const waiter of commandWaiters) { clearTimeout(waiter.timer); waiter.resolve(generation); }
+          commandWaiters.clear();
+        }
         drawNext();
       };
       writing = true;
@@ -161,7 +207,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       if (frame.error) { fail(frame.error); return; }
       if (frame.data === undefined && frame.kind !== 'resize') return;
       const recovered = !online;
-      if (recovered) { generation++; pressedKeys.clear(); }
+      if (recovered) { generation++; disconnected = false; pressedKeys.clear(); }
       online = true; setConnected(true); setError(undefined);
       if (recovered && callbacks.current.focused) enqueue(() => window.rex.request('focusEvent', { ...ref, focused: true }));
       if (recovered && visible) {
@@ -169,7 +215,7 @@ export function TerminalPane(props: TerminalPaneProps) {
         synchronizeTheme(runtime, ref, settingsRef.current, (message) => { if (!disposed) setError(message); });
       }
       sawFrame = true;
-      if (!frame.kind || frame.kind === 'snapshot') { pendingFrames = []; pendingBytes = 0; }
+      if (!frame.kind || frame.kind === 'snapshot') { commandReady = false; pendingFrames = []; pendingBytes = 0; }
       pendingFrames.push(frame); pendingBytes += frame.data?.length ?? 0;
       // A validated initial snapshot may exceed the live-output backlog limit.
       // Rejecting it here would reconnect forever to the same large scrollback.
@@ -185,23 +231,28 @@ export function TerminalPane(props: TerminalPaneProps) {
     const copy = () => {
       if (term.hasSelection()) void window.rex.writeClipboard(term.getSelection()).catch((failure: unknown) => setError(displayError(failure)));
     };
-    const paste = async (text?: string) => {
-      try {
-        const value = text ?? await window.rex.readClipboard();
-        if (new TextEncoder().encode(value).length > 1024 * 1024) throw new Error('Paste is larger than the 1 MiB input limit.');
-        enqueue(() => window.rex.request('paste', { ...ref, text: value }));
-      } catch (failure) { if (!disposed) setError(displayError(failure)); }
+    const paste = async (text?: string, commandGeneration?: number) => {
+      const readyGeneration = commandGeneration ?? await waitForCommands();
+      const value = text ?? await window.rex.readClipboard();
+      if (new TextEncoder().encode(value).length > 1024 * 1024) throw new Error('Paste is larger than the 1 MiB input limit.');
+      if (generation !== readyGeneration || !commandReady || !enqueue(() => window.rex.request('paste', { ...ref, text: value }))) {
+        throw new Error('The terminal connection changed before paste could be accepted.');
+      }
     };
     const promptNavigation = (direction: 'previous' | 'next') => {
-      const line = term.buffer.active.viewportY;
+      const buffer = term.buffer.active;
+      const logicalMarker = promptNavigationMarker && !promptNavigationMarker.isDisposed && promptNavigationViewport === buffer.viewportY ? promptNavigationMarker : undefined;
+      // A prompt inside the last screen cannot be scrolled to the very top.
+      // Keep its marker as the logical position so the next jump still advances.
+      const line = logicalMarker ? logicalMarker.line : buffer.viewportY === buffer.baseY ? buffer.baseY + buffer.cursorY : buffer.viewportY;
       const markers = runtime.prompts.filter((marker) => !marker.isDisposed);
-      const marker = direction === 'previous' ? markers.filter((item) => item.line < line || (line === term.buffer.active.baseY && item.line < line + term.buffer.active.cursorY)).at(-1) : markers.find((item) => item.line > line);
-      if (marker) term.scrollToLine(marker.line);
+      const marker = direction === 'previous' ? markers.filter((item) => item.line < line).at(-1) : markers.find((item) => item.line > line);
+      if (marker) { term.scrollToLine(marker.line); promptNavigationMarker = marker; promptNavigationViewport = term.buffer.active.viewportY; }
     };
-    const handleCommand = (command: string) => {
+    const handleCommand = (command: string, commandGeneration: number) => {
       switch (command) {
         case 'copy': copy(); break;
-        case 'paste': void paste(); break;
+        case 'paste': return paste(undefined, commandGeneration);
         case 'select-all': term.selectAll(); break;
         case 'find': setSearchOpen(true); break;
         case 'find-next': setSearchOpen(true); searchOperation.current(false); break;
@@ -232,13 +283,22 @@ export function TerminalPane(props: TerminalPaneProps) {
         default: callbacks.current.onAction?.(command);
       }
     };
-    commandRef.current = handleCommand;
+    const executeCommand = async (command: string) => {
+      const commandGeneration = await waitForCommands();
+      if (disposed || !online || !commandReady || commandGeneration !== generation) throw new Error('The terminal connection changed before the command could be accepted.');
+      await handleCommand(command, commandGeneration);
+    };
+    commandRef.current = (command) => { void executeCommand(command).catch(reportCommandError); };
     const commandListener = (event: Event) => {
       if (!visible || !hostElement.isConnected) return;
-      const detail = (event as CustomEvent<string | { command: string; target?: TerminalRef }>).detail;
+      const detail = (event as CustomEvent<string | TerminalCommandRequest>).detail;
       const target = typeof detail === 'string' ? undefined : detail.target;
       const matches = target ? target.hostId === hostId && target.sessionId === sessionId && target.blockId === blockId : callbacks.current.focused;
-      if (matches) handleCommand(typeof detail === 'string' ? detail : detail.command);
+      if (matches) {
+        const completion = executeCommand(typeof detail === 'string' ? detail : detail.command);
+        void completion.catch(reportCommandError);
+        if (typeof detail !== 'string') detail.acknowledge?.(completion);
+      }
     };
     window.addEventListener('rex-terminal-command', commandListener);
     const cursorStyleListener = term.parser.registerCsiHandler({ intermediates: ' ', final: 'q' }, (params) => {
@@ -272,7 +332,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     const clipboardPaste = (event: ClipboardEvent) => {
       if (!visible) return;
       event.preventDefault(); event.stopImmediatePropagation();
-      if (event.clipboardData?.types.includes('text/plain')) void paste(event.clipboardData.getData('text/plain')); else void paste();
+      void paste(event.clipboardData?.types.includes('text/plain') ? event.clipboardData.getData('text/plain') : undefined).catch(reportCommandError);
     };
     const compositionStart = () => { composing = true; nativeTextUntil = performance.now() + 1500; };
     const compositionEnd = () => { composing = false; nativeTextUntil = performance.now() + 250; };
@@ -402,6 +462,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     sendSize(); startSubscription();
     return () => {
       disposed = true; online = false; generation++;
+      rejectPendingCommands('The terminal pane was hidden or closed before the command became ready.');
       clearTimeout(resizeTimer); clearTimeout(retryTimer); clearTimeout(copyTimer); cancelAnimationFrame(motionAnimation); cancelAnimationFrame(resizeAnimation);
       observer.disconnect(); unsubscribe(); cursorStyleListener.dispose();
       dataListener.dispose(); selectionListener.dispose(); titleListener.dispose(); bellListener.dispose(); links.dispose(); appLinks.dispose(); resultsListener.dispose();
