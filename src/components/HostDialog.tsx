@@ -72,6 +72,10 @@ export function HostDialog({
               id: host?.id || crypto.randomUUID(),
               label: label.trim(),
               endpoint: endpoint.trim(),
+              ...(host?.endpoint === endpoint.trim() &&
+              host.websocketOrigins !== undefined
+                ? { websocketOrigins: host.websocketOrigins }
+                : {}),
               ...(startupMode === "inherit"
                 ? {}
                 : {

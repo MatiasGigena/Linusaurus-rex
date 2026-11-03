@@ -3,6 +3,7 @@ export interface Host {
   label: string;
   endpoint: string;
   startupCommand?: string;
+  websocketOrigins?: string[];
 }
 export interface SessionSummary {
   id: string;
@@ -156,6 +157,27 @@ export interface Settings {
   selectionBackground: string;
   showWindowOnLaunch: boolean;
   developerMode: boolean;
+  themeLibrary: { id: string; name: string; colors: Record<string, string> }[];
+  lightThemeId: string;
+  darkThemeId: string;
+  shellIconTheme: "default" | "theme" | "accent";
+  tintInterface: boolean;
+  highlightAnimation: "fade" | "move" | "instant";
+  inactivePaneFadeTarget: "content" | "surfaces" | "both";
+  graphicsEnabled: boolean;
+  forceThemePalette: boolean;
+  displayP3: boolean;
+  cursorEffect: "off" | "warp" | "comet" | "blaze";
+  matchProgramBackground: boolean;
+  paddingColor: "pane" | "extend";
+  selectionCopyAnimation: boolean;
+  selectionRounded: boolean;
+  smoothResize: boolean;
+  boldPolicy: "always" | "font" | "never";
+  italicPolicy: "always" | "font" | "never";
+  autoCheckUpdates: boolean;
+  autoDownloadUpdates: boolean;
+  installUpdatesWhenIdle: boolean;
 }
 export interface ProgramActivity {
   id: string;
@@ -248,7 +270,44 @@ export type ClientEvent =
       hints: string[];
     }
   | { type: "keymap"; hostId: string; keymap: KeymapResult }
-  | { type: "settings"; settings: Settings };
+  | { type: "settings"; settings: Settings }
+  | { type: "update"; state: UpdateState };
+export interface UpdateState {
+  phase:
+    | "idle"
+    | "checking"
+    | "available"
+    | "downloading"
+    | "ready"
+    | "scheduled"
+    | "current"
+    | "error";
+  currentVersion: string;
+  version?: string;
+  bytes?: number;
+  total?: number;
+  releaseUrl?: string;
+  error?: string;
+  installKind: "appimage" | "deb" | "development";
+  canApply: boolean;
+}
+export interface ServerManagementInfo {
+  local: boolean;
+  running: boolean;
+  canManage: boolean;
+  reason?: string;
+  pid?: number;
+  sessionCount: number;
+  endpoint: string;
+  executable?: string;
+  arguments: string[];
+  origins: string[];
+  pendingOrigins?: string[];
+  version?: string;
+  binarySha256?: string;
+  configPath?: string;
+  stateDirectory?: string;
+}
 export interface ServerStatus {
   connected: boolean;
   version?: string;
@@ -271,6 +330,20 @@ export interface TerminalFrame {
 type SessionRef = { hostId: string; sessionId: string };
 type WindowRef = SessionRef & { windowId: string };
 export interface RexMethods {
+  createTutorial: {
+    args: { hostId: string };
+    result: { sessionId: string; windowId: string; blockId: string };
+  };
+  updateStatus: { args: Record<string, never>; result: UpdateState };
+  checkUpdates: { args: Record<string, never>; result: UpdateState };
+  downloadUpdate: { args: Record<string, never>; result: UpdateState };
+  applyUpdate: { args: { whenIdle?: boolean }; result: UpdateState };
+  cancelUpdate: { args: Record<string, never>; result: UpdateState };
+  serverManagement: { args: { hostId: string }; result: ServerManagementInfo };
+  serverLifecycle: {
+    args: { hostId: string; operation: "start" | "stop" | "restart" };
+    result: ServerManagementInfo;
+  };
   status: { args: { hostId: string }; result: ServerStatus };
   listSessions: { args: { hostId: string }; result: SessionSummary[] };
   inspectSession: { args: SessionRef; result: SessionView };
@@ -300,6 +373,7 @@ export interface RexMethods {
   unsubscribe: { args: { subscriptionId: string }; result: void };
   input: { args: TerminalRef & { data: string }; result: void };
   resize: { args: TerminalRef & { cols: number; rows: number }; result: void };
+  releaseViewport:{args:TerminalRef;result:void};
   key: {
     args: TerminalRef & { event: RexKeyEvent; prefix?: string[] };
     result: { handled: boolean };
@@ -453,7 +527,11 @@ export interface RexMethods {
   };
   removeCredentials: { args: { hostId: string }; result: void };
   setContext: {
-    args: Partial<Selection> & { blockId?: string; visible?: boolean };
+    args: Partial<Selection> & {
+      blockId?: string;
+      visible?: boolean;
+      uiBusy?: boolean;
+    };
     result: void;
   };
   openExternal: { args: { url: string }; result: void };
@@ -639,4 +717,25 @@ export const DEFAULT_SETTINGS: Settings = {
   inactiveWindowFade: 0,
   useExtendedLightPalette: true,
   useExtendedDarkPalette: true,
+  themeLibrary: [],
+  lightThemeId: "",
+  darkThemeId: "",
+  shellIconTheme: "default",
+  tintInterface: false,
+  highlightAnimation: "fade",
+  inactivePaneFadeTarget: "both",
+  graphicsEnabled: true,
+  forceThemePalette: false,
+  displayP3: false,
+  cursorEffect: "off",
+  matchProgramBackground: true,
+  paddingColor: "pane",
+  selectionCopyAnimation: true,
+  selectionRounded: true,
+  smoothResize: true,
+  boldPolicy: "always",
+  italicPolicy: "always",
+  autoCheckUpdates: false,
+  autoDownloadUpdates: false,
+  installUpdatesWhenIdle: false,
 };
