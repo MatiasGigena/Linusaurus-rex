@@ -11,7 +11,9 @@ This independent, unofficial application uses Electron, React, xterm.js and the 
 - Physical-layout keys, IME/dead keys, bracketed paste, mouse/wheel reporting, local selection/scrollback, terminal search, prompt navigation and text export. Ghostty-derived Unicode widths cover modern emoji and combining characters.
 - Program activity, progress and attention labels; per-kind tab/desktop/badge/sound preferences; OSC 9/777 notifications; click-to-open the owning tab; Tailscale status notifications.
 - Server-resolved Lua actions, configurable shortcuts, key sequences, modes and next-key hints. Remote client control can be disabled.
-- Remote file/directory picker, non-terminal block discovery/inspector, separate light/dark theme imports, terminal typography and cursor preferences, interface zoom and left/right/top tabs.
+- Remote file/directory picker, a persistent interactive tutorial block, non-terminal block discovery/inspector, a named light/dark theme library, terminal typography/cursor/image preferences, interface zoom and left/right/top tabs.
+- Bounded live Sixel/iTerm2 and direct Kitty images, RGB-to-theme mapping, capability-gated Display P3 text, cursor effects, program-matched pane backgrounds and padding, and granular selection/highlight/fade controls.
+- Linux server launch-profile/status/integrity inspection, idle-only lifecycle controls, pending web-origin edits, and verified client update downloads/application.
 - Connection/API/Tailscale diagnostics, remote-address QR codes, confirmed Tailscale enrollment/access controls, and previewed agent integration setup/removal.
 
 ## Requirements and run
@@ -32,7 +34,7 @@ npm run build
 npm start
 ```
 
-Select an existing session or create your own in the sidebar. The app never automatically installs, starts, stops or replaces the Rex server. Saving server configuration or changing Tailscale access is an explicit UI action. Closing a pane, tab or session ends its programs and asks for confirmation by default.
+Select an existing session or create your own in the sidebar. Opening the app does not automatically install, start, stop or replace the Rex server. Explicit local lifecycle controls can start a managed endpoint and stop/restart an identified idle server; existing sessions cause stop/restart to be refused. Saving server configuration or changing Tailscale access is an explicit UI action. Closing a pane, tab or session ends its programs and asks for confirmation by default.
 
 `npm run dev` watches renderer, main-process and preload sources; restart it after changing main/preload code so Electron loads the new bundle.
 
@@ -100,6 +102,9 @@ npm run package:dir   # Unpacked Linux application
 
 Packaging may download Electron/build tools. Packages do not include the Rex server. A launcher for a built checkout can be installed with `node scripts/install-desktop.mjs`, or pass an absolute AppImage path. It writes to your user application/icon directories under `$XDG_DATA_HOME` or `~/.local/share`; keep the target at that path.
 
+The checked-in [Linux release workflow](.github/workflows/release.yml) accepts a pushed stable `vX.Y.Z` tag or a manual run for an existing matching tag. It verifies the tag against `package.json`, tests/builds the x86-64 AppImage and Debian package, computes/verifies `SHA256SUMS`, then uploads a draft release before publishing it. Existing published release assets are not overwritten. Adding the workflow does not itself run it or publish an update.
+
+
 ```bash
 npm run typecheck
 npm test
@@ -108,17 +113,24 @@ npm run test:integration
 npm run test:terminal
 npm run test:ui
 npm run test:actions
+npm run test:services
+npm run test:graphics
+npm run test:accessibility
 ```
 
-The final source run passed **63/63 tests with zero skips or failures**, plus the installed-Rex Electron smoke and native-action fixtures. Both fixtures also passed against the actual **0.2.0 AppImage**. AppImage and Debian builds succeeded; Debian version, amd64 architecture and dependency metadata were verified.
+The 0.3 source run passed **86/86 tests with zero skips or failures**, with integration and browser tests enabled. Native Electron fixtures passed for Linux services/tutorials, installed-Rex graphics, and accessibility. Accessibility checks cover 15 views with zero axe violations, keyboard focus/navigation, and actual terminal input/output in Chromium and native AT-SPI (235 owned nodes). Incomplete/manual-review checks remain visible in the generated report; these results do not claim universal WCAG/compositor conformance. Final 0.3 package verification is recorded separately after its native runs complete.
 
-Browser tests use `/usr/bin/chromium`, or the executable selected with `CHROMIUM_PATH`. Electron checks require a graphical display. Installed-server tests create their own sessions and remove only the returned IDs. They cover ordered VT/resume, primary/alternate screens, input/resize, API 8 without a CLI, client actions, Lua sequences/modes, directory listing and advanced layouts. Browser tests exercise rendering, selection/search, theme/cursor preferences, Unicode widths, link handling and reconnect/tab state. Electron smoke tests open the desktop application.
+Browser tests use `/usr/bin/chromium`, or the executable selected with `CHROMIUM_PATH`. Electron checks require a graphical display. Native accessibility checks also use the system Python `pyatspi` module and generate `test-results/accessibility-report.json`; the audit uses a single-frame Electron-compatible axe aggregation mode without disabling accessibility rules. Installed-server tests create their own sessions and remove only the returned IDs. They cover ordered VT/resume, primary/alternate screens, input/resize, API 8 without a CLI, client actions, Lua sequences/modes, directory listing and advanced layouts. Browser tests exercise rendering, selection/search, theme/cursor preferences, Unicode widths, link handling and reconnect/tab state. Electron smoke tests open the desktop application.
 
-## Current limits
+## Linux services, updates and remaining distinctions
 
-This is not complete Mac feature parity. The app does not manage an included server installation, restart an externally installed server, or provide an upstream auto-updater. Mac permissions, Glass materials and Dock-specific controls are not Linux equivalents.
+Settings → Server → Updates and Linux services exposes the connected executable/profile, version, process/config/state details and binary SHA-256 where available. Server stop/restart requires Rex to atomically confirm that **no sessions exist**. The installed server and existing programs are retained during normal attachment, client exit, client updates and refused lifecycle requests. Remote services remain under their own manager. Web-origin changes preserve unrelated arguments and wait for the next idle local restart.
 
-Remaining rendering/preferences include full Kitty graphics/sixel support, Display P3, RGB-to-theme color remapping, cursor shaders and some selection/background effects. Imported themes retain one light and one dark palette, each with its own extended-palette switch. Non-terminal blocks expose an inspector rather than bespoke plugin interfaces. Screen-reader mode is enabled, but comprehensive AT-SPI accessibility and physical-device/compositor testing remain outstanding. The [parity inventory](docs/CLIENT_PARITY.md) records each distinction.
+Client updates use this repository's stable GitHub releases and require a compatible package plus a SHA-256 manifest. AppImages are replaced atomically with a previous-version backup and relaunched; Debian packages use the system installer. Automatic checking/downloading and idle application are opt-in. A release must actually be published before an update is offered. Development/source builds do not self-install packages. This app does not distribute or update the externally installed Rex server binary.
+
+Live inline images cover Sixel/iTerm2 and a bounded direct-transfer Kitty subset. Kitty includes bounded parent-relative placement chains, up to 64 animation frames, and canonical Unicode virtual placeholders. File/shared-memory transports and full image/text z-layer compositing are not implemented. Copying protocol placeholder cells can include placement metadata; ordinary terminal text is unchanged. Ghostty snapshots omit image data, so a new attachment cannot restore images emitted before it connected. Rex does not reserve Sixel cells: foreground/fullscreen emitters must manage cursor placement, and returning to a shell redraw can overwrite the image. Known onboarding blocks have a native interactive view; unknown future plugins retain their API inspector. Display P3 text requires runtime/display support; image decoders retain their own color space.
+
+Mac system permissions, Glass materials, Dock-specific artwork/visibility and upstream update channels are platform distinctions. Canvas cursor effects provide a Linux alternative to upstream Metal shader files. The [parity inventory](docs/CLIENT_PARITY.md) records each implemented behavior and remaining distinction; validation results distinguish automated coverage from physical-device/compositor checks.
 
 Preferences normally live in Electron’s user configuration directory (`~/.config/Linusaurus Rex/settings.json`), or the selected `--config` file. Connection diagnostics and the saved host editor are the first places to investigate a disconnected host. Reconnection does not replay terminal input.
 

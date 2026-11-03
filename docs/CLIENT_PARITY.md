@@ -1,4 +1,4 @@
-# Rex client parity inventory — 0.2 implementation
+# Rex client parity inventory — 0.3 implementation
 
 Reviewed against the downloaded official action/settings references and the example repository on 2026-11-03. This is an implementation inventory, not a claim of complete Mac feature parity or a substitute for the validation results below.
 
@@ -9,6 +9,7 @@ Reviewed against the downloaded official action/settings references and the exam
 - [Official Mac client actions](https://www.superlogical.com/rex/docs/reference/mac-actions). Names are preserved for `rex do`, Lua keymaps and remote client actions; Linux shortcuts use Ctrl/Super conventions rather than copying macOS shortcuts.
 - [Official Mac client settings](https://www.superlogical.com/rex/docs/reference/mac-settings). The matrix distinguishes common client behavior from Mac materials, permissions and the upstream updater.
 - [Linux installation and existing-server model](https://www.superlogical.com/rex/docs/linux/installation). The installed server is reused; opening this app does not replace or restart it.
+- [Canonical Ghostty snapshot constraints](https://github.com/KooshaPari/Khostty/blob/main/src/terminal/snapshot/terminal.zig#L238): version 1 omits Kitty image/placement state; virtual placeholder cells alone cannot restore an image.
 - [rex-rune README at 9817d404](https://github.com/shuv1337/rex-rune/blob/9817d40496a703d33aabcae208e71774d1709a5a/README.md). Its MIT license permits reference use. This app remains an independent client, not an official Superlogical release.
 
 ## Example repository feature coverage
@@ -37,7 +38,7 @@ Reviewed against the downloaded official action/settings references and the exam
 | API revisions 7–8, including newer compatible servers | Implemented | Negotiation supports revisions 7–10. Mock tests cover explicit API 7; installed-server integration covers API 10 and constrained API 8. |
 | Example command-line launch flags | Implemented | Supports --endpoint, --session, --new, --block, --font, --font-size, --config and --window-size. Exact/ambiguous labels are checked; only explicit --new creates a session. REX_SERVER is the default endpoint override; launch flags are covered by focused tests. |
 | Linux desktop installation/packages | Implemented | electron-builder configuration produces AppImage and Debian artifacts and desktop identity/icon metadata. Packaging verification is recorded separately from protocol tests. |
-| Full terminal-protocol/graphics and accessibility parity | Partial | Text terminal behavior is provided by xterm with Ghostty snapshots and canonical Ghostty-derived Unicode-width tables, checked against the installed server. Full Kitty graphics/sixel parity is not implemented, and AT-SPI/screen-reader behavior has not received a comprehensive audit; screenReaderMode is enabled. |
+| Full terminal-protocol/graphics and accessibility parity | Partial | Live Sixel/iTerm2 images and bounded direct-transfer Kitty rendering supplement xterm text/Unicode output. Kitty supports raw gray/gray-alpha/RGB/RGBA/PNG, zlib/chunks, crop/place/delete, parent-relative chains, animation and Unicode virtual placeholders. File/shared-memory transports and complete image/text z-layer compositing are outside the supported subset. The upstream Ghostty snapshot format omits image data, so a new attachment cannot restore images emitted before it connected. Rex does not reserve Sixel cells; foreground/fullscreen emitters must manage cursor placement because shell redraws can overwrite those images. Accessibility evidence is recorded separately below. |
 
 ## Every documented client action
 
@@ -59,18 +60,18 @@ Registered actions are advertised in [`src/shared/actions.ts`](../src/shared/act
 | `client.palette.toggle` | Implemented | Search client/server actions and workspaces. |
 | `client.settings` | Implemented | Appearance, terminal, notifications, hosts, agents, shortcuts and server preferences. |
 | `client.diagnostics` | Implemented | Opens server/API/Tailscale diagnostics locally or through a remote client action. |
-| `client.onboarding` | Partial | Welcome/help dialog; does not create the upstream tutorial session. |
+| `client.onboarding` | Implemented | Creates a persistent Rex tutorial block with a native Linux view, saved step/progress, appearance/shortcut/agent guidance and an explicit terminal-practice step. |
 | `client.permissions` | Platform-specific | macOS system-permission onboarding is not applicable to this Linux client. |
 | `client.visibility.toggle` | Implemented | Native show/hide, also available via a global shortcut. |
 | `client.version.copy` | Implemented | Copies app/server version information. |
 | `client.debug.copy` | Implemented | Copies client/system/connection report. |
 | `client.pair_device` | Implemented | QR code contains the advertised HTTPS server address; the server’s existing identity/access checks apply. |
-| `client.update.accept` | Remaining | No downloaded-update install/relaunch pipeline is shipped. |
-| `client.update.accept_when_idle` | Remaining | No downloaded-update/idle relaunch pipeline is shipped. |
+| `client.update.accept` | Implemented | Applies a verified Linux client package: atomically replaces/relaunches an AppImage, or opens a Debian package in the system installer. Source builds direct the user to packaged installation. |
+| `client.update.accept_when_idle` | Implemented | Schedules the verified client update when local client activity becomes idle; cancelling clears the schedule. Rex server processes and sessions are not restarted by client updates. |
 | `client.notice.dismiss` | Implemented | Dismisses current in-app notices. |
 | `client.shortcuts.edit` | Implemented | Opens shortcut editor and Rex configuration access. |
 | `client.agents.setup` | Implemented | Opens integration preview/setup/removal UI. |
-| `client.server.restart` | Remaining | No start/stop/restart management of the externally installed server; preserves its lifecycle/flags. |
+| `client.server.restart` | Implemented | A local Linux launch profile is inspected/preserved. Stop/restart require Rex to atomically confirm zero sessions; servers with existing sessions are refused. Remote processes and local processes that cannot be identified safely remain under their existing manager. |
 
 ### Session
 
@@ -239,7 +240,7 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 | Documented setting | Status | Behavior / limitation |
 | --- | --- | --- |
 | Server status | Implemented | Diagnostics presents connection/version, start time, API range, session count, Tailscale and HTTPS state, plus copyable raw details. |
-| Compatibility | Partial | Negotiates APIs 7–10 and reports handshake failure. No managed bundled-server update/restart remediation. |
+| Compatibility | Implemented | Negotiates APIs 7–10 and reports failures. Local runtime/profile/version/hash diagnostics and idle-only lifecycle controls are available; this app does not replace the externally installed server binary. |
 
 ### Server / Remote Address
 
@@ -271,7 +272,7 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 | --- | --- | --- |
 | Color scheme | Implemented | System/light/dark appearance. |
 | Interface style | Platform-specific | Native macOS Glass/Classic material choices are not reproduced by Electron Linux surfaces. |
-| Tint with theme | Partial | Terminal palette and interface accent styling exist; no independent theme-tint preference. |
+| Tint with theme | Implemented | Independent interface-tint preference uses the active terminal palette for app surfaces and accents. |
 | Use glass for panes | Platform-specific | No macOS Liquid Glass renderer. |
 
 ### Interface / Tabs
@@ -281,7 +282,7 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 | Tab style | Implemented | Left/right sidebar and top tabs. |
 | Fill available space | Implemented | Top tabs stretch to fill width. |
 | Use color for tab icons | Implemented | Always, focused-pane, active-tab and never choices apply to sidebar/top icons. |
-| Shell icon theme | Remaining | No default/theme-foreground/theme-accent shell artwork selector. |
+| Shell icon theme | Implemented | Default artwork, terminal-theme foreground/background and theme-accent shell artwork in sidebar and horizontal tabs. |
 | Show tab icons | Implemented | Configurable 0–5 program icons in sidebar/top tabs. |
 
 ### Interface / Window
@@ -297,7 +298,7 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 | --- | --- | --- |
 | Pane style | Implemented | Comfortable/compact spacing. |
 | Show pane headers | Implemented | Header visibility setting. |
-| Match program backgrounds | Remaining | No full-screen painted-background sampling for pane/header surfaces. |
+| Match program backgrounds | Implemented | Samples terminal cell backgrounds and matches pane/header surfaces when a dominant full-screen program background is painted. |
 
 ### Interface / Pane Padding
 
@@ -305,7 +306,7 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 | --- | --- | --- |
 | Padding X | Implemented | Horizontal terminal padding. |
 | Padding Y | Implemented | Vertical terminal padding. |
-| Padding color | Remaining | No edge-cell background extension option. |
+| Padding color | Implemented | Choose pane background or extend terminal edge-cell backgrounds into padding. |
 
 ### Interface / Active Pane
 
@@ -314,8 +315,8 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 | Highlight active pane edges | Implemented | Focused-pane border. |
 | Highlight color | Implemented | Custom highlight color. |
 | Highlight opacity | Implemented | Highlight strength. |
-| Animate active pane highlight | Partial | General animation timing exists; no independent fade/move/instant highlight mode. |
-| Fade inactive panes | Partial | Opacity fade preference; no independent surfaces/content/both matrix. |
+| Animate active pane highlight | Implemented | Fade, move and instant modes; the highlight follows pane geometry and respects reduced-motion preferences. |
+| Fade inactive panes | Implemented | Independently select content, surfaces or both and set the fade amount; zero disables fading. |
 | Fade panes for inactive windows | Implemented | Independent terminal-content opacity follows native window focus, alongside the inactive-pane preference. |
 
 ### Interface / Splits & Focus
@@ -354,21 +355,21 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 
 | Documented setting | Status | Behavior / limitation |
 | --- | --- | --- |
-| Light theme | Implemented | Built-in palette choice and independent imported Ghostty/iTerm light palette. One imported palette is retained per appearance. |
+| Light theme | Implemented | Built-in palette or a selected named Ghostty/iTerm theme for light appearance. The shared library supports import, save-current, rename and delete; legacy imports migrate without losing colors. |
 | Use extended theme palette | Implemented | Independent light/dark preferences apply imported colors16–255 or restore the standard xterm cube; both renderer and server theme are synchronized. |
 
 ### Themes / Dark Mode
 
 | Documented setting | Status | Behavior / limitation |
 | --- | --- | --- |
-| Dark theme | Implemented | Built-in palette choice and independent imported Ghostty/iTerm dark palette. One imported palette is retained per appearance. |
+| Dark theme | Implemented | Built-in palette or a selected named Ghostty/iTerm theme for dark appearance, independently selected from up to 64 saved named themes. |
 | Use extended theme palette | Implemented | Independent light/dark preferences apply imported colors16–255 or restore the standard xterm cube; both renderer and server theme are synchronized. |
 
 ### Themes / Import Theme
 
 | Documented setting | Status | Behavior / limitation |
 | --- | --- | --- |
-| Import Theme | Implemented | Ghostty key/value and iTerm plist import, including extended palette entries. |
+| Import Theme | Implemented | Ghostty key/value and iTerm plist import, including extended palette entries, into the named theme library. |
 
 ### Terminal / Typography
 
@@ -386,7 +387,7 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 | Character spacing | Implemented | Pixel letter spacing. |
 | Line height | Implemented | Terminal line height. |
 | Ligatures | Implemented | xterm ligature addon; actual Chromium glyph-pixel on/off test passed using browser fallback ligatures without Node integration. Full font ligature tables use browser local-font access when available. |
-| Bold and italic | Partial | Normal/bold weights and italic text rendering exist; no always/only-if-face/never policy matrix. |
+| Bold and italic | Implemented | Separate always/only-real-font-face/never policies govern bold and italic rendering and synthetic-face use. |
 | Font smoothing | Implemented | Renderer font smoothing preference. |
 | Fallback fonts | Implemented | Ordered CSS font-family list. |
 
@@ -395,8 +396,8 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 | Documented setting | Status | Behavior / limitation |
 | --- | --- | --- |
 | Improve text contrast | Implemented | xterm minimum contrast ratio. |
-| Force theme palette for text | Remaining | No nearest-theme-color remapping of arbitrary RGB text. |
-| Use Display P3 color space | Remaining | No Display P3 terminal rendering mode. |
+| Force theme palette for text | Implemented | Renderer RGB colors map to the nearest theme colors with the selected contrast preference. Original terminal data is retained for reversible setting changes. |
+| Use Display P3 color space | Implemented | Capability-gated CSS Display P3 text/cursor/selection rendering; unavailable displays/runtimes retain sRGB output. Inline-image canvases retain their decoder color space. |
 
 ### Terminal / Cursor
 
@@ -424,17 +425,17 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 
 | Documented setting | Status | Behavior / limitation |
 | --- | --- | --- |
-| Smooth terminal resizing | Partial | Local xterm fits immediately and sends server resize with ownership gating, but no independent smooth-resize preference. |
+| Smooth terminal resizing | Implemented | Optional smooth viewport fitting with bounded/debounced server size updates and foreground ownership. |
 
 ### Terminal / Selection
 
 | Documented setting | Status | Behavior / limitation |
 | --- | --- | --- |
 | Copy on selection | Implemented | Automatic selection copy. |
-| Play animation on copy | Remaining | No selection shine effect. |
+| Play animation on copy | Implemented | Optional copy-shine animation on the selected terminal content. |
 | Selection foreground | Implemented | Custom selection text color. |
 | Selection background | Implemented | Custom selection fill. |
-| Rounded corners | Remaining | No rounded terminal selection geometry. |
+| Rounded corners | Implemented | Optional rounded terminal selection geometry. |
 
 ### Terminal / Links
 
@@ -476,9 +477,9 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 
 | Documented setting | Status | Behavior / limitation |
 | --- | --- | --- |
-| Download new updates when available | Platform-specific | No upstream Mac updater; install Linux packages externally. |
-| Install updates automatically | Platform-specific | No upstream downloaded-update idle relaunch service. |
-| Cursor shaders | Remaining | No experimental cursor trail/shader engine. |
+| Download new updates when available | Implemented | Opt-in Linux client release checks/downloads from this project's GitHub releases, with bounded package downloads and mandatory SHA-256 manifest verification. No release is published by the client. |
+| Install updates automatically | Implemented | Opt-in idle application of a verified AppImage; Debian packages open the system installer, which retains its normal authorization/installation flow. |
+| Cursor shaders | Implemented | Linux canvas cursor-effect presets Off/Warp/Comet/Blaze provide trails without executing arbitrary upstream Metal shader files. |
 | Group Activity by priority | Implemented | Activity drawer/palette support session or priority grouping. |
 
 ### Developer / App Version
@@ -494,9 +495,9 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 | Location | Platform-specific | Client attaches to an externally installed Rex; it does not select a bundled/source server runtime. |
 | Source Directory | Platform-specific | No managed server source checkout/build selector. |
 | Installation status | Platform-specific | No bundled-server install manager; connection/compatibility status is shown instead. |
-| Version | Partial | Connected server version and client version are available; no managed included-server artifact details. |
-| Commit | Partial | Version string may include source commit; no separate included-server commit panel. |
-| Final SHA-256 | Platform-specific | No included upstream server binary is distributed to hash. |
+| Version | Implemented | Connected server version and installed client version appear in diagnostics; local runtime details show the discovered executable/profile. |
+| Commit | Implemented | The connected Rex version identifies its source revision when supplied by the server. No separate bundled server is distributed. |
+| Final SHA-256 | Implemented | Local runtime diagnostics compute the discovered Rex executable SHA-256. Unavailable/remote binaries are explicitly marked unavailable. |
 
 ### Developer / Local API
 
@@ -508,21 +509,24 @@ These rows describe observable behavior, not merely saved preference fields. Mos
 
 | Documented setting | Status | Behavior / limitation |
 | --- | --- | --- |
-| Allowed origins | Remaining | No dedicated server web-origin review/remove controls; server configuration remains externally managed. |
-| Origin pattern | Remaining | No dedicated web-origin pattern editor/restart flow. |
+| Allowed origins | Implemented | Dedicated local-server controls list active/pending WebSocket origin patterns and let the user add/remove them. Changes wait for an idle restart; unrelated launch arguments are preserved. |
+| Origin pattern | Implemented | Validated browser origin/host patterns are saved per host, can be discarded, and are applied only during an idle local restart. |
 
-## Remaining distinctions that must not be described as completed parity
+## Remaining platform and protocol distinctions
 
-- **Server/distribution administration:** no externally installed server restart, bundled-server installation manager, upstream auto-updater/update channels, or dedicated allowed-web-origin administration. Existing server services and launch flags stay externally managed.
-- **Rendering/accessibility:** full Kitty graphics/sixel support and a comprehensive AT-SPI/screen-reader audit remain absent. The tested text/emoji terminal behavior is covered separately below.
-- **Detailed preferences:** one imported light and one imported dark palette rather than a named theme library; no RGB-to-theme remapping, Display P3, cursor shaders, program-derived pane/padding backgrounds or selection shine/rounding.
-- **Platform differences:** Mac system permissions, Glass materials, Dock artwork/visibility and upstream Mac update channels have no direct Linux implementation here. The onboarding action opens help rather than the upstream tutorial session.
+- **Server safety and distribution:** Linux server controls preserve discovered launch profiles and refuse stop/restart while any sessions exist. Remote services stay with their existing manager. This client does not bundle, download or build a separate Rex server distribution, and does not replicate upstream Mac Preview/Bleeding Edge release channels.
+- **Terminal image protocol:** live Sixel/iTerm2 and direct Kitty transfers are supported within explicit memory limits. Kitty includes parent-relative placement chains (depth 32), animation (up to 64 frames within 64 MiB), and canonical Unicode virtual placeholders. File/shared-memory transports and full image/text z-layer composition remain outside the implemented subset. Copying protocol placeholder cells can include client placement metadata; ordinary terminal text is unchanged. Upstream Ghostty snapshots omit image data; a fresh client attachment cannot reconstruct older images from the snapshot alone. Rex does not reserve Sixel cells, so foreground/fullscreen emitters must manage their cursor placement; returning to a shell redraw can overwrite them.
+- **Plugin extensibility:** the known onboarding creator has a native interactive Linux view. Unknown future block plugins retain a method inspector until a corresponding renderer is supplied.
+- **Platform differences:** macOS system permissions, Glass materials, Dock artwork/visibility and Metal shader files are not Linux APIs. Linux tray/window integration and canvas cursor effects supply the applicable behavior.
+- **Validation limits:** physical-device/compositor coverage and packaging/runtime evidence are stated below; passing automated tests is not a claim that every desktop environment has been manually tested.
 
 ## Validation boundary
 
-Final source verification passed **63/63 automated tests, zero failures and zero skips**, with both integration and browser tests enabled. The installed-Rex Electron smoke and native-action fixtures also passed against both the source build and the actual 0.2.0 AppImage. AppImage and Debian builds succeeded; Debian version/amd64/dependency metadata was inspected. A Debian installation/runtime test is not claimed.
+Current 0.3 source verification passed **86/86 automated tests, zero failures and zero skips**, with installed-Rex integration and browser tests enabled. New native Electron fixtures passed for Linux services/persisted tutorial progress, actual installed-Rex live graphics, and accessibility. The accessibility fixture scanned **15 views with zero axe violations** and verified terminal input/output through both Chromium and native AT-SPI (**235 owned nodes**). Automated incomplete/manual-review results are retained in the accessibility report; this is not a claim of universal WCAG or compositor conformance.
 
-Protocol evidence is separate from source-level feature inventory. The opt-in installed-Rex tests create isolated sessions, remember the returned IDs, and remove only those sessions. They do not restart/reconfigure the server or mutate the user’s four existing sessions.
+The updater's check/download/checksum/replacement/idle behavior is exercised with controlled release fixtures. This repository has no published stable update in the real feed yet; no workflow publication or live self-update is claimed. Final 0.3 packaged-app evidence is recorded separately after those runs complete.
+
+Protocol evidence is separate from source-level feature inventory. The opt-in installed-Rex tests create isolated sessions, remember the returned IDs, and remove only those sessions. They do not restart/reconfigure the installed server or mutate the user’s four existing sessions. Lifecycle tests use a separate server with their own temporary socket, configuration and state directory.
 
 | Evidence | Coverage |
 | --- | --- |
@@ -532,7 +536,10 @@ Protocol evidence is separate from source-level feature inventory. The opt-in in
 | Installed Rex palette probe | Setting only palette index 1 after a custom index 200 resets index 200 to its built-in color, as verified by program OSC 4 query responses. Extended-palette disable is verified against authoritative server state. |
 | Installed Rex Unicode cursor probe | Isolated Python raw-mode DSR probe: `A🦕B` and `A🫠B` end at column 5; `A👩‍💻B` ends at column 7; `AéB` ends at column 4 on the tested server. Client Unicode-width selection is checked against server behavior, not assumed from ideal grapheme width. |
 | Feature/keymap/activity/launch tests | See `tests/features*.test.ts`, `tests/workspace.test.ts`, `tests/terminal.*.test.ts` for focused behavior, validated launch arguments/selection, and optional real-server native-client action tests. |
-| Source Electron fixtures | `npm run test:ui` and `npm run test:actions` passed against installed Rex, covering actual launch/session/block selection, reverse actions, terminal/search/path/font/layout UI and moving a tab to a native window. |
+| Source Electron fixtures | The Linux services/tutorial, installed-Rex graphics and native accessibility fixtures passed on the 0.3 source build. Standard smoke/action workflows are covered by the previous source run and repeated against the final package. |
+| Native accessibility | `tests/electron.accessibility.ts`: 15 WCAG A/AA, WCAG 2.1 AA and best-practice axe scans with zero violations; keyboard trapping/restoration; directory Arrow/Home/End/Enter navigation; named-theme semantics; Chromium AX terminal input/output; native AT-SPI input/output on 235 owned nodes. Incomplete/manual-review checks are retained rather than disabled. |
+| Linux lifecycle/origins | Isolated installed-Rex server verifies atomic idle shutdown/restart, profile preservation and actual allowed/denied WebSocket origins. Existing-session stop/restart refusal is tested; the user’s installed server is not stopped. |
+| Linux updates/releases | Bounded fixed-repository release selection, SHA-256 validation, atomic AppImage replacement/backup and idle scheduling are tested with controlled fixtures. The publishing workflow passes actionlint/shell checks; no release or live update is claimed. |
 | Packaged AppImage verification | Both `tests/electron.smoke.ts` and `tests/electron.actions.ts` passed against the actual 0.2.0 AppImage and installed Rex. Coverage includes CLI help/profile/font/size/block selection, background search, reverse actions, multi-window settings, diagnostics and literal tab transfer. A screenshot was captured. |
 | Debian package verification | The 0.2.0 amd64 package built successfully; `dpkg-deb` version, architecture and dependencies were verified. No installed-Debian runtime test is claimed. Physical trackpad/compositor behavior and comprehensive AT-SPI/graphics coverage remain outside these checks. |
 
