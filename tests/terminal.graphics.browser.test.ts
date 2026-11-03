@@ -410,6 +410,215 @@ test(
             .data.some((value, index) => index % 4 === 3 && value > 0)
         );
       });
+      // Relative placements follow their parent and cascade deletion, without moving the cursor.
+      await emit(
+        "\x1b[0m\x1b[2J\x1b[H\x1b_Ga=T,f=24,s=1,v=1,i=201,p=1,c=4,r=4,C=1;/wAA\x1b\\",
+      );
+      await emit(
+        "\x1b_Ga=T,f=24,s=1,v=1,i=202,p=2,c=2,r=2,P=201,Q=1,H=3,V=2;AP8A\x1b\\",
+      );
+      const parent = page.locator('canvas[data-kitty-image="201"]'),
+        relative = page.locator('canvas[data-kitty-image="202"]');
+      await relative.waitFor();
+      const grid = await page.locator(".xterm-screen").boundingBox();
+      assert.ok(grid);
+      const columns = await page.evaluate(
+          () => (window as any).fixture.runtime().terminal.cols,
+        ),
+        rows = await page.evaluate(
+          () => (window as any).fixture.runtime().terminal.rows,
+        );
+      let a = await parent.boundingBox(),
+        b = await relative.boundingBox();
+      assert.ok(a && b);
+      assert.ok(Math.abs(b.x - a.x - (3 * grid.width) / columns) < 1);
+      assert.ok(Math.abs(b.y - a.y - (2 * grid.height) / rows) < 1);
+      await emit("\x1b[5;6H\x1b_Ga=p,i=201,p=1,c=4,r=4,C=1;\x1b\\");
+      await page.waitForFunction(() => {
+        const parent = document.querySelector(
+            'canvas[data-kitty-image="201"]',
+          )!,
+          child = document.querySelector('canvas[data-kitty-image="202"]')!;
+        return (
+          parent.getBoundingClientRect().left > 0 &&
+          child.getBoundingClientRect().left >
+            parent.getBoundingClientRect().left
+        );
+      });
+      const cycle = await page.evaluate(() =>
+        (window as any).fixture
+          .runtime()
+          .kitty.command("a=p,i=201,p=1,P=202,Q=2,C=1;")
+          .then(
+            () => "",
+            (failure: Error) => failure.message,
+          ),
+      );
+      assert.match(cycle, /cycle/);
+      await emit("\x1b_Ga=d,d=I,i=201;\x1b\\");
+      await relative.waitFor({ state: "detached" });
+      // Animation patches, explicit frame selection, clipped replacement, finite loops and stop.
+      await emit(
+        "\x1b_Ga=T,f=32,s=2,v=1,i=301,p=1,c=4,r=2,C=1;" +
+          Buffer.from([255, 0, 0, 255, 255, 0, 0, 255]).toString("base64") +
+          "\x1b\\",
+      );
+      await emit(
+        "\x1b_Ga=f,f=32,s=1,v=1,i=301,x=1,y=0,c=1,z=25,X=1;" +
+          Buffer.from([0, 255, 0, 255]).toString("base64") +
+          "\x1b\\",
+      );
+      await emit("\x1b_Ga=a,i=301,c=2;\x1b\\");
+      const animated = page.locator('canvas[data-kitty-image="301"]');
+      await animated.waitFor();
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector('canvas[data-kitty-image="301"]')
+            ?.getAttribute("data-kitty-frame") === "2",
+      );
+      assert.deepEqual(
+        await animated.evaluate((canvas) =>
+          Array.from(
+            (canvas as HTMLCanvasElement)
+              .getContext("2d")!
+              .getImageData(0, 0, 2, 1).data,
+          ),
+        ),
+        [255, 0, 0, 255, 0, 255, 0, 255],
+      );
+      await emit("\x1b_Ga=a,i=301,c=1,r=1,z=25,s=3,v=2;\x1b\\");
+      await page.waitForFunction(() => {
+        const canvas = document.querySelector('canvas[data-kitty-image="301"]');
+        return (
+          canvas?.getAttribute("data-kitty-frame") === "2" &&
+          canvas?.getAttribute("data-kitty-animation") === "1"
+        );
+      });
+      await page.waitForTimeout(80);
+      assert.equal(await animated.getAttribute("data-kitty-frame"), "2");
+      await emit("\x1b_Ga=a,i=301,c=1,s=3,v=1;\x1b\\");
+      await page.waitForTimeout(60);
+      await emit("\x1b_Ga=a,i=301,c=1,s=1;\x1b\\");
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector('canvas[data-kitty-image="301"]')
+            ?.getAttribute("data-kitty-animation") === "1",
+      );
+      await page.waitForTimeout(80);
+      assert.equal(await animated.getAttribute("data-kitty-frame"), "1");
+      await emit("\x1b_Ga=c,i=301,r=2,c=1,X=1,Y=0,x=0,y=0,w=1,h=1,C=1;\x1b\\");
+      await page.waitForFunction(() => {
+        const canvas = document.querySelector<HTMLCanvasElement>(
+          'canvas[data-kitty-image="301"]',
+        );
+        return (
+          canvas?.getContext("2d")!.getImageData(0, 0, 1, 1).data[1] === 255
+        );
+      });
+      assert.deepEqual(
+        await animated.evaluate((canvas) =>
+          Array.from(
+            (canvas as HTMLCanvasElement)
+              .getContext("2d")!
+              .getImageData(0, 0, 2, 1).data,
+          ),
+        ),
+        [0, 255, 0, 255, 255, 0, 0, 255],
+      );
+      await emit("\x1b_Ga=d,d=f,i=301,r=2;\x1b\\");
+      await emit("\x1b_Ga=d,d=I,i=301;\x1b\\");
+      await animated.waitFor({ state: "detached" });
+      // Public buffer glyphs drive virtual placements, including omitted column diacritics.
+      const quadrants = Buffer.from([
+        255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
+      ]).toString("base64");
+      await emit(
+        "\x1b_Ga=t,f=32,s=2,v=2,i=401;" +
+          quadrants +
+          "\x1b\\\x1b_Ga=p,U=1,i=401,p=9,c=2,r=2;\x1b\\\x1b_Ga=p,U=1,i=401,p=10,c=1,r=1;\x1b\\",
+      );
+      const placeholder = "\u{10eeee}",
+        zero = "\u0305",
+        one = "\u030d";
+      await emit(
+        "\x1b[10;1H\x1b[38;2;0;1;145m\x1b[58;2;0;0;9m" +
+          placeholder +
+          zero +
+          zero +
+          placeholder +
+          "\x1b[11;1H" +
+          placeholder +
+          one +
+          zero +
+          placeholder +
+          "\x1b[0m",
+      );
+      await page.waitForFunction(() => {
+        const canvas = document.querySelector<HTMLCanvasElement>(
+          'canvas[data-kitty-virtual="true"]',
+        );
+        return (
+          canvas &&
+          canvas.width > 0 &&
+          canvas
+            .getContext("2d")!
+            .getImageData(0, 0, canvas.width, canvas.height)
+            .data.some((value, index) => index % 4 === 3 && value > 0)
+        );
+      });
+      const virtualPixels = await page
+        .locator('canvas[data-kitty-virtual="true"]')
+        .evaluate((canvas) => {
+          const f = (window as any).fixture,
+            t = f.runtime().terminal,
+            screen = document.querySelector<HTMLElement>(".xterm-screen")!,
+            cw = screen.clientWidth / t.cols,
+            ch = screen.clientHeight / t.rows,
+            scale = Math.min(cw, ch),
+            ox = (2 * cw - 2 * scale) / 2,
+            oy = 9 * ch + (2 * ch - 2 * scale) / 2,
+            context = (canvas as HTMLCanvasElement).getContext("2d")!;
+          return [
+            [0.5, 0.5],
+            [1.5, 0.5],
+            [0.5, 1.5],
+            [1.5, 1.5],
+          ].map(([x, y]) =>
+            Array.from(
+              context.getImageData(
+                Math.floor(ox + x * scale),
+                Math.floor(oy + y * scale),
+                1,
+                1,
+              ).data,
+            ),
+          );
+        });
+      const expectedVirtual = [
+        [255, 0, 0, 255],
+        [0, 255, 0, 255],
+        [0, 0, 255, 255],
+        [255, 255, 0, 255],
+      ];
+      for (let pixel = 0; pixel < 4; pixel++)
+        for (let channel = 0; channel < 4; channel++)
+          assert.ok(
+            Math.abs(
+              virtualPixels[pixel][channel] - expectedVirtual[pixel][channel],
+            ) <= 12,
+            "Bilinear-scaled placeholder tiles must preserve their quadrant color",
+          );
+      await emit(
+        "\x1b_Ga=T,f=24,s=1,v=1,i=402,p=1,c=1,r=1,P=401,Q=9,H=3,V=1;////\x1b\\",
+      );
+      await page.locator('canvas[data-kitty-image="402"]').waitFor();
+      await emit("\x1b_Ga=d,d=I,i=401;\x1b\\");
+      await page
+        .locator('canvas[data-kitty-image="402"]')
+        .waitFor({ state: "detached" });
+
       assert.deepEqual(errors, []);
     } finally {
       await browser.close();

@@ -59,3 +59,36 @@ test("Kitty framing preserves split text/escape continuations and protects other
     payload: "",
   });
 });
+
+test("virtual placement metadata retains SGR58 without visible underline and ignores RGB component zeroes", () => {
+  const glyph = "\u{10eeee}",
+    source =
+      "\x1b[58;2;1;2;3m\x1b[38;2;0;0;0m" +
+      glyph +
+      "\u0305\u0305\x1b[59m" +
+      glyph;
+  const complete = new KittyFramer()
+    .push(source)
+    .filter((part) => part.kind === "text")
+    .map((part) => part.data)
+    .join("");
+  assert.equal((complete.match(/\u034f/g) || []).length, 1);
+  assert.ok(complete.includes(glyph + "\u034f\u030d\u030e\u0310\u0305\u0305"));
+  const characters = Array.from(source);
+  for (let split = 0; split <= characters.length; split++) {
+    const framer = new KittyFramer();
+    const output = [
+      ...framer.push(characters.slice(0, split).join("")),
+      ...framer.push(characters.slice(split).join("")),
+    ]
+      .map((part) => part.data)
+      .join("");
+    assert.equal(
+      output,
+      complete,
+      "Metadata must survive every VT/codepoint frame boundary",
+    );
+  }
+  for (const header of ["a=p,i=NaN", "a=p,i=-1", "a=p,p=4294967296"])
+    assert.throws(() => parseKittyCommand(header), /32-bit|negative/);
+});
