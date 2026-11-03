@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { CHANNELS } from './channels.js';
-import type { RexBridge, TerminalFrame } from '../src/shared/types.js';
+import type { ClientEvent, RexBridge, TerminalFrame } from '../src/shared/types.js';
 
 const bridge: RexBridge = {
   request: (method, args) => ipcRenderer.invoke(CHANNELS.request, method, args),
@@ -14,6 +14,12 @@ const bridge: RexBridge = {
     ipcRenderer.on(CHANNELS.command, listener);
     return () => ipcRenderer.removeListener(CHANNELS.command, listener);
   },
+  onClientEvent: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, event: ClientEvent) => callback(event);
+    ipcRenderer.on(CHANNELS.clientEvent, listener);
+    return () => ipcRenderer.removeListener(CHANNELS.clientEvent, listener);
+  },
+  replyAction: (requestId, result, error) => ipcRenderer.send(CHANNELS.replyAction, requestId, result, error),
   readClipboard: () => ipcRenderer.invoke(CHANNELS.readClipboard),
   writeClipboard: (text) => ipcRenderer.invoke(CHANNELS.writeClipboard, text),
   getSettings: () => ipcRenderer.invoke(CHANNELS.getSettings),

@@ -1,101 +1,101 @@
-import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, globalShortcut, Menu, nativeTheme, Tray, type MenuItemConstructorOptions } from 'electron';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CHANNELS } from './channels.js';
 import { registerIpc } from './ipc.js';
 import { SettingsStore } from './settings.js';
+import type { Selection, Settings } from '../src/shared/types.js';
 
-const directory = dirname(fileURLToPath(import.meta.url));
-let window: BrowserWindow | null = null;
-let disposeIpc: (() => void) | undefined;
-
+const directory=dirname(fileURLToPath(import.meta.url));
+const windows=new Set<BrowserWindow>();
+const disposers=new Map<number,()=>void>();
+let store:SettingsStore;
+let lastWindow:BrowserWindow|undefined;
+let tray:Tray|undefined;
+let quitting=false;
+let registeredAccelerator='';
 app.setName('Linusaurus Rex');
 app.setAppUserModelId('com.matiasgigena.linusaurus-rex');
-app.commandLine.appendSwitch('class', 'linusaurus-rex');
+app.commandLine.appendSwitch('class','linusaurus-rex');
 
-function rendererUrl(): string {
-  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
-    const url = new URL(process.env.ELECTRON_RENDERER_URL);
-    if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) throw new Error('Development renderer must use a loopback HTTP address');
+function rendererUrl():string {
+  if(!app.isPackaged&&process.env.ELECTRON_RENDERER_URL){
+    const url=new URL(process.env.ELECTRON_RENDERER_URL);
+    if(url.protocol!=='http:'||!['127.0.0.1','localhost','[::1]'].includes(url.hostname))throw new Error('Development renderer must use a loopback HTTP address');
     return url.href;
   }
-  return pathToFileURL(join(directory, '../dist/index.html')).href;
+  return pathToFileURL(join(directory,'../dist/index.html')).href;
 }
-
-function buildMenu(): void {
-  const command = (name: string) => () => window?.webContents.send(CHANNELS.command, name);
-  const template: MenuItemConstructorOptions[] = [
-    { label: 'File', submenu: [
-      { label: 'New Session…', click: command('new-session') },
-      { label: 'New Terminal', click: command('new-window') },
-      { label: 'Close Tab…', click: command('close-window') },
-      { type: 'separator' }, { role: 'quit', accelerator: 'CmdOrCtrl+Shift+Q' },
-    ] },
-    { label: 'View', submenu: [
-      { label: 'Toggle Sidebar', click: command('toggle-sidebar') },
-      { label: 'Command Palette…', click: command('command-palette') },
-      { type: 'separator' },
-      { label: 'Split Right', click: command('split-right') },
-      { label: 'Split Below', click: command('split-below') },
-      { type: 'separator' },
-      { label: 'Settings…', click: command('settings') },
-      { role: 'togglefullscreen' },
-      ...(!app.isPackaged ? [{ role: 'toggleDevTools' as const }] : []),
-    ] },
-    { label: 'Edit', submenu: [
-      { label: 'Copy', click: command('copy') },
-      { label: 'Paste', click: command('paste') },
-    ] },
+function activeWindow(){const focused=BrowserWindow.getFocusedWindow();return focused??(lastWindow&&!lastWindow.isDestroyed()?lastWindow:[...windows][0]);}
+function showWindow(){const window=activeWindow();if(!window){void createWindow();return;}if(window.isMinimized())window.restore();window.show();window.focus();}
+function toggleVisibility(){const window=activeWindow();if(window?.isVisible()&&window.isFocused())window.hide();else showWindow();}
+function command(name:string){return()=>activeWindow()?.webContents.send(CHANNELS.command,name);}
+function buildMenu(){
+  const template:MenuItemConstructorOptions[]=[
+    {label:'File',submenu:[
+      {label:'New Window',click:()=>void createWindow()},
+      {label:'New Session…',click:command('new-session')},
+      {label:'New Terminal Tab',click:command('new-window')},
+      {label:'Close Tab…',click:command('close-window')},
+      {type:'separator'}, {label:'Quit',accelerator:'CmdOrCtrl+Shift+Q',click:()=>app.quit()},
+    ]},
+    {label:'Edit',submenu:[{label:'Copy',click:command('copy')},{label:'Paste',click:command('paste')},{label:'Find…',click:command('find')}]},
+    {label:'View',submenu:[
+      {label:'Toggle Sidebar',click:command('toggle-sidebar')},
+      {label:'Command Palette…',click:command('command-palette')},
+      {label:'Switch Session…',click:command('session-switcher')},
+      {type:'separator'},
+      {label:'Split Right',click:command('split-right')},{label:'Split Below',click:command('split-below')},
+      {label:'Zoom Pane',click:command('zoom')},
+      {type:'separator'}, {label:'Settings…',click:command('settings')},
+      {role:'togglefullscreen'},...(!app.isPackaged?[{role:'toggleDevTools' as const}]:[]),
+    ]},
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
-
-async function createWindow(): Promise<void> {
-  const store = new SettingsStore(join(app.getPath('userData'), 'settings.json'));
-  await store.load();
-  const url = rendererUrl();
-  window = new BrowserWindow({
-    width: 1440, height: 900, minWidth: 760, minHeight: 480,
-    title: 'Linusaurus Rex', backgroundColor: '#30353b', show: false,
-    frame: false, autoHideMenuBar: true,
-    icon: join(directory, '../resources/icon.png'),
-    webPreferences: {
-      preload: join(directory, 'preload.cjs'),
-      nodeIntegration: false, contextIsolation: true, sandbox: true,
-      webSecurity: true, allowRunningInsecureContent: false,
-      spellcheck: false,
-    },
-  });
-  const current = window;
-  disposeIpc = registerIpc(current, store, url);
-  current.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  current.webContents.on('will-navigate', (event, destination) => {
-    if (destination.split('#')[0] !== url.split('#')[0]) event.preventDefault();
-  });
-  current.webContents.on('will-attach-webview', (event) => event.preventDefault());
-  current.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  current.webContents.on('render-process-gone', (_event, details) => console.error('Renderer stopped:', details.reason));
-  current.once('ready-to-show', () => current.show());
-  current.on('closed', () => {
-    disposeIpc?.(); disposeIpc = undefined;
-    if (window === current) window = null;
-  });
-  buildMenu();
-  await current.loadURL(url);
+function applySettings(settings:Settings){
+  nativeTheme.themeSource=settings.appearance;
+  for(const window of windows){if(!window.isDestroyed())window.webContents.setZoomFactor(settings.interfaceZoom);}
+  if(registeredAccelerator!==settings.globalShortcut){
+    if(registeredAccelerator)globalShortcut.unregister(registeredAccelerator);
+    registeredAccelerator='';
+    if(settings.globalShortcut){try{if(globalShortcut.register(settings.globalShortcut,toggleVisibility))registeredAccelerator=settings.globalShortcut;else console.warn('The global shortcut is already used by another application.');}catch{console.warn('The global shortcut is invalid or unsupported on this desktop.');}}
+  }
+  const needsTray=settings.closeToTray||!settings.showWindowOnLaunch;
+  if(needsTray&&!tray){
+    tray=new Tray(join(directory,'../resources/icon.png'));tray.setToolTip('Linusaurus Rex');
+    tray.setContextMenu(Menu.buildFromTemplate([{label:'Show Linusaurus Rex',click:showWindow},{label:'New Window',click:()=>void createWindow()},{type:'separator'},{label:'Quit',click:()=>app.quit()}]));
+    tray.on('click',showWindow);
+  }else if(!needsTray&&tray){tray.destroy();tray=undefined;}
 }
-
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
-} else {
-  app.on('second-instance', () => {
-    if (!window) return;
-    if (window.isMinimized()) window.restore();
-    window.show(); window.focus();
+async function createWindow(initialSelection?:Selection):Promise<void>{
+  const url=rendererUrl();const settings=store.get();
+  const window=new BrowserWindow({
+    width:1440,height:900,minWidth:760,minHeight:480,
+    title:'Linusaurus Rex',backgroundColor:'#30353b',show:false,
+    frame:false,autoHideMenuBar:true,icon:join(directory,'../resources/icon.png'),
+    webPreferences:{preload:join(directory,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,allowRunningInsecureContent:false,spellcheck:false},
   });
-  app.whenReady().then(createWindow).catch((error: unknown) => {
-    console.error('Could not start Linusaurus Rex:', error);
-    app.quit();
-  });
-  app.on('window-all-closed', () => app.quit());
-  app.on('before-quit', () => { disposeIpc?.(); disposeIpc = undefined; });
+  windows.add(window);lastWindow=window;
+  disposers.set(window.id,registerIpc(window,store,url,{createWindow,initialSelection,onSettings:applySettings}));
+  window.webContents.setWindowOpenHandler(()=>({action:'deny'}));
+  window.webContents.on('will-navigate',(event,destination)=>{if(destination.split('#')[0]!==url.split('#')[0])event.preventDefault();});
+  window.webContents.on('will-attach-webview',event=>event.preventDefault());
+  const trustedFontRequest=(contents:Electron.WebContents|null,permission:string,details:{isMainFrame:boolean;requestingUrl?:string})=>permission==='local-fonts'&&details.isMainFrame&&details.requestingUrl?.split('#')[0]===url&&Boolean(contents&&[...windows].some(window=>!window.isDestroyed()&&window.webContents===contents));
+  window.webContents.session.setPermissionCheckHandler((contents,permission,_origin,details)=>trustedFontRequest(contents,permission,details));
+  window.webContents.session.setPermissionRequestHandler((contents,permission,callback,details)=>callback(trustedFontRequest(contents,permission,details)));
+  window.webContents.on('render-process-gone',(_event,details)=>console.error('Renderer stopped:',details.reason));
+  window.webContents.once('did-finish-load',()=>window.webContents.setZoomFactor(settings.interfaceZoom));
+  window.once('ready-to-show',()=>{if(settings.showWindowOnLaunch||windows.size>1)window.show();});
+  window.on('focus',()=>{lastWindow=window;});
+  window.on('close',event=>{if(!quitting&&store.get().closeToTray&&windows.size===1){event.preventDefault();window.hide();}});
+  window.on('closed',()=>{disposers.get(window.id)?.();disposers.delete(window.id);windows.delete(window);if(lastWindow===window)lastWindow=[...windows][0];});
+  await window.loadURL(url);
+}
+if(!app.requestSingleInstanceLock())app.quit();
+else{
+  app.on('second-instance',showWindow);
+  app.whenReady().then(async()=>{store=new SettingsStore(join(app.getPath('userData'),'settings.json'));await store.load();store.onChange(applySettings);buildMenu();applySettings(store.get());await createWindow();}).catch((error:unknown)=>{console.error('Could not start Linusaurus Rex:',error);app.quit();});
+  app.on('window-all-closed',()=>{if(!store?.get().closeToTray)app.quit();});
+  app.on('before-quit',()=>{quitting=true;globalShortcut.unregisterAll();tray?.destroy();tray=undefined;for(const dispose of disposers.values())dispose();disposers.clear();});
 }

@@ -2,6 +2,8 @@ export const CHANNELS = {
   request: 'rex:request',
   terminal: 'rex:terminal',
   command: 'app:command',
+  clientEvent: 'rex:client-event',
+  replyAction: 'rex:action-reply',
   readClipboard: 'app:clipboard:read',
   writeClipboard: 'app:clipboard:write',
   getSettings: 'app:settings:get',
