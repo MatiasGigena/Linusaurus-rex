@@ -1,6 +1,6 @@
-import { RexCommandRunner, type CommandRunner } from './command.js';
 import { normalizeView } from './normalize.js';
-import { RexControl } from './control.js';
+import { RexControl, localEndpoint, type RexCredentials } from './control.js';
+import { RexTerminalStream, type FrameKind, type FrameSize } from './stream.js';
 import type { Host as RexHost, SessionSummary, SessionView, ServerStatus } from '../../src/shared/types.js';
 
 export type { Host as RexHost } from '../../src/shared/types.js';
@@ -9,47 +9,35 @@ type Capture = { content: string; id?: number; total?: number; eof?: boolean };
 type InputQueue = { tail: Promise<void>; generation: number };
 type Dimensions = Ref & { columns: number; rows: number };
 
-const MAX_SNAPSHOT = 8 * 1024 * 1024;
-const sleepInterval = 150;
+const MAX_SNAPSHOT = 256 * 1024 * 1024;
+
+export interface RexServiceOptions { apiRevisions?: { min: number; max: number }; controlFactory?: (endpoint: string, credentials?: RexCredentials, reconnectToken?: string, revisions?: { min: number; max: number }) => RexControl; credentials?: (host: RexHost) => Promise<RexCredentials | undefined>; onControl?: (host: RexHost, control: RexControl) => void | Promise<void>; onMetadata?: (host: RexHost, sessionId: string, blockId: string, metadata: Record<string, unknown>) => void }
 
 export class RexService {
-  private runner: RexCommandRunner;
-  private run: CommandRunner;
   private subscriptions = new Set<() => void>();
   private inputQueues = new Map<string, InputQueue>();
   private disposed = false;
   private controls = new Map<string, Promise<RexControl>>();
-  private customRunner: boolean;
   private dimensions = new Map<string, Dimensions>();
   private visible = new Map<string, number>();
+  private options: RexServiceOptions;
+  private reconnectTokens = new Map<string, string>();
+  private streams = new Set<RexTerminalStream>();
 
-  constructor(run?: CommandRunner) {
-    this.runner = new RexCommandRunner();
-    this.run = run ?? this.runner.run;
-    this.customRunner = Boolean(run);
-  }
+  constructor(options: RexServiceOptions = {}) { this.options = options; }
 
-  private args(host: RexHost, args: string[]) {
-    return ['--autostart=false', '--timeout=4s', '--color=never', ...(host.endpoint ? ['--server', host.endpoint] : []), ...args];
-  }
-
-  private async command(host: RexHost, args: string[], stdin?: string) {
-    if (this.disposed) throw new Error('Rex client has been closed.');
-    return this.run(this.args(host, args), stdin);
-  }
-
-  private async json<T>(host: RexHost, args: string[], stdin?: string): Promise<T> {
-    const output = await this.command(host, args, stdin);
-    try { return JSON.parse(output) as T; }
-    catch { throw new Error('Rex returned an invalid JSON response. The installed Rex version may be incompatible.'); }
-  }
+  configure(options: RexServiceOptions) { this.options = { ...this.options, ...options }; }
+  async callMethod<T = unknown>(host: RexHost, method: string, payload: object = {}): Promise<T> { return this.call<T>(host, method, payload); }
 
   private call<T = unknown>(host: RexHost, method: string, payload: object): Promise<T> {
-    return this.json<T>(host, ['api', 'call', method, '-'], JSON.stringify(payload));
+    return this.control(host).then(async control => {
+      const sessionId = (payload as { session_id?: unknown }).session_id;
+      if (typeof sessionId === 'string' && method !== 'session.attach' && method !== 'session.detach') await control.attach(sessionId);
+      return control.call<T>(method, payload);
+    });
   }
 
   private async block<T = unknown>(host: RexHost, sessionId: string, blockId: string, method: string, args: object): Promise<T> {
-    if (this.customRunner) return this.json<T>(host, ['block', 'call', '-s', sessionId, '-b', blockId, method, '-'], JSON.stringify(args));
     const control = await this.control(host);
     await control.attach(sessionId);
     return control.call<T>(`com.superlogical.terminal.${method}`, { session_id: sessionId, block_id: blockId, args });
@@ -57,15 +45,14 @@ export class RexService {
 
   async status(host: RexHost): Promise<ServerStatus> {
     try {
-      const result = await this.json<{ endpoint?: string; rex_version?: string }>(host, ['whoami', '--json']);
-      return { connected: true, endpoint: result.endpoint || host.endpoint || 'Local Rex', version: result.rex_version };
-    } catch (error) {
-      return { connected: false, endpoint: host.endpoint || 'Local Rex', error: errorMessage(error) };
-    }
+      const control = await this.control(host);
+      const result = await control.call<{ version?: string; rex_version?: string }>('server.version', {});
+      return { connected: true, endpoint: control.endpoint, version: result.version || result.rex_version };
+    } catch (error) { return { connected: false, endpoint: host.endpoint || localEndpoint(), error: errorMessage(error) }; }
   }
 
   async sessions(host: RexHost): Promise<SessionSummary[]> {
-    const result = await this.json<{ sessions?: { session_id: string; label?: string }[] }>(host, ['ls', '--json']);
+    const result = await this.call<{ sessions?: { session_id: string; label?: string }[] }>(host, 'session.list', {});
     if (!Array.isArray(result.sessions)) throw new Error('Rex returned an invalid session list.');
     return result.sessions.map(session => ({ id: session.session_id, label: session.label || 'Untitled session' }));
   }
@@ -74,9 +61,9 @@ export class RexService {
     return normalizeView(await this.call(host, 'session.view', { session_id: sessionId }));
   }
 
-  async createSession(host: RexHost, label: string, cwd?: string): Promise<string> {
+  async createSession(host: RexHost, label: string, cwd?: string, command?: string): Promise<string> {
     const response = await this.call<{ session_id: string }>(host, 'session.create', {
-      label, initial_windows: [{ window_label: 'Shell', layout: shellLayout(cwd) }],
+      label, initial_windows: [{ window_label: 'Shell', layout: shellLayout(cwd, command) }],
     });
     return response.session_id;
   }
@@ -85,8 +72,8 @@ export class RexService {
     await this.call(host, 'session.set_label', { session_id: sessionId, label });
   }
 
-  async createWindow(host: RexHost, sessionId: string, label = 'Shell', cwd?: string) {
-    await this.call(host, 'session.new_window', { session_id: sessionId, window_label: label, layout: shellLayout(cwd), focus: true });
+  async createWindow(host: RexHost, sessionId: string, label = 'Shell', cwd?: string, command?: string) {
+    await this.call(host, 'session.new_window', { session_id: sessionId, window_label: label, layout: shellLayout(cwd, command), focus: true });
   }
 
   async renameWindow(host: RexHost, sessionId: string, windowId: string, label: string) {
@@ -97,10 +84,10 @@ export class RexService {
     await this.call(host, 'session.close_window', { session_id: sessionId, window_id: windowId });
   }
 
-  async split(host: RexHost, sessionId: string, blockId: string, direction: 'right' | 'below', cwd?: string) {
+  async split(host: RexHost, sessionId: string, blockId: string, direction: 'right' | 'below' | 'left' | 'above', cwd?: string, ratio?: number, command?: string) {
     await this.call(host, 'session.new_split', {
-      session_id: sessionId, anchor_id: blockId, direction: direction === 'below' ? 'vertical' : 'horizontal',
-      side: 'after', layout: shellLayout(cwd), focus: true,
+      session_id: sessionId, anchor_id: blockId, direction: ['below', 'above'].includes(direction) ? 'vertical' : 'horizontal',
+      side: ['left', 'above'].includes(direction) ? 'before' : 'after', layout: shellLayout(cwd, command), focus: true, ...(ratio !== undefined ? { ratio } : {}),
     });
   }
 
@@ -109,7 +96,6 @@ export class RexService {
   }
 
   async focusBlock(host: RexHost, sessionId: string, blockId: string) {
-    if (this.customRunner) { await this.call(host, 'session.focus_block', { session_id: sessionId, block_id: blockId }); return; }
     const control = await this.control(host);
     await control.attach(sessionId);
     await control.call('session.own_block', { session_id: sessionId, block_ids: [blockId], mode: 'take' });
@@ -133,12 +119,10 @@ export class RexService {
     this.dimensions.set(key, dimensions);
     // One-shot CLI clients lose their requested size on disconnect. Keep the
     // documented control channel alive while this graphical client is open.
-    if (!this.customRunner) {
-      const control = await this.control(host);
-      await control.attach(sessionId);
-      if (this.dimensions.get(key) !== dimensions) return;
-      await control.call('session.own_block', { session_id: sessionId, block_ids: [blockId], mode: 'take' });
-    }
+    const control = await this.control(host);
+    await control.attach(sessionId);
+    if (this.dimensions.get(key) !== dimensions) return;
+    await control.call('session.own_block', { session_id: sessionId, block_ids: [blockId], mode: 'take' });
     await this.block(host, sessionId, blockId, 'resize', { columns, rows });
   }
 
@@ -156,9 +140,8 @@ export class RexService {
     const pending = queue.tail.then(async () => {
       if (queue.generation !== generation) throw new Error('Input discarded after the connection failed. Reconnect before typing again.');
       try {
-        // Stdin preserves leading dashes, control bytes, quotes and multiline paste literally.
-        if (this.customRunner) await this.command(host, ['send', '-s', sessionId, '-b', blockId], data);
-        else await this.block(host, sessionId, blockId, 'write', { data });
+        // This is a single request, never retried after an ambiguous failure.
+        await this.block(host, sessionId, blockId, 'write', { data });
       } catch (error) { queue.generation++; throw error; }
     });
     const settled = pending.catch(() => {});
@@ -173,7 +156,7 @@ export class RexService {
       extra_style: true, extra_scrolling_region: true, extra_tabstops: true,
     });
     if (typeof capture.content !== 'string') throw new Error('Rex returned an invalid terminal snapshot.');
-    if ((capture.total ?? 0) > MAX_SNAPSHOT) throw new Error('Terminal scrollback exceeds the 8 MiB snapshot limit. Clear its scrollback in Rex before reconnecting.');
+    if ((capture.total ?? 0) > MAX_SNAPSHOT) throw new Error('Terminal scrollback exceeds the 256 MiB snapshot limit. Clear its scrollback in Rex before reconnecting.');
     let content = capture.content;
     let offset = Buffer.byteLength(content);
     while (capture.id !== undefined && offset < (capture.total ?? Infinity)) {
@@ -181,24 +164,22 @@ export class RexService {
       if (typeof part.data !== 'string' || !part.data.length) throw new Error('Rex returned an incomplete terminal snapshot.');
       content += part.data;
       offset += Buffer.byteLength(part.data);
-      if (offset > MAX_SNAPSHOT) throw new Error('Terminal scrollback exceeds the 8 MiB snapshot limit.');
+      if (offset > MAX_SNAPSHOT) throw new Error('Terminal scrollback exceeds the 256 MiB snapshot limit.');
       if (part.eof) break;
     }
     return content;
   }
 
-  /** Only mounted, visible panes subscribe. Each poll waits for its predecessor. */
-  subscribe(host: RexHost, sessionId: string, blockId: string, onFrame: (data: string) => void, onError: (error: string) => void): () => void {
+  /** Only mounted panes subscribe; output is pushed by the Rex data connection. */
+  subscribe(host: RexHost, sessionId: string, blockId: string, onFrame: (data: string, kind?: FrameKind, size?: FrameSize) => void, onError: (error: string) => void): () => void {
     const key = refKey({ host, sessionId, blockId });
     this.visible.set(key, (this.visible.get(key) ?? 0) + 1);
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let previous: string | undefined;
-    let failureCount = 0;
+    let stream: RexTerminalStream | undefined;
     const stop = () => {
       if (stopped) return;
+      stream?.dispose(); if (stream) this.streams.delete(stream);
       stopped = true;
-      if (timer) clearTimeout(timer);
       this.subscriptions.delete(stop);
       const remaining = (this.visible.get(key) ?? 1) - 1;
       if (remaining > 0) { this.visible.set(key, remaining); return; }
@@ -206,22 +187,13 @@ export class RexService {
       this.dimensions.delete(key);
       this.release(host, sessionId, blockId);
     };
-    const poll = async () => {
-      if (stopped || this.disposed) return;
-      try {
-        const content = await this.capture(host, sessionId, blockId);
-        if (!stopped && content !== previous) { previous = content; onFrame(content); }
-        failureCount = 0;
-      } catch (error) {
-        // A recovered connection must deliver a frame even if the screen is unchanged.
-        previous = undefined;
-        if (!stopped) onError(errorMessage(error));
-        failureCount++;
-      }
-      if (!stopped && !this.disposed) timer = setTimeout(poll, Math.min(5_000, sleepInterval * 2 ** Math.min(failureCount, 5)));
-    };
     this.subscriptions.add(stop);
-    void poll();
+    stream = new RexTerminalStream(() => this.control(host), sessionId, blockId, {
+        frame: (data, kind, size) => { if (!stopped && !this.disposed) onFrame(data, kind, size); },
+        error: error => { if (!stopped && !this.disposed) onError(error); },
+        metadata: metadata => this.options.onMetadata?.(host, sessionId, blockId, metadata),
+      });
+    this.streams.add(stream);
     return stop;
   }
 
@@ -233,10 +205,10 @@ export class RexService {
     this.visible.clear();
     for (const pending of this.controls.values()) void pending.then(control => control.dispose()).catch(() => {});
     this.controls.clear();
-    this.runner.dispose();
   }
 
-  private async control(host: RexHost): Promise<RexControl> {
+  async control(host: RexHost): Promise<RexControl> {
+    if (this.disposed) throw new Error('Rex client has been closed.');
     const key = JSON.stringify([host.id, host.endpoint]);
     const existing = this.controls.get(key);
     if (existing) {
@@ -245,9 +217,16 @@ export class RexService {
       this.controls.delete(key);
     }
     const pending = (async () => {
-      const status = await this.json<{ endpoint: string }>(host, ['whoami', '--json']);
-      if (!status.endpoint) throw new Error('Rex did not report its control endpoint.');
-      const control = new RexControl(status.endpoint);
+      const endpoint = await this.resolveEndpoint(host);
+      const credentials = await this.options.credentials?.(host);
+      const control = this.options.controlFactory
+        ? this.options.controlFactory(endpoint, credentials, this.reconnectTokens.get(key), this.options.apiRevisions)
+        : new RexControl(endpoint, credentials, this.reconnectTokens.get(key), this.options.apiRevisions);
+      let welcome;
+      try { welcome = await control.readyPublic(); }
+      catch (error) { control.dispose(); this.reconnectTokens.delete(key); throw error; }
+      if (welcome.client?.reconnect_token) this.reconnectTokens.set(key, welcome.client.reconnect_token);
+      await this.options.onControl?.(host, control);
       if (this.disposed) { control.dispose(); throw new Error('Rex client has been closed.'); }
       // A reconnect discards the old client's viewport preferences. Restore
       // visible pane sizes before publishing another snapshot to the renderer.
@@ -272,6 +251,28 @@ export class RexService {
     return pending;
   }
 
+  reconnectTerminals() { for (const stream of this.streams) stream.reconnect(); }
+
+  reconnect(host?: RexHost) {
+    for (const stream of this.streams) stream.reconnect();
+    for (const [key, pending] of this.controls) {
+      if (host && key !== JSON.stringify([host.id, host.endpoint])) continue;
+      void pending.then(control => control.dispose()).catch(() => {}); this.controls.delete(key); this.reconnectTokens.delete(key);
+    }
+  }
+
+  private async resolveEndpoint(host: RexHost): Promise<string> {
+    if (!host.endpoint) return localEndpoint();
+    if (/^(unix|wss?|https?|tcp):\/\//.test(host.endpoint) || host.endpoint.startsWith('/')) return host.endpoint;
+    if (/^[^\s/:]+:\d+$/.test(host.endpoint) || /^\[[^\]]+\]:\d+$/.test(host.endpoint)) return `ws://${host.endpoint}`;
+    const local = await this.control({ id: '__local-discovery', label: 'Local server', endpoint: '' });
+    const result = await local.call<{ hosts?: { label?: string; endpoint?: string; address?: string; url?: string }[] }>('hosts.list', {});
+    const found = result.hosts?.find(item => item.label === host.endpoint);
+    const endpoint = found?.endpoint || found?.address || found?.url;
+    if (!endpoint) throw new Error('Saved Rex host was not found. Enter its Unix socket or HTTPS/WSS endpoint.');
+    return endpoint;
+  }
+
   private release(host: RexHost, sessionId: string, blockId: string) {
     const pending = this.controls.get(JSON.stringify([host.id, host.endpoint]));
     if (!pending || this.disposed) return;
@@ -282,8 +283,33 @@ export class RexService {
   }
 }
 
-function shellLayout(cwd?: string) {
-  return { block: { flavor: 'com.superlogical.terminal.shell', ...(cwd ? { options: { cwd } } : {}) } };
+export function parseCommand(command: string): string[] {
+  const words: string[] = [];
+  let word = '', quote = '', started = false;
+  for (let index = 0; index < command.length; index++) {
+    const character = command[index];
+    if (character === '\\' && quote !== "'") {
+      if (index + 1 >= command.length) throw new Error('Startup command ends with an unfinished escape.');
+      const next = command[++index];
+      if (quote === '"' && !['$', '`', '"', '\\', '\n'].includes(next)) word += '\\';
+      word += next; started = true;
+    } else if (quote) {
+      if (character === quote) quote = ''; else word += character;
+      started = true;
+    } else if (character === "'" || character === '"') { quote = character; started = true; }
+    else if (/\s/.test(character)) { if (started) { words.push(word); word = ''; started = false; } }
+    else { word += character; started = true; }
+  }
+  if (quote) throw new Error('Startup command has an unfinished quote.');
+  if (started) words.push(word);
+  if (words.length && !words[0]) throw new Error('Startup command needs an executable.');
+  return words;
 }
+function shellLayout(cwd?: string, command?: string) {
+  const argv = command?.trim() ? parseCommand(command) : undefined;
+  const options = { ...(cwd ? { cwd } : {}), ...(argv?.length ? { command: argv } : {}) };
+  return { block: { flavor: 'com.superlogical.terminal.shell', ...(Object.keys(options).length ? { options } : {}) } };
+}
+
 function refKey(ref: Ref) { return JSON.stringify([ref.host.id, ref.host.endpoint, ref.sessionId, ref.blockId]); }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : 'Rex connection failed.'; }

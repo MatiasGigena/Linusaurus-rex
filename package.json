@@ -22,7 +22,10 @@
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
+    "khostty-libghostty-vt-wasm": "^0.1.0",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -57,7 +60,12 @@
     "linux": {
       "category": "Development",
       "executableName": "linusaurus-rex",
-      "desktop": { "entry": { "Name": "Linusaurus Rex", "StartupWMClass": "linusaurus-rex" } },
+      "desktop": {
+        "entry": {
+          "Name": "Linusaurus Rex",
+          "StartupWMClass": "linusaurus-rex"
+        }
+      },
       "syncDesktopName": true,
       "icon": "resources/icon.png",
       "target": [

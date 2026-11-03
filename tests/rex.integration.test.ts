@@ -82,3 +82,82 @@ test('installed Rex supports terminal input, alternate screen, resize and sessio
     cleanup.dispose();
   }
 });
+
+import { Terminal as GhosttyTerminal } from 'khostty-libghostty-vt-wasm/api';
+
+test('installed Rex streams ordered VT, resumes without resets and restores alternate screens', { skip: process.env.REX_INTEGRATION !== '1', timeout: 30_000 }, async () => {
+  const rex = new RexService();
+  let sessionId: string | undefined;
+  let stop: (() => void) | undefined;
+  let localTerminal: Awaited<ReturnType<typeof GhosttyTerminal.open>> | undefined;
+  const frames: { data: string; kind?: string }[] = [];
+  const errors: string[] = [];
+  try {
+    sessionId = await rex.createSession(local, `linusaurus-stream-${Date.now()}`, '/tmp');
+    const blockId = (await rex.inspect(local, sessionId)).windows[0].panes[0].id;
+    await rex.resize(local, sessionId, blockId, 92, 28);
+    localTerminal = await GhosttyTerminal.open({ cols: 92, rows: 28 });
+    const terminal = localTerminal;
+    const wait = async (condition: () => boolean, label: string) => {
+      for (let attempt = 0; attempt < 150; attempt++) { if (condition()) return; await delay(20); }
+      throw new Error(`${label}; stream errors: ${errors.join('; ')}`);
+    };
+    const subscribe = () => rex.subscribe(local, sessionId!, blockId, (data, kind, size) => {
+      frames.push({ data, kind });
+      if (kind === 'resize' && size) terminal.resize(size.cols, size.rows);
+      if (kind === 'snapshot') { terminal.reset(); if (size) terminal.resize(size.cols, size.rows); }
+      if (data) terminal.write(data);
+    }, error => errors.push(error));
+    stop = subscribe();
+    await wait(() => frames.some(frame => frame.kind === 'snapshot'), 'Initial snapshot never arrived');
+    await rex.input(local, sessionId, blockId, "printf '\\nLIVE_SEQUENCE_%s\\n' ALPHA\r");
+    await wait(() => terminal.text().includes('LIVE_SEQUENCE_ALPHA'), 'Live VT never arrived');
+    assert.equal(frames.filter(frame => frame.kind === 'snapshot').length, 1);
+    assert.ok(frames.some(frame => frame.kind === 'output' && frame.data.includes('LIVE_SEQUENCE_ALPHA')));
+    rex.reconnectTerminals();
+    await wait(() => errors.length > 0, 'Disconnect was not reported');
+    await wait(() => frames.some(frame => frame.kind === 'output' && frame.data === ''), 'Stream did not resume');
+    await rex.input(local, sessionId, blockId, "printf '\\nLIVE_SEQUENCE_%s\\n' BETA\r");
+    await wait(() => terminal.text().includes('LIVE_SEQUENCE_BETA'), 'Post-resume output never arrived');
+    assert.equal(frames.filter(frame => frame.kind === 'snapshot').length, 1, 'Resume must not redraw the screen');
+    assert.equal((await rex.terminalSize(local, sessionId, blockId)).columns, 92);
+
+    stop(); stop = undefined;
+    await rex.input(local, sessionId, blockId, "printf '\\033[?1049hSTREAM_ALT_%s' READY; read -r ignored; printf '\\033[?1049l'\r");
+    for (let attempt = 0; attempt < 60; attempt++) { if ((await rex.capture(local, sessionId, blockId)).includes('STREAM_ALT_READY')) break; await delay(20); }
+    stop = subscribe();
+    await wait(() => terminal.screen === 'ALTERNATE' && terminal.text().includes('STREAM_ALT_READY'), 'Fresh alternate screen was not restored');
+    await rex.input(local, sessionId, blockId, '\r');
+    await wait(() => terminal.screen === 'PRIMARY', 'Alternate screen did not close');
+    assert.match(terminal.text(), /LIVE_SEQUENCE_BETA/, 'Restoring an alternate screen must preserve its hidden primary buffer');
+  } finally {
+    stop?.(); localTerminal?.close();
+    if (sessionId) await rex.callMethod(local, 'session.destroy', { session_id: sessionId });
+    rex.dispose();
+  }
+});
+
+test('API 8 compatibility and startup commands work with no rex executable on PATH', { skip: process.env.REX_INTEGRATION !== '1', timeout: 20_000 }, async () => {
+  const rex = new RexService({ apiRevisions: { min: 7, max: 8 } });
+  const previousPath = process.env.PATH;
+  let sessionId: string | undefined;
+  try {
+    process.env.PATH = '/linusaurus-test/no-programs';
+    assert.equal((await rex.status(local)).connected, true);
+    assert.equal((await (await rex.control(local)).readyPublic()).api_revision, 8);
+    sessionId = await rex.createSession(local, `linusaurus-api8-${Date.now()}`, '/tmp', `/bin/sh -c 'printf "STARTUP_%s\\n" OK; exec /bin/sh'`);
+    assert.ok((await rex.sessions(local)).some(session => session.id === sessionId));
+    const blockId = (await rex.inspect(local, sessionId)).windows[0].panes[0].id;
+    let screen = '';
+    for (let attempt = 0; attempt < 50; attempt++) {
+      screen = await rex.capture(local, sessionId, blockId);
+      if (screen.includes('STARTUP_OK')) break;
+      await delay(20);
+    }
+    assert.match(screen, /STARTUP_OK/);
+  } finally {
+    process.env.PATH = previousPath;
+    if (sessionId) await rex.callMethod(local, 'session.destroy', { session_id: sessionId });
+    rex.dispose();
+  }
+});
