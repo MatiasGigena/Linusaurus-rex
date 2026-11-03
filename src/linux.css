@@ -1,0 +1,226 @@
+.services-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 22px;
+}
+.services-tabs button {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 10px 14px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.services-tabs button[aria-selected="true"] {
+  color: var(--text);
+  border-color: var(--green);
+}
+.services-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 11px;
+  line-height: 1.8;
+  margin: 15px 0;
+  color: var(--text);
+}
+.services-check input {
+  accent-color: var(--green);
+}
+.services-origins {
+  font: 11px/1.7 monospace;
+  resize: vertical;
+}
+.onboarding-pane {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface);
+  color: var(--text);
+  overflow: hidden;
+}
+.onboarding-body {
+  flex: 1;
+  overflow: auto;
+  padding: clamp(18px, 4vw, 48px);
+  display: flex;
+  flex-direction: column;
+}
+.onboarding-body nav {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 35px;
+}
+.onboarding-body nav button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 5px;
+}
+.onboarding-body nav button span {
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+}
+.onboarding-body nav button.is-current {
+  color: var(--green);
+}
+.onboarding-body nav button.is-current span {
+  border-color: var(--green);
+}
+.onboarding-page {
+  max-width: 650px;
+  flex: 1;
+}
+.onboarding-page > svg {
+  color: var(--green);
+  margin-bottom: 12px;
+}
+.onboarding-page h1 {
+  font-size: clamp(21px, 2.2vw, 32px);
+  font-weight: 500;
+  line-height: 1.35;
+  margin: 0 0 22px;
+  letter-spacing: -0.5px;
+}
+.onboarding-page p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.9;
+  margin: 0 0 18px;
+}
+.onboarding-body footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 30px;
+  gap: 20px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.onboarding-themes {
+  display: flex;
+  gap: 10px;
+  margin: 20px 0;
+}
+.onboarding-theme {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  padding: 20px;
+  cursor: pointer;
+  text-transform: capitalize;
+}
+.onboarding-theme[aria-pressed="true"] {
+  border-color: var(--green);
+}
+.onboarding-theme.graphite {
+  background: #353b41;
+  color: #c6cfd7;
+}
+.onboarding-theme.midnight {
+  background: #10151f;
+  color: #d3d9e5;
+}
+.onboarding-theme.light {
+  background: #f5f6f3;
+  color: #27333a;
+}
+.onboarding-page .server-facts {
+  display: block;
+}
+.onboarding-page .server-facts > div {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 12px 0;
+}
+.app-shell[data-fade-target="surfaces"] [data-inactive="true"] .terminal-pane {
+  background: color-mix(
+    in srgb,
+    var(--terminal-background) calc(var(--inactive-pane-opacity, 1) * 100%),
+    var(--surface)
+  );
+}
+.app-shell[data-fade-target="both"] [data-inactive="true"] {
+  opacity: var(--inactive-pane-opacity, 1);
+}
+.client-update-banner {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  background: color-mix(in srgb, var(--green) 12%, var(--surface));
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 11px;
+  padding: 8px 18px;
+}
+.client-update-banner button {
+  background: none;
+  border: 0;
+  color: var(--green);
+  cursor: pointer;
+  padding: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-page {
+    animation: none;
+  }
+}
+:root[data-tint-interface="true"] .app-shell {
+  --sidebar: color-mix(in srgb, var(--resolved-background) 85%, #101820);
+  --surface: color-mix(in srgb, var(--resolved-background) 92%, #101820);
+  --surface-raised: color-mix(
+    in srgb,
+    var(--resolved-background) 85%,
+    var(--resolved-foreground)
+  );
+  --text: var(--resolved-foreground);
+  --green: var(--theme-accent);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+/* Keep text and surface fading independent even when xterm owns an opaque viewport. */
+.app-shell[data-fade-target="content"]
+  [data-inactive="true"]
+  :is(
+    .xterm-rows,
+    .xterm-selection,
+    .xterm-decoration-container,
+    .kitty-image-layer,
+    .xterm-image-layer
+  ) {
+  opacity: var(--inactive-pane-opacity, 1);
+}
+.app-shell[data-fade-target="surfaces"]
+  [data-inactive="true"]
+  :is(.pane-header, .terminal-container, .terminal-emulator, .xterm-viewport) {
+  background-color: color-mix(
+    in srgb,
+    var(--program-pane-background, var(--terminal-background))
+      calc(var(--inactive-pane-opacity, 1) * 100%),
+    var(--sidebar)
+  ) !important;
+}

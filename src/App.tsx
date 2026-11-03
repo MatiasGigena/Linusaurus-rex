@@ -32,6 +32,17 @@ import {
   type TerminalPaneProps,
 } from "./terminal/TerminalPane";
 import { BlockInspector } from "./terminal/BlockInspector";
+import { NativeServicesDialog } from "./components/NativeServicesDialog";
+import { OnboardingPane } from "./components/OnboardingPane";
+import { ActivePaneHighlight } from "./components/ActivePaneHighlight";
+import { terminalTheme } from "./terminal/themes";
+import {
+  migrateThemeLibrary,
+  saveLibraryTheme,
+  uniqueThemeName,
+} from "./core/themeLibrary";
+import type { UpdateState } from "./shared/types";
+import "./linux.css";
 import { useWorkspace } from "./hooks/useWorkspace";
 import {
   activityLabel,
@@ -130,6 +141,8 @@ export default function App() {
   const [configuration, setConfiguration] = useState(false);
   const [diagnostics, setDiagnostics] = useState(false);
   const [pairing, setPairing] = useState(false);
+  const [nativeServices, setNativeServices] = useState<"server" | "updates">();
+  const [updateState, setUpdateState] = useState<UpdateState>();
   const [directoryBrowser, setDirectoryBrowser] = useState<{
     mode: "insert" | "directory";
     ref: { hostId: string; sessionId: string; blockId: string };
@@ -166,6 +179,7 @@ export default function App() {
     configuration ||
     diagnostics ||
     pairing ||
+    !!nativeServices ||
     !!directoryBrowser ||
     !!report;
   const activeHost =
@@ -275,16 +289,18 @@ export default function App() {
       const light =
         settings.appearance === "light" ||
         (settings.appearance === "system" && media.matches);
-      const custom =
-        (light ? settings.customLightTheme : settings.customDarkTheme) ||
-        settings.customTheme;
-      if (custom?.background)
-        document.documentElement.style.setProperty(
-          "--terminal-background",
-          custom.background,
-        );
-      else
-        document.documentElement.style.removeProperty("--terminal-background");
+      const resolved = terminalTheme(settings);
+      const root = document.documentElement;
+      root.dataset.tintInterface = String(settings.tintInterface);
+      for (const [key, value] of Object.entries({
+        "--terminal-background": resolved.background,
+        "--shell-background": resolved.background,
+        "--shell-foreground": resolved.foreground,
+        "--resolved-background": resolved.background,
+        "--resolved-foreground": resolved.foreground,
+        "--theme-accent": resolved.green,
+      }))
+        if (value) root.style.setProperty(key, value);
     };
     apply();
     media.addEventListener("change", apply);
@@ -301,6 +317,10 @@ export default function App() {
     settings?.customTheme,
     settings?.customLightTheme,
     settings?.customDarkTheme,
+    settings?.themeLibrary,
+    settings?.lightThemeId,
+    settings?.darkThemeId,
+    settings?.tintInterface,
   ]);
 
   useEffect(() => {
@@ -354,6 +374,22 @@ export default function App() {
       window.removeEventListener("focus", focus);
       window.removeEventListener("blur", blur);
     };
+  }, []);
+  useEffect(() => {
+    if (window.rex)
+      void window.rex
+        .request("setContext", { uiBusy: modalOpen || !!menu })
+        .catch(() => {});
+  }, [modalOpen, menu]);
+  useEffect(() => {
+    if (!window.rex) return;
+    void window.rex
+      .request("updateStatus", {})
+      .then(setUpdateState)
+      .catch(() => {});
+    return window.rex.onClientEvent((event) => {
+      if (event.type === "update") setUpdateState(event.state);
+    });
   }, []);
   const focusPane = async (pane: RexPane, where = selection) => {
     if (!where) return;
@@ -500,12 +536,30 @@ export default function App() {
       case "client.pair_device":
         setPairing(true);
         return;
-      case "client.onboarding":
-        setReport({
-          title: "Welcome to Linusaurus Rex",
-          body: "Your sessions and programs run on Rex.\n\nUse Ctrl K to switch sessions, Ctrl Shift P for commands, and drag a split border to resize panes.\n\nRight-click tabs or panes for layout controls. Hold Shift to select text in a mouse-aware terminal program.\n\nIn Settings → Agents, preview and install Rex integrations for your coding agents.\n\nCustom shortcuts and Lua actions are available under Settings → Keyboard. Closing this application leaves your programs running.",
-        });
-        return;
+      case "client.onboarding": {
+        const tutorial = await ws.run(() =>
+          window.rex.request("createTutorial", { hostId }),
+        );
+        await inspectAfter(hostId, tutorial.sessionId);
+        ws.select(
+          hostId,
+          tutorial.sessionId,
+          tutorial.windowId,
+          tutorial.blockId,
+        );
+        return tutorial;
+      }
+      case "client.update.accept":
+        return window.rex.request("applyUpdate", {});
+      case "client.update.accept_when_idle":
+        return window.rex.request("applyUpdate", { whenIdle: true });
+      case "client.server.restart":
+        return ws.run(() =>
+          window.rex.request("serverLifecycle", {
+            hostId,
+            operation: "restart",
+          }),
+        );
       case "client.notice.dismiss":
         ws.setNotices([]);
         return;
@@ -1308,12 +1362,18 @@ export default function App() {
             settings.appearance === "light" ||
             (settings.appearance === "system" &&
               matchMedia("(prefers-color-scheme: light)").matches);
-          return ws.saveSettings({
-            ...settings,
-            theme: "system",
-            customTheme: undefined,
-            [light ? "customLightTheme" : "customDarkTheme"]: imported,
-          });
+          const next = migrateThemeLibrary(settings);
+          return ws.saveSettings(
+            saveLibraryTheme(
+              next,
+              uniqueThemeName(
+                next.themeLibrary,
+                `Imported ${light ? "light" : "dark"}`,
+              ),
+              imported,
+              light ? "light" : "dark",
+            ),
+          );
         }
         return;
       }
@@ -1469,7 +1529,7 @@ export default function App() {
       unsubscribe();
       window.removeEventListener("keydown", keydown, true);
     };
-  }, [modalOpen]);
+  }, [modalOpen, menu]);
 
   const navHosts: NavigationHost[] = hosts.map((host) => ({
     ...host,
@@ -1954,9 +2014,11 @@ export default function App() {
     <div
       className={`app-shell tabs-${settings.tabStyle} pane-${settings.paneStyle}`}
       data-native-focused={nativeFocused}
+      data-fade-target={settings.inactivePaneFadeTarget}
       style={
         {
           "--inactive-window-opacity": String(1 - settings.inactiveWindowFade),
+          "--inactive-pane-opacity": String(1 - settings.inactivePaneFade),
         } as React.CSSProperties
       }
     >
@@ -2011,6 +2073,7 @@ export default function App() {
         onReorderWindow={reorder}
       />
       <main className="workspace">
+        <h1 className="sr-only">Linusaurus Rex workspace</h1>
         <Toolbar
           title={
             activeWindow
@@ -2075,6 +2138,23 @@ export default function App() {
             </button>
           </div>
         )}
+        {updateState &&
+          ["available", "ready", "scheduled"].includes(updateState.phase) && (
+            <div className="client-update-banner">
+              <span>
+                Linusaurus Rex {updateState.version}{" "}
+                {updateState.phase === "scheduled"
+                  ? "will install when idle"
+                  : updateState.phase === "ready"
+                    ? "is ready to install"
+                    : "is available"}
+                .
+              </span>
+              <button onClick={() => setNativeServices("updates")}>
+                Review update
+              </button>
+            </div>
+          )}
         <div className="workspace-body" ref={workspaceElement}>
           {activeWindow && selection ? (
             <>
@@ -2112,6 +2192,19 @@ export default function App() {
                     }}
                     aria-hidden={!visible}
                   >
+                    {visible && settings.highlightActivePane && (
+                      <ActivePaneHighlight
+                        rect={activePane?.rect}
+                        animation={settings.highlightAnimation}
+                        inset={
+                          window.panes.length > 1
+                            ? settings.paneStyle === "compact"
+                              ? 1
+                              : 4
+                            : 0
+                        }
+                      />
+                    )}
                     {window.panes.map((pane) => (
                       <div
                         key={pane.id}
@@ -2119,6 +2212,7 @@ export default function App() {
                         data-floating-block={
                           pane.layerKind === "floating" ? pane.id : undefined
                         }
+                        data-inactive={visible && pane.id !== activePane?.id}
                         className={
                           pane.layerKind === "floating"
                             ? "floating-pane-wrapper"
@@ -2137,10 +2231,6 @@ export default function App() {
                                 : 4
                               : 0,
                           zIndex: pane.layerKind === "floating" ? 20 : 1,
-                          opacity:
-                            visible && pane.id !== activePane?.id
-                              ? 1 - settings.inactivePaneFade
-                              : 1,
                         }}
                         onPointerEnter={() => {
                           if (
@@ -2524,6 +2614,10 @@ export default function App() {
             setSettingsTab(undefined);
             setEditingHost(host);
           }}
+          onNativeServices={() => {
+            setSettingsTab(undefined);
+            setNativeServices("server");
+          }}
           onConfig={() => {
             setSettingsTab(undefined);
             setConfiguration(true);
@@ -2642,12 +2736,23 @@ export default function App() {
           </div>
         </Dialog>
       )}
+      {nativeServices && (
+        <NativeServicesDialog
+          settings={settings}
+          hostId={activeHost?.id || "local"}
+          initialTab={nativeServices}
+          onSave={ws.saveSettings}
+          onClose={() => setNativeServices(undefined)}
+        />
+      )}
       {menu && <ContextMenu {...menu} onClose={() => setMenu(undefined)} />}
     </div>
   );
 }
 
 function WorkspacePane(props: TerminalPaneProps) {
+  if (props.pane.creator === "com.superlogical.onboarding")
+    return <OnboardingPane {...props} />;
   return props.pane.creator &&
     props.pane.creator !== "com.superlogical.terminal" ? (
     <BlockInspector {...props} />
