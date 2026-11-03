@@ -10,6 +10,8 @@ import {
   readFile,
   rm,
   lstat,
+  symlink,
+  readdir,
 } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -131,6 +133,166 @@ test("owning service discovery reads scalar unit IDs and fails closed on inspect
   );
 });
 
+test("explicit lifecycle recovery restores only stale owned guards, preserving live owners and unrelated files", async () => {
+  const runtime = await mkdtemp(join(tmpdir(), "linusaurus-guard-recovery-")),
+    unit = "owned-rex.service",
+    directory = join(runtime, "systemd/user.control", `${unit}.d`),
+    startText = await readFile("/proc/self/stat", "utf8"),
+    start = startText.slice(startText.lastIndexOf(")") + 2).split(" ")[19];
+  const guard = (pid: number, identity: string) =>
+    `# Managed by Linusaurus Rex: idle shutdown guard\n# Owner: ${pid} ${identity}\n[Service]\nRestart=no\n`;
+  const file = () => join(directory, `99-linusaurus-idle-${randomUUID()}.conf`);
+  const stale = file(),
+    abandoned = file(),
+    reused = file(),
+    live = file(),
+    changed = file(),
+    linked = file(),
+    unrelated = join(directory, "other.conf");
+  const calls: string[][] = [];
+  const services = new SystemdUserServices({
+    call: async () => {},
+    attest: async () => {},
+    runtimeDirectory: runtime,
+    run: async (_executable, args) => {
+      calls.push(args);
+      return "";
+    },
+  });
+  try {
+    await mkdir(directory, { recursive: true });
+    await writeFile(stale, guard(2147483647, "1"));
+    await writeFile(
+      abandoned,
+      guard(process.pid, start).replace(
+        "[Service]",
+        "# State: abandoned\n[Service]",
+      ),
+    );
+    await writeFile(reused, guard(process.pid, "0"));
+    await writeFile(live, guard(process.pid, start));
+    await writeFile(
+      changed,
+      "# User edited the generated filename\n[Service]\nRestart=no\n",
+    );
+    await writeFile(unrelated, guard(2147483647, "1"));
+    await symlink(unrelated, linked);
+    await services.recoverIdleGuards(unit);
+    assert.equal(
+      await lstat(stale)
+        .then(() => true)
+        .catch(() => false),
+      false,
+    );
+    assert.equal(
+      await lstat(reused)
+        .then(() => true)
+        .catch(() => false),
+      false,
+    );
+    assert.equal(
+      await lstat(abandoned)
+        .then(() => true)
+        .catch(() => false),
+      false,
+      "A released guard remains recoverable while its desktop process is still alive",
+    );
+    assert.equal(await readFile(live, "utf8"), guard(process.pid, start));
+    assert.match(await readFile(changed, "utf8"), /User edited/);
+    assert.equal((await lstat(linked)).isSymbolicLink(), true);
+    assert.equal(await readFile(unrelated, "utf8"), guard(2147483647, "1"));
+    assert.deepEqual(calls, [["--user", "daemon-reload"]]);
+    await services.recoverIdleGuards(unit);
+    assert.equal(
+      calls.length,
+      1,
+      "A status with no stale owner must not repeatedly reload units",
+    );
+  } finally {
+    await rm(runtime, { recursive: true, force: true });
+  }
+});
+
+test("failed stale-guard reload retains an owned marker for an explicit retry", async () => {
+  const runtime = await mkdtemp(join(tmpdir(), "linusaurus-guard-retry-")),
+    unit = "owned-rex.service",
+    directory = join(runtime, "systemd/user.control", `${unit}.d`),
+    path = join(directory, `99-linusaurus-idle-${randomUUID()}.conf`),
+    text =
+      "# Managed by Linusaurus Rex: idle shutdown guard\n# Owner: 2147483647 1\n[Service]\nRestart=no\n";
+  let attempts = 0;
+  const services = new SystemdUserServices({
+    call: async () => {},
+    attest: async () => {},
+    runtimeDirectory: runtime,
+    run: async () => {
+      if (++attempts === 1) throw new Error("fixture reload failed");
+      return "";
+    },
+  });
+  try {
+    await mkdir(directory, { recursive: true });
+    await writeFile(path, text);
+    await assert.rejects(
+      services.recoverIdleGuards(unit),
+      /fixture reload failed/,
+    );
+    assert.equal(await readFile(path, "utf8"), text);
+    await services.recoverIdleGuards(unit);
+    assert.equal(
+      await lstat(path)
+        .then(() => true)
+        .catch(() => false),
+      false,
+    );
+    assert.equal(attempts, 2);
+  } finally {
+    await rm(runtime, { recursive: true, force: true });
+  }
+});
+
+test("origin preview rejects an XDG directory outside the manager UnitPath before writing", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "linusaurus-unitpath-"));
+  const services = new SystemdUserServices({
+    call: async () => {},
+    attest: async () => {},
+    configDirectory: directory,
+    run: async () =>
+      JSON.stringify({ type: "as", data: ["/other/systemd/user"] }),
+  });
+  try {
+    await assert.rejects(
+      services.preview(
+        { id: "owned", label: "Owned", endpoint: "unix:///owned.sock" },
+        "unix:///owned.sock",
+        {
+          unit: "owned.service",
+          scope: "user",
+          activeState: "active",
+          subState: "running",
+          restart: "always",
+          fragmentPath: "/owned",
+          dropInPaths: [],
+          configuredOrigins: [],
+          canManage: true,
+          objectPath: "/owned",
+          mainPID: 123,
+          execPath: "/usr/bin/rex",
+          argv: ["/usr/bin/rex", "server", "run"],
+          remainAfterExit: false,
+          triggeredBy: [],
+          job: 0,
+        },
+        ["client.example"],
+      ),
+      /outside the user service manager/,
+    );
+    assert.deepEqual(await readdir(directory), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test(
   "owned Restart=always user service preserves sessions and unrelated configuration while reviewing persistent origins",
   { skip: process.env.REX_INTEGRATION !== "1" || !process.env.XDG_RUNTIME_DIR },
@@ -150,8 +312,22 @@ test(
     const service = new RexService();
     const originalService = new RexService();
     const calls: { executable: string; args: string[] }[] = [];
+    let failGuardRestoreReload = false;
     const run = async (executable: string, args: string[]) => {
       calls.push({ executable, args });
+      if (
+        failGuardRestoreReload &&
+        executable === "systemctl" &&
+        args.includes("daemon-reload")
+      ) {
+        const files = await readdir(
+          join(runtime, "systemd/user.control", `${unit}.d`),
+        ).catch(() => []);
+        if (!files.some((name) => name.startsWith("99-linusaurus-idle-"))) {
+          failGuardRestoreReload = false;
+          throw new Error("fixture guard restoration reload failed");
+        }
+      }
       return (
         await execute(executable, args, {
           timeout: 8000,
@@ -220,11 +396,44 @@ test(
       assert.equal(initial.service?.restart, "always");
       assert.equal(initial.service?.canManage, true);
       sessionId = await service.createSession(host, "systemd-owned", directory);
+      const abandonedDirectory = join(
+          runtime,
+          "systemd/user.control",
+          `${unit}.d`,
+        ),
+        abandoned = join(
+          abandonedDirectory,
+          `99-linusaurus-idle-${randomUUID()}.conf`,
+        );
+      await mkdir(abandonedDirectory, { recursive: true });
+      await writeFile(
+        abandoned,
+        "# Managed by Linusaurus Rex: idle shutdown guard\n# Owner: 2147483647 1\n[Service]\nRestart=no\n",
+        { flag: "wx", mode: 0o600 },
+      );
+      await run("systemctl", ["--user", "daemon-reload"]);
+      assert.equal(
+        (await lifecycle.status(host)).service?.restart,
+        "no",
+        "Read-only status must not remove an abandoned guard",
+      );
+      assert.equal((await lstat(abandoned)).isFile(), true);
       await assert.rejects(
         lifecycle.perform(host, "restart"),
         /existing session/,
       );
       assert.equal((await lifecycle.status(host)).pid, initial.pid);
+      assert.equal(
+        (await lifecycle.status(host)).service?.restart,
+        "always",
+        "An explicit action recovers a crashed desktop guard even when an existing session prevents restart",
+      );
+      assert.equal(
+        await lstat(abandoned)
+          .then(() => true)
+          .catch(() => false),
+        false,
+      );
       const preview = await lifecycle.previewOrigins(host, [
         "https://client.example.com",
         "*.trusted.example",
@@ -354,6 +563,35 @@ test(
       started = true;
       assert.equal(again.running, true);
       assert.equal(again.service?.unit, unit);
+      failGuardRestoreReload = true;
+      await assert.rejects(
+        rebound.perform(host, "stop"),
+        /fixture guard restoration reload failed/,
+      );
+      started = false;
+      const abandonedFiles = await readdir(
+        join(runtime, "systemd/user.control", `${unit}.d`),
+      );
+      assert.equal(abandonedFiles.length, 1);
+      assert.match(
+        await readFile(
+          join(runtime, "systemd/user.control", `${unit}.d`, abandonedFiles[0]),
+          "utf8",
+        ),
+        /# State: abandoned/,
+      );
+      const recovered = await rebound.perform(host, "start");
+      started = true;
+      assert.equal(recovered.running, true);
+      assert.equal(
+        recovered.service?.restart,
+        "always",
+        "Retry after a failed guard restoration must restore the underlying Restart policy",
+      );
+      assert.deepEqual(
+        await readdir(join(runtime, "systemd/user.control", `${unit}.d`)),
+        [],
+      );
       assert.equal(
         calls.some(
           (call) =>

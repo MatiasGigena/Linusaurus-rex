@@ -349,6 +349,8 @@ export class LinuxServerManager {
         throw new Error(
           before.reason || "This remote server cannot be managed.",
         );
+      if (before.service?.scope === "user")
+        await this.systemd?.recoverIdleGuards(before.service.unit);
       if (
         !(await this.profile(endpoint)) &&
         !before.running &&

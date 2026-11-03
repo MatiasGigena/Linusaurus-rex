@@ -9,6 +9,7 @@ import {
   lstat,
   realpath,
   unlink,
+  readdir,
 } from "node:fs/promises";
 import { dirname, join, relative, isAbsolute, basename } from "node:path";
 import { homedir } from "node:os";
@@ -20,7 +21,8 @@ import {
 } from "./server-origins.js";
 
 const execute = promisify(execFile),
-  MARKER = "# Managed by Linusaurus Rex: web origins";
+  MARKER = "# Managed by Linusaurus Rex: web origins",
+  IDLE_MARKER = "# Managed by Linusaurus Rex: idle shutdown guard";
 export interface ServiceInfo {
   unit: string;
   scope: "user" | "system";
@@ -74,6 +76,18 @@ type Pending = {
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 const scalar = (value: any) => (Array.isArray(value) ? value[0] : value);
+async function processStart(pid: number): Promise<string | undefined> {
+  try {
+    const text = await readFile(`/proc/${pid}/stat`, "utf8"),
+      start = text.slice(text.lastIndexOf(")") + 2).split(" ")[19];
+    if (!/^\d+$/.test(start))
+      throw new Error("Invalid desktop process identity.");
+    return start;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+}
 const unitName = (value: string) =>
   /^[a-zA-Z0-9_.:@\\-]+\.service$/.test(value) && !value.includes("..");
 const fields = (value: any) =>
@@ -322,24 +336,92 @@ export class SystemdUserServices {
     };
   }
   async start(unit: string) {
+    await this.recoverIdleGuards(unit);
     const before = await this.inspect(unit);
     if (!before.canManage) throw new Error(before.reason);
     if (before.mainPID) return;
     await this.run("systemctl", ["--user", "start", unit]);
   }
+  /** Explicit lifecycle actions recover a previous desktop crash; status is read-only. */
+  async recoverIdleGuards(unit: string) {
+    if (!unitName(unit)) throw new Error("Invalid Rex service unit name.");
+    const directory = join(this.runtime, "systemd/user.control", `${unit}.d`);
+    const names = await readdir(directory).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    });
+    const removed = new Map<string, string>();
+    try {
+      for (const name of names) {
+        if (
+          !/^99-linusaurus-idle-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.conf$/.test(
+            name,
+          )
+        )
+          continue;
+        const path = join(directory, name),
+          identity = await lstat(path).catch(() => undefined);
+        if (
+          !identity?.isFile() ||
+          identity.uid !== process.getuid?.() ||
+          identity.size > 512
+        )
+          continue;
+        const text = await readFile(path, "utf8"),
+          match =
+            /^# Managed by Linusaurus Rex: idle shutdown guard\n# Owner: (\d+) (\d+)\n(# State: abandoned\n)?\[Service\]\nRestart=no\n$/.exec(
+              text,
+            );
+        if (!match || Number(match[1]) <= 1) continue;
+        if (!match[3] && (await processStart(Number(match[1]))) === match[2])
+          continue;
+        const current = await lstat(path).catch(() => undefined);
+        if (
+          current?.ino !== identity.ino ||
+          current.dev !== identity.dev ||
+          (await readFile(path, "utf8")) !== text
+        )
+          throw new Error(
+            "A stale idle guard changed during recovery; it was left untouched.",
+          );
+        await unlink(path);
+        removed.set(path, text);
+      }
+    } finally {
+      if (removed.size) {
+        try {
+          await this.run("systemctl", ["--user", "daemon-reload"]);
+        } catch (error) {
+          // Retain a recognizable stale marker for the next explicit retry.
+          for (const [path, text] of removed)
+            await writeFile(path, text, { flag: "wx", mode: 0o600 }).catch(
+              (failure) => {
+                if ((failure as NodeJS.ErrnoException).code !== "EEXIST")
+                  throw failure;
+              },
+            );
+          throw error;
+        }
+      }
+    }
+  }
   private async guard(unit: ServiceSnapshot) {
+    const owner = await processStart(process.pid);
+    if (!owner)
+      throw new Error("The desktop process identity could not be read.");
     const directory = join(
         this.runtime,
         "systemd/user.control",
         `${unit.unit}.d`,
       ),
       path = join(directory, `99-linusaurus-idle-${randomUUID()}.conf`);
+    const text = `${IDLE_MARKER}\n# Owner: ${process.pid} ${owner}\n[Service]\nRestart=no\n`;
     await mkdir(directory, { recursive: true });
     const handle = await import("node:fs/promises").then((fs) =>
       fs.open(path, "wx", 0o600),
     );
     try {
-      await handle.writeFile("[Service]\nRestart=no\n");
+      await handle.writeFile(text);
     } finally {
       await handle.close();
     }
@@ -348,13 +430,31 @@ export class SystemdUserServices {
     const restore = async () => {
       if (removed) return;
       const current = await lstat(path).catch(() => undefined);
-      if (current?.ino !== identity.ino || current.dev !== identity.dev)
+      if (
+        current?.ino !== identity.ino ||
+        current.dev !== identity.dev ||
+        (await readFile(path, "utf8")) !== text
+      )
         throw new Error(
           "The owned runtime Restart guard changed; it was left untouched.",
         );
       await unlink(path);
       removed = true;
-      await this.run("systemctl", ["--user", "daemon-reload"]);
+      try {
+        await this.run("systemctl", ["--user", "daemon-reload"]);
+      } catch (error) {
+        // A failed reload can leave the manager caching Restart=no. An explicitly
+        // abandoned marker allows the next action to retry while this app lives.
+        await writeFile(
+          path,
+          text.replace("[Service]", "# State: abandoned\n[Service]"),
+          { flag: "wx", mode: 0o600 },
+        ).catch((failure) => {
+          if ((failure as NodeJS.ErrnoException).code !== "EEXIST")
+            throw failure;
+        });
+        throw error;
+      }
     };
     try {
       await this.run("systemctl", ["--user", "daemon-reload"]);
@@ -378,6 +478,7 @@ export class SystemdUserServices {
     if (!unit.canManage || unit.scope !== "user")
       throw new Error(unit.reason || "This service is read-only.");
     await this.options.attest(endpoint, pid);
+    await this.recoverIdleGuards(unit.unit);
     const before = await this.inspect(unit.unit);
     if (before.mainPID !== pid)
       throw new Error("The service process changed. Refresh before retrying.");
@@ -438,6 +539,22 @@ export class SystemdUserServices {
     if (unit.argv.some((argument) => /[$%]|[\x00-\x1f]/.test(argument)))
       throw new Error(
         "This service uses command expansion. Edit its origins with the existing service configuration.",
+      );
+    const paths = (
+      await this.bus("user", [
+        "get-property",
+        "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager",
+        "UnitPath",
+      ])
+    ).data;
+    if (
+      !Array.isArray(paths) ||
+      !paths.includes(join(this.config, "systemd/user"))
+    )
+      throw new Error(
+        "The desktop configuration directory is outside the user service manager’s unit search path. Launch the client with the same XDG_CONFIG_HOME as your user service manager.",
       );
     const path = this.path(unit.unit),
       before = await this.read(path);
