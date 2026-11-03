@@ -1,5 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import { readFile } from 'node:fs/promises';
+import {realpathSync,statSync} from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { CHANNELS } from './channels.js';
@@ -14,6 +15,7 @@ import { parseTheme } from './features/themes.js';
 import { isLocalEndpoint, readConfig, writeConfig } from './features/config.js';
 import {desktopAllowed,noticeSound} from './features/notifications.js';
 import {LinuxServerManager} from './features/lifecycle.js';
+import {resolveCurrentAppImage} from './features/update-target.js';
 import {LinuxUpdateManager} from './features/updates.js';
 import {linkDecision} from './features/links.js';
 
@@ -29,7 +31,14 @@ let updateSettingsStop:(()=>void)|undefined;
 let updateTimer:ReturnType<typeof setInterval>|undefined;
 function updates(store:SettingsStore){
  if(updateManager)return updateManager;
- const manager=new LinuxUpdateManager({directory:join(app.getPath('userData'),'updates'),version:app.getVersion(),appImage:process.env.APPIMAGE,development:!app.isPackaged,
+ let appImage:string|undefined;
+ if(app.isPackaged&&process.env.APPIMAGE&&process.env.APPDIR){
+  try{
+   const image=realpathSync(process.env.APPIMAGE);
+   if(statSync(image).isFile())appImage=resolveCurrentAppImage({appImage:image,appDir:realpathSync(process.env.APPDIR),execPath:realpathSync(process.execPath),appPath:realpathSync(app.getAppPath())});
+  }catch{/* An inherited or stale AppImage environment does not identify this package. */}
+ }
+ const manager=new LinuxUpdateManager({directory:join(app.getPath('userData'),'updates'),version:app.getVersion(),appImage,development:!app.isPackaged,
   changed:state=>{for(const context of contexts.values())context.emit({type:'update',state});},
   idle:()=>[...contexts.values()].every(context=>context.isIdle()),
   install:async(path,kind)=>{if(kind==='appimage'){app.relaunch({execPath:path,args:process.argv.slice(1)});setTimeout(()=>app.quit(),100);}else{const error=await shell.openPath(path);if(error)throw new Error(error);}},

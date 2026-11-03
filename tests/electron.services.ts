@@ -130,6 +130,19 @@ try {
     window.rex.request("updateStatus", {}),
   );
   assert.match(update.currentVersion, /^\d+\.\d+\.\d+/);
+  if (process.env.LINUSAURUS_EXECUTABLE?.endsWith(".AppImage"))
+    assert.equal(
+      update.installKind,
+      "appimage",
+      "The updater must identify its own AppImage runtime",
+    );
+  else if (process.env.LINUSAURUS_EXECUTABLE)
+    assert.equal(
+      update.installKind,
+      "deb",
+      "An unpacked Debian executable must not inherit an AppImage update target",
+    );
+  else assert.equal(update.installKind, "development");
   assert.equal(update.phase, "idle");
   assert.equal(update.canApply, false);
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
