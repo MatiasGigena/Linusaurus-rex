@@ -44,7 +44,7 @@ export function Toolbar(props: ToolbarProps) {
       <IconButton label="Settings" onClick={props.onSettings} className="toolbar-settings"><Settings2 size={17} /></IconButton>
       {props.onClosePane && <button type="button" className="pane-close-action" onClick={props.onClosePane} disabled={props.disabled}>Close pane</button>}
       <IconButton label="Close terminal" shortcut="Ctrl Shift W" onClick={props.onCloseWindow} disabled={props.disabled} className="danger-button"><X size={17} /></IconButton>
-      {props.onWindowControl && <div className="window-controls" aria-label="Application window controls">
+      {props.onWindowControl && <div className="window-controls" role="group" aria-label="Application window controls">
         <IconButton label="Minimize window" onClick={() => props.onWindowControl?.('minimize')}><Minus size={14} /></IconButton>
         <IconButton label="Maximize or restore window" onClick={() => props.onWindowControl?.('maximize')}><Square size={11} /></IconButton>
         <IconButton label="Close application" onClick={() => props.onWindowControl?.('close')} className="window-close"><X size={16} /></IconButton>

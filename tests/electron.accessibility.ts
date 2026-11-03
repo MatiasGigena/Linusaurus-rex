@@ -175,6 +175,9 @@ try {
       );
     }
   };
+  await page
+    .getByRole("group", { name: "Application window controls", exact: true })
+    .waitFor();
   await audit("workspace");
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Accessibility.enable");
