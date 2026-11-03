@@ -1,3 +1,4 @@
+import packageInfo from '../../package.json';
 import WebSocket from 'ws';
 import { join } from 'node:path';
 
@@ -74,7 +75,7 @@ export class RexControl {
       this.socket.on('open', () => {
         if (this.socket.protocol !== 'rex.control.v1') { fail(new Error('Rex did not negotiate its control protocol.')); this.socket.terminate(); return; }
         this.socket.send(JSON.stringify({ type: 'hello', api_revision: this.revisions.max, api_min_revision: this.revisions.min,
-          client: { name: 'Linusaurus Rex', version: '0.3.0', kind: 'app', platform: 'linux' },
+          client: { name: 'Linusaurus Rex', version: packageInfo.version, kind: 'app', platform: 'linux' },
           ...(reconnectToken ? { reconnect_token: reconnectToken } : {}),
         }));
       });
