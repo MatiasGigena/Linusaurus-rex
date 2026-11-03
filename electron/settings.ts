@@ -36,7 +36,7 @@ export function validateSettings(value: unknown): Settings {
     fontSize: [8, 48, true], interfaceZoom: [.7, 1.5], scrollback: [100, 100_000, true], lineHeight: [1, 2],
     tabIcons: [0, 8, true], paddingX: [0, 80, true], paddingY: [0, 80, true], highlightOpacity: [0, 1], inactivePaneFade: [0, .8],
     fontWeight: [100, 900, true], fontWeightBold: [100, 900, true], letterSpacing: [-2, 8], minimumContrastRatio: [1, 21], smoothScrollDuration: [0, 1000, true],
-    cursorBlinkInterval:[100,2000,true],
+    cursorBlinkInterval:[100,2000,true],sidebarWidth:[190,500],
   };
   const enums: Record<string, string[]> = {
     theme: ['graphite', 'midnight', 'light', 'system'], appearance: ['system', 'dark', 'light'], cursorStyle: ['block', 'underline', 'bar'],
@@ -105,8 +105,10 @@ export function validateSettings(value: unknown): Settings {
     const selection = record(input.lastSelection);
     const hostId = identifier(selection.hostId, 'selected host');
     if (hosts.some((host) => host.id === hostId)) lastSelection = {
-      hostId, sessionId: identifier(selection.sessionId, 'selected session'), windowId: string(selection.windowId, 'selected tab', 256),
+      hostId, sessionId: string(selection.sessionId, 'selected session',256), windowId: string(selection.windowId, 'selected tab', 256),
+      ...(selection.blockId===undefined?{}:{blockId:identifier(selection.blockId,'selected pane')}),
     };
+    if(lastSelection&&!lastSelection.sessionId&&(lastSelection.windowId||lastSelection.blockId))throw new Error('An empty host selection cannot contain a tab or pane.');
   }
   return { ...result, hosts, ...(lastSelection ? { lastSelection } : {}) };
 }

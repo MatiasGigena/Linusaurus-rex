@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -38,6 +38,8 @@ function credentials():Promise<CredentialsStore> {
   });await store.load();return store;})();credentialStores.set(path,pending);}
   return pending;
 }
+/** Use the same endpoint-bound encrypted credentials for startup and GUI connections. */
+export async function getHostCredentials(host:Host){return(await credentials()).get(credentialKey(host));}
 function ensureRegistered() {
   if(registered)return;registered=true;
   ipcMain.handle(CHANNELS.request,(event,method:unknown,args:unknown)=>resolve(event).request(identifier(method,'operation'),record(args)));
@@ -61,7 +63,7 @@ class WindowContext {
   private notices=new Set<Notification>();
   private stopSettings?:()=>void;
   constructor(readonly window:BrowserWindow,readonly store:SettingsStore,readonly allowedUrl:string,private options:Options) {
-    this.rex=new RexService({credentials:async host=>(await credentials()).get(credentialKey(host)),onControl:(host,control)=>this.features.bindControl(host,control),onMetadata:(host,sessionId,blockId,value)=>this.features.metadata(host.id,sessionId,blockId,value)});
+    this.rex=new RexService({credentials:getHostCredentials,onControl:(host,control)=>this.features.bindControl(host,control),onMetadata:(host,sessionId,blockId,value)=>this.features.metadata(host.id,sessionId,blockId,value)});
     this.features=new ClientFeatures(this.rex,{settings:()=>store.get(),emit:event=>this.emit(event),notify:event=>this.notify(event),badge:count=>{if(!this.window.isDestroyed()){this.window.setTitle(count?`Linusaurus Rex (${count})`:'Linusaurus Rex');app.setBadgeCount(count);}},native:(name,args,context)=>this.native(name,args,context)});
     let previousSettings=store.get();
     this.stopSettings=store.onChange(settings=>{
@@ -74,7 +76,7 @@ class WindowContext {
     window.on('focus',this.visibility);window.on('blur',this.visibility);window.on('hide',this.visibility);window.on('show',this.visibility);
   }
   emit(event:ClientEvent){if(!this.disposed&&!this.window.isDestroyed()&&!this.window.webContents.isDestroyed())this.window.webContents.send(CHANNELS.clientEvent,event);}
-  getSettings(){const settings=this.store.get();const current=this.context;const selected=typeof current.hostId==='string'&&typeof current.sessionId==='string'&&typeof current.windowId==='string'?{hostId:current.hostId,sessionId:current.sessionId,windowId:current.windowId}:this.options.initialSelection;return selected?{...settings,lastSelection:selected}:settings;}
+  getSettings(){const settings=this.store.get();const current=this.context;const selected=typeof current.hostId==='string'&&typeof current.sessionId==='string'&&typeof current.windowId==='string'?{hostId:current.hostId,sessionId:current.sessionId,windowId:current.windowId,...(typeof current.blockId==='string'&&current.blockId?{blockId:current.blockId}:{})}:this.options.initialSelection;return selected?{...settings,lastSelection:selected}:settings;}
   async saveSettings(value:unknown) {
     const previous=this.store.get();
     const settings=await this.store.set(value);
@@ -87,6 +89,14 @@ class WindowContext {
   async request(method:string,args:Record<string,unknown>):Promise<unknown> {
     if(method==='unsubscribe'){const id=identifier(args.subscriptionId,'subscription ID');this.subscriptions.get(id)?.stop();this.subscriptions.delete(id);return;}
     if(method==='setContext'){this.context={...this.context,...args};this.visibility();return;}
+    if(method==='resizeWindow'){
+      const delta=integer(args.deltaWidth,'window width adjustment',-500,500);
+      if(this.window.isMaximized()||this.window.isFullScreen())return;
+      const bounds=this.window.getBounds(),area=screen.getDisplayMatching(bounds).workArea;
+      const width=Math.min(Math.max(760,bounds.width+delta),Math.max(760,area.width));
+      const x=Math.max(area.x,Math.min(bounds.x,area.x+area.width-width));
+      this.window.setBounds({...bounds,x,width});return;
+    }
     if(method==='integrationsStatus'){const result=await this.integrations.status() as Record<string,unknown>;return{output:JSON.stringify(result,null,2),agents:result.harnesses??[]};}
     if(method==='integrationsPreview')return this.integrations.preview(args as unknown as IntegrationChange);
     if(method==='integrationsApply')return this.integrations.apply(identifier(args.previewId,'integration preview'));
@@ -215,7 +225,6 @@ class WindowContext {
     if(name==='client.visibility.toggle'){this.window.isVisible()&&this.window.isFocused()?this.window.hide():this.windowControl('show');return{handled:true};}
     if(name==='client.version.copy'){const status=await this.rex.status(context.host);await clipboard.writeText(`Linusaurus Rex ${app.getVersion()}\nRex server ${status.version||'unavailable'}\nElectron ${process.versions.electron}\nNode ${process.versions.node}`);return{handled:true};}
     if(name==='client.debug.copy'){await clipboard.writeText(JSON.stringify(await this.diagnostics(context.host),null,2));return{handled:true};}
-    if(name==='client.diagnostics')return{handled:true,result:await this.diagnostics(context.host)};
     if(name==='client.config.copy_path'){await clipboard.writeText((await this.configInfo(context.host)).path);return{handled:true};}
     if(name==='client.config.reload')return{handled:true,result:await this.rex.callMethod(context.host,'server.config_reload',{})};
     return{handled:false};

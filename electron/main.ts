@@ -1,10 +1,12 @@
 import { app, BrowserWindow, globalShortcut, Menu, nativeTheme, Tray, type MenuItemConstructorOptions } from 'electron';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CHANNELS } from './channels.js';
-import { registerIpc } from './ipc.js';
+import { getHostCredentials,registerIpc } from './ipc.js';
 import { SettingsStore } from './settings.js';
 import type { Selection, Settings } from '../src/shared/types.js';
+import {RexService} from './rex/service.js';
+import {LAUNCH_HELP,parseLaunchArgs,prepareLaunchSettings,resolveLaunchSelection,type LaunchOptions} from './features/launch.js';
 
 const directory=dirname(fileURLToPath(import.meta.url));
 const windows=new Set<BrowserWindow>();
@@ -14,6 +16,7 @@ let lastWindow:BrowserWindow|undefined;
 let tray:Tray|undefined;
 let quitting=false;
 let registeredAccelerator='';
+let preferencesPath:string;
 app.setName('Linusaurus Rex');
 app.setAppUserModelId('com.matiasgigena.linusaurus-rex');
 app.commandLine.appendSwitch('class','linusaurus-rex');
@@ -68,10 +71,10 @@ function applySettings(settings:Settings){
     tray.on('click',showWindow);
   }else if(!needsTray&&tray){tray.destroy();tray=undefined;}
 }
-async function createWindow(initialSelection?:Selection):Promise<void>{
+async function createWindow(initialSelection?:Selection,size?:{width:number;height:number}):Promise<void>{
   const url=rendererUrl();const settings=store.get();
   const window=new BrowserWindow({
-    width:1440,height:900,minWidth:760,minHeight:480,
+    width:size?.width??1440,height:size?.height??900,minWidth:760,minHeight:480,
     title:'Linusaurus Rex',backgroundColor:'#30353b',show:false,
     frame:false,autoHideMenuBar:true,icon:join(directory,'../resources/icon.png'),
     webPreferences:{preload:join(directory,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,allowRunningInsecureContent:false,spellcheck:false},
@@ -92,10 +95,27 @@ async function createWindow(initialSelection?:Selection):Promise<void>{
   window.on('closed',()=>{disposers.get(window.id)?.();disposers.delete(window.id);windows.delete(window);if(lastWindow===window)lastWindow=[...windows][0];});
   await window.loadURL(url);
 }
-if(!app.requestSingleInstanceLock())app.quit();
-else{
-  app.on('second-instance',showWindow);
-  app.whenReady().then(async()=>{store=new SettingsStore(join(app.getPath('userData'),'settings.json'));await store.load();store.onChange(applySettings);buildMenu();applySettings(store.get());await createWindow();}).catch((error:unknown)=>{console.error('Could not start Linusaurus Rex:',error);app.quit();});
+function applicationArgs(argv:readonly string[]){const args=argv.slice(1);if(!app.isPackaged&&args[0]&&!args[0].startsWith('-')&&resolve(args[0])===resolve(app.getAppPath()))args.shift();return args;}
+function startupError(error:unknown){console.error(`Linusaurus Rex: ${error instanceof Error?error.message:String(error)}`);app.exit(2);}
+async function launch(options:LaunchOptions){
+  const prepared=prepareLaunchSettings(store.get(),options);
+  if(prepared.changed)await store.set(prepared.settings);
+  let initialSelection:Selection|undefined;
+  if(options.endpoint||options.session||options.newSession||options.block){
+    const rex=new RexService({credentials:getHostCredentials});
+    try{initialSelection=await resolveLaunchSelection(rex,prepared.host,store.get(),options);}
+    finally{rex.dispose();}
+    if(initialSelection)await store.set({...store.get(),lastSelection:initialSelection});
+  }
+  await createWindow(initialSelection,options.windowSize);
+}
+let options:LaunchOptions|undefined;
+try{options=parseLaunchArgs(applicationArgs(process.argv));}catch(error){startupError(error);}
+if(options?.help){console.log(LAUNCH_HELP);app.exit(0);}
+else if(options&&!app.requestSingleInstanceLock())app.quit();
+else if(options){
+  app.on('second-instance',(_event,argv,cwd)=>{void(async()=>{const requested=parseLaunchArgs(applicationArgs(argv),cwd);if(requested.config&&requested.config!==preferencesPath)throw new Error('Quit the running app before selecting a different --config preferences file.');if(requested.endpoint||requested.session||requested.newSession||requested.block||requested.font||requested.fontSize||requested.windowSize)await launch(requested);else showWindow();})().catch(error=>console.error(`Linusaurus Rex: ${error instanceof Error?error.message:String(error)}`));});
+  app.whenReady().then(async()=>{preferencesPath=options!.config||join(app.getPath('userData'),'settings.json');store=new SettingsStore(preferencesPath);await store.load();store.onChange(applySettings);buildMenu();applySettings(store.get());await launch(options!);}).catch(startupError);
   app.on('window-all-closed',()=>{if(!store?.get().closeToTray)app.quit();});
   app.on('before-quit',()=>{quitting=true;globalShortcut.unregisterAll();tray?.destroy();tray=undefined;for(const dispose of disposers.values())dispose();disposers.clear();});
 }
