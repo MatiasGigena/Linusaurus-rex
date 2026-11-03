@@ -67,33 +67,18 @@ jobs:
       - name: Build x86-64 AppImage and Debian package
         run: npm run package -- --x64
 
-      - name: Produce and verify checksums
-        working-directory: release
+      - name: Normalize asset names and verify checksums
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          images=(*.AppImage)
-          packages=(*.deb)
-          test "${#images[@]}" -eq 1
-          test "${#packages[@]}" -eq 1
-          sha256sum -- "${images[@]}" "${packages[@]}" > SHA256SUMS
-          sha256sum --check SHA256SUMS
+          node scripts/release-assets.mjs prepare release "$RELEASE_TAG"
+          (cd release && sha256sum --check SHA256SUMS)
 
-      - name: Publish verified packages
+      - name: Verify draft assets and publish packages
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: MatiasGigena/Linusaurus-rex
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo 'This release already exists. Published update assets are not overwritten.' >&2
-            exit 1
-          fi
-          # Keep incomplete uploads out of the updater's latest-release feed.
-          gh release create "$RELEASE_TAG" \
-            --verify-tag --draft --generate-notes \
-            --title "Linusaurus Rex ${RELEASE_TAG#v}" \
-            release/*.AppImage release/*.deb release/SHA256SUMS
-          gh release edit "$RELEASE_TAG" --draft=false --latest
+          node scripts/release-assets.mjs publish release "$RELEASE_TAG" "$GITHUB_SHA"
