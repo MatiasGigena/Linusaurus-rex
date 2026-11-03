@@ -23,7 +23,7 @@ export class RexService {
   private visible = new Map<string, number>();
   private options: RexServiceOptions;
   private reconnectTokens = new Map<string, string>();
-  private streams = new Set<RexTerminalStream>();
+  private streams = new Map<RexTerminalStream, RexHost>();
   private preferredEndpoints = new Map<string, string>();
 
   constructor(options: RexServiceOptions = {}) { this.options = options; }
@@ -195,7 +195,7 @@ export class RexService {
         error: error => { if (!stopped && !this.disposed) onError(error); },
         metadata: metadata => this.options.onMetadata?.(host, sessionId, blockId, metadata),
       });
-    this.streams.add(stream);
+    this.streams.set(stream, host);
     return stop;
   }
 
@@ -268,10 +268,12 @@ export class RexService {
     return pending;
   }
 
-  reconnectTerminals() { for (const stream of this.streams) stream.reconnect(); }
+  reconnectTerminals() { for (const stream of this.streams.keys()) stream.reconnect(); }
 
   reconnect(host?: RexHost) {
-    for (const stream of this.streams) stream.reconnect();
+    for (const [stream, owner] of this.streams) {
+      if (!host || (owner.id === host.id && owner.endpoint === host.endpoint)) stream.reconnect();
+    }
     for (const [key, pending] of this.controls) {
       if (host && key !== JSON.stringify([host.id, host.endpoint])) continue;
       void pending.then(control => control.dispose()).catch(() => {}); this.controls.delete(key); this.reconnectTokens.delete(key);
