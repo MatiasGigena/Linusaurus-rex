@@ -33,6 +33,8 @@ export interface RexBridge {
   request<K extends keyof RexMethods>(method: K, args: RexMethods[K]['args']): Promise<RexMethods[K]['result']>;
   onTerminal(callback: (frame: TerminalFrame) => void): () => void;
   onCommand(callback: (command: string) => void): () => void;
+  readClipboard(): Promise<string>;
+  writeClipboard(text: string): Promise<void>;
   getSettings(): Promise<Settings>;
   setSettings(settings: Settings): Promise<Settings>;
   windowControl(action: 'minimize' | 'maximize' | 'close'): void;

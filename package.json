@@ -22,16 +22,18 @@
     "@xterm/xterm": "^6.0.0",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "ws": "^8.22.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^39.0.0",
-    "electron-builder": "^26.0.12",
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0",
     "esbuild": "^0.25.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
@@ -40,9 +42,37 @@
   "build": {
     "appId": "com.matiasgigena.linusaurus-rex",
     "productName": "Linusaurus Rex",
-    "directories": {"output": "release"},
-    "files": ["dist/**/*", "dist-electron/**/*", "resources/**/*", "package.json"],
-    "linux": {"category": "Development", "executableName": "linusaurus-rex", "icon": "resources/icon.png", "target": ["AppImage", "deb"]},
-    "deb": {"maintainer": "Matias Gigena", "depends": ["libgtk-3-0", "libnotify4", "libnss3", "libxss1", "libxtst6", "xdg-utils", "libatspi2.0-0", "libdrm2", "libgbm1"]}
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "resources/**/*",
+      "package.json"
+    ],
+    "linux": {
+      "category": "Development",
+      "executableName": "linusaurus-rex",
+      "icon": "resources/icon.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    },
+    "deb": {
+      "maintainer": "Matias Gigena",
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libdrm2",
+        "libgbm1"
+      ]
+    }
   }
 }
