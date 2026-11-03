@@ -24,7 +24,7 @@ Only --new creates a server session. Closing the app leaves sessions running.
 `;
 const valueOptions=new Set(['endpoint','session','new','block','font','font-size','config','window-size']);
 const ignoredValues=new Set(['--inspect','--inspect-brk','--remote-debugging-port','--user-data-dir','--js-flags']);
-const ignoredFlags=new Set(['--remote-debugging-pipe','--no-sandbox','--disable-dev-shm-usage','--enable-logging','--disable-gpu','--enable-automation','--no-startup-window']);
+const ignoredFlags=new Set(['--remote-debugging-pipe','--no-sandbox','--disable-dev-shm-usage','--enable-logging','--disable-gpu','--enable-automation','--no-startup-window','--force-renderer-accessibility']);
 
 /** Electron automation may leave debugging switches before its app argument. */
 export function applicationLaunchArgs(argv:readonly string[],appPath:string,packaged:boolean):string[]{

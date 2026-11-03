@@ -13,6 +13,8 @@ import { layoutAction, validateBounds } from './features/layout.js';
 import { parseTheme } from './features/themes.js';
 import { isLocalEndpoint, readConfig, writeConfig } from './features/config.js';
 import {desktopAllowed,noticeSound} from './features/notifications.js';
+import {LinuxServerManager} from './features/lifecycle.js';
+import {LinuxUpdateManager} from './features/updates.js';
 import {linkDecision} from './features/links.js';
 
 type SenderEvent=IpcMainInvokeEvent|IpcMainEvent;
@@ -22,6 +24,28 @@ const credentialStores=new Map<string,Promise<CredentialsStore>>();
 const notificationTimes=new Map<string,number>();
 const handleChannels=[CHANNELS.request,CHANNELS.getSettings,CHANNELS.setSettings,CHANNELS.readClipboard,CHANNELS.writeClipboard];
 let registered=false;
+let updateManager:LinuxUpdateManager|undefined;
+let updateSettingsStop:(()=>void)|undefined;
+let updateTimer:ReturnType<typeof setInterval>|undefined;
+function updates(store:SettingsStore){
+ if(updateManager)return updateManager;
+ const manager=new LinuxUpdateManager({directory:join(app.getPath('userData'),'updates'),version:app.getVersion(),appImage:process.env.APPIMAGE,development:!app.isPackaged,
+  changed:state=>{for(const context of contexts.values())context.emit({type:'update',state});},
+  idle:()=>[...contexts.values()].every(context=>context.isIdle()),
+  install:async(path,kind)=>{if(kind==='appimage'){app.relaunch({execPath:path,args:process.argv.slice(1)});setTimeout(()=>app.quit(),100);}else{const error=await shell.openPath(path);if(error)throw new Error(error);}},
+ });updateManager=manager;
+ const automatic=async()=>{if(!store.get().autoCheckUpdates)return;const status=await manager.check();if(status.phase==='available'&&store.get().autoCheckUpdates&&store.get().autoDownloadUpdates){const downloaded=await manager.download();if(downloaded.phase==='ready'&&store.get().installUpdatesWhenIdle&&downloaded.installKind==='appimage')await manager.apply(true);}};
+ let previous=store.get();
+ updateSettingsStop=store.onChange(settings=>{if(settings.autoCheckUpdates&&!updateTimer){updateTimer=setInterval(()=>void automatic().catch(()=>{}),6*60*60*1000);void automatic().catch(()=>{});}else if(!settings.autoCheckUpdates&&updateTimer){clearInterval(updateTimer);updateTimer=undefined;}
+  else if(settings.autoDownloadUpdates&&!previous.autoDownloadUpdates&&manager.status().phase==='available')void manager.download().then(result=>{if(result.phase==='ready'&&store.get().installUpdatesWhenIdle&&result.installKind==='appimage')return manager.apply(true);}).catch(()=>{});
+  if(settings.installUpdatesWhenIdle&&!previous.installUpdatesWhenIdle&&manager.status().phase==='ready'&&manager.status().installKind==='appimage')void manager.apply(true).catch(()=>{});
+  if(!settings.installUpdatesWhenIdle&&previous.installUpdatesWhenIdle&&manager.status().phase==='scheduled')manager.cancel();
+  previous=settings;
+ });
+ if(store.get().autoCheckUpdates){updateTimer=setInterval(()=>void automatic().catch(()=>{}),6*60*60*1000);void automatic().catch(()=>{});}
+ return manager;
+}
+
 
 function resolve(event:SenderEvent):WindowContext {
   const context=contexts.get(event.sender.id);
@@ -57,6 +81,8 @@ class WindowContext {
   readonly rex:RexService;
   readonly features:ClientFeatures;
   readonly integrations=new IntegrationManager();
+  readonly lifecycle:LinuxServerManager;
+  private lastInput=Date.now();
   private subscriptions=new Map<string,{host:Host;stop:()=>void}>();
   private context:Record<string,unknown>={};
   private disposed=false;
@@ -64,6 +90,7 @@ class WindowContext {
   private stopSettings?:()=>void;
   constructor(readonly window:BrowserWindow,readonly store:SettingsStore,readonly allowedUrl:string,private options:Options) {
     this.rex=new RexService({credentials:getHostCredentials,onControl:(host,control)=>this.features.bindControl(host,control),onMetadata:(host,sessionId,blockId,value)=>this.features.metadata(host.id,sessionId,blockId,value)});
+    this.lifecycle=new LinuxServerManager({directory:join(app.getPath('userData'),'managed-rex'),call:(host,method,payload)=>this.rex.callMethod(host,method,payload)});
     this.features=new ClientFeatures(this.rex,{settings:()=>store.get(),emit:event=>this.emit(event),notify:event=>this.notify(event),badge:count=>{if(!this.window.isDestroyed()){this.window.setTitle(count?`Linusaurus Rex (${count})`:'Linusaurus Rex');app.setBadgeCount(count);}},native:(name,args,context)=>this.native(name,args,context)});
     let previousSettings=store.get();
     this.stopSettings=store.onChange(settings=>{
@@ -72,6 +99,7 @@ class WindowContext {
       if(previousSettings.clientLabel!==settings.clientLabel||JSON.stringify(previousSettings.shortcuts)!==JSON.stringify(settings.shortcuts))void this.features.preferencesChanged().catch(()=>{});
       previousSettings=settings;
     });
+    window.webContents.on('before-input-event',this.interaction);window.webContents.on('input-event',this.interaction);
     window.webContents.on('did-start-loading',this.clearSubscriptions);
     window.on('focus',this.visibility);window.on('blur',this.visibility);window.on('hide',this.visibility);window.on('show',this.visibility);
   }
@@ -86,7 +114,14 @@ class WindowContext {
     this.visibility();
     return settings;
   }
+  isIdle(){return this.context.uiBusy!==true&&Date.now()-this.lastInput>15_000&&this.features.activity.isIdle();}
   async request(method:string,args:Record<string,unknown>):Promise<unknown> {
+    if(['input','key','paste','mouse','wheel'].includes(method))this.lastInput=Date.now();
+    if(method==='updateStatus')return updates(this.store).status();
+    if(method==='checkUpdates'){const manager=updates(this.store);const result=await manager.check();if(result.phase==='available'&&this.store.get().autoDownloadUpdates){const downloaded=await manager.download();if(downloaded.phase==='ready'&&this.store.get().installUpdatesWhenIdle&&downloaded.installKind==='appimage')return manager.apply(true);return downloaded;}return result;}
+    if(method==='downloadUpdate'){const manager=updates(this.store);const result=await manager.download();if(result.phase==='ready'&&this.store.get().installUpdatesWhenIdle&&result.installKind==='appimage')return manager.apply(true);return result;}
+    if(method==='applyUpdate'){if(args.whenIdle!==undefined&&typeof args.whenIdle!=='boolean')throw new Error('Invalid idle-install preference');return updates(this.store).apply(args.whenIdle===true);}
+    if(method==='cancelUpdate')return updates(this.store).cancel();
     if(method==='unsubscribe'){const id=identifier(args.subscriptionId,'subscription ID');this.subscriptions.get(id)?.stop();this.subscriptions.delete(id);return;}
     if(method==='setContext'){this.context={...this.context,...args};this.visibility();return;}
     if(method==='resizeWindow'){
@@ -115,6 +150,12 @@ class WindowContext {
     if(method==='setCredentials'){if(!/^https?:\/\/|^wss?:\/\//i.test(host.endpoint||process.env.REX_SERVER||''))throw new Error('Use an explicit HTTP(S) endpoint before saving gateway credentials.');const secrets=await credentials();await secrets.set(credentialKey(host),args);this.rex.reconnect(host);return;}
     if(method==='credentialStatus')return(await credentials()).status(credentialKey(host));
     if(method==='removeCredentials'){await(await credentials()).remove(credentialKey(host));this.rex.reconnect(host);return;}
+    if(method==='serverManagement')return this.lifecycle.status(host);
+    if(method==='serverLifecycle'){if(!['start','stop','restart'].includes(String(args.operation)))throw new Error('Invalid server lifecycle operation');return this.lifecycle.perform(host,args.operation as 'start'|'stop'|'restart');}
+    if(method==='createTutorial'){
+      const created=await this.rex.callMethod(host,'session.create',{label:'Rex tutorial',initial_windows:[{window_label:'Getting started',layout:{block:{flavor:'com.superlogical.onboarding.onboarding',options:{}}}}]}) as {session_id:string};
+      try{const view=await this.rex.inspect(host,created.session_id);const first=view.windows[0];return{sessionId:created.session_id,windowId:first.id,blockId:first.panes[0].id};}catch(error){await this.rex.callMethod(host,'session.destroy',{session_id:created.session_id}).catch(()=>{});throw error;}
+    }
     if(method==='status')return this.rex.status(host);
     if(method==='listSessions')return this.rex.sessions(host);
     if(method==='keymap')return this.features.keymap(host);
@@ -153,6 +194,7 @@ class WindowContext {
       return this.rex.callMethod(host,'session.new_window',{session_id:sessionId,layout:{block:{flavor,options}},focus:true});
     }
     const blockId=identifier(args.blockId,'pane ID');
+    if(method==='releaseViewport')return this.rex.releaseViewport(host,sessionId,blockId);
     if(method==='listDirectory'){
       const path=string(args.path,'directory path',8192);const prefix=args.prefix===undefined?undefined:string(args.prefix,'directory prefix',512);
       if(args.files!==undefined&&typeof args.files!=='boolean')throw new Error('Invalid directory listing mode');
@@ -200,7 +242,8 @@ class WindowContext {
     throw new Error('Unsupported Rex operation');
   }
   windowControl(action:unknown){if(this.window.isDestroyed())return;if(action==='minimize')this.window.minimize();else if(action==='maximize')this.window.isMaximized()?this.window.unmaximize():this.window.maximize();else if(action==='close')this.window.close();else if(action==='fullscreen')this.window.setFullScreen(!this.window.isFullScreen());else if(action==='new')void this.options.createWindow?.();else if(action==='hide')this.window.hide();else if(action==='show'){this.window.show();this.window.focus();}}
-  dispose(){if(this.disposed)return;this.disposed=true;this.stopSettings?.();this.clearSubscriptions();this.features.dispose();this.rex.dispose();this.integrations.dispose();for(const notice of this.notices)notice.close();this.notices.clear();this.window.webContents.removeListener('did-start-loading',this.clearSubscriptions);this.window.removeListener('focus',this.visibility);this.window.removeListener('blur',this.visibility);this.window.removeListener('hide',this.visibility);this.window.removeListener('show',this.visibility);}
+  dispose(){if(this.disposed)return;this.disposed=true;this.stopSettings?.();this.clearSubscriptions();this.features.dispose();this.rex.dispose();this.integrations.dispose();for(const notice of this.notices)notice.close();this.notices.clear();this.window.webContents.removeListener('before-input-event',this.interaction);this.window.webContents.removeListener('input-event',this.interaction);this.window.webContents.removeListener('did-start-loading',this.clearSubscriptions);this.window.removeListener('focus',this.visibility);this.window.removeListener('blur',this.visibility);this.window.removeListener('hide',this.visibility);this.window.removeListener('show',this.visibility);}
+  private interaction=()=>{this.lastInput=Date.now();};
   private host(value:unknown):Host {const id=identifier(value,'host ID');const host=this.store.get().hosts.find(host=>host.id===id);if(!host)throw new Error('Host no longer exists. Select a saved host.');return host;}
   private clearSubscriptions=()=>{for(const subscription of this.subscriptions.values())subscription.stop();this.subscriptions.clear();};
   private visibility=()=>{this.features.setContext({...this.context,visible:this.context.visible!==false&&this.window.isVisible()&&this.window.isFocused()});};
@@ -215,6 +258,8 @@ class WindowContext {
     notice.on('close',()=>this.notices.delete(notice));notice.show();
   }
   private async native(name:string,args:Record<string,unknown>,context:{host:Host;sessionId?:string;blockId?:string}):Promise<{handled:boolean;result?:unknown}>{
+    if(name==='client.update.accept'||name==='client.update.accept_when_idle')return{handled:true,result:await updates(this.store).apply(name.endsWith('when_idle'))};
+    if(name==='client.server.restart')return{handled:true,result:await this.lifecycle.perform(context.host,'restart')};
     if(name==='client.window.new'){
       let initial:Selection|undefined;
       if(context.sessionId){const view=await this.rex.inspect(context.host,context.sessionId);const requested=typeof args.window_id==='string'?args.window_id:typeof this.context.windowId==='string'?this.context.windowId:undefined;const window=view.windows.find(window=>window.id===requested)||view.windows.find(window=>window.id===view.activeWindowId)||view.windows[0];if(window)initial={hostId:context.host.id,sessionId:view.id,windowId:window.id};}
@@ -256,5 +301,5 @@ export function validatePointer(kind:'mouse'|'wheel',value:unknown):Record<strin
 /** One IPC router dispatches to the owning window; multiple windows never overwrite handlers. */
 export function registerIpc(window:BrowserWindow,store:SettingsStore,allowedUrl:string,options:Options={}):()=>void {
   ensureRegistered();const context=new WindowContext(window,store,allowedUrl,options);const id=window.webContents.id;contexts.set(id,context);
-  return()=>{contexts.delete(id);context.dispose();if(!contexts.size){for(const channel of handleChannels)ipcMain.removeHandler(channel);ipcMain.removeListener(CHANNELS.windowControl,windowControl);ipcMain.removeListener(CHANNELS.replyAction,replyAction);registered=false;}};
+  return()=>{contexts.delete(id);context.dispose();if(!contexts.size){updateSettingsStop?.();updateSettingsStop=undefined;if(updateTimer)clearInterval(updateTimer);updateTimer=undefined;updateManager?.dispose();updateManager=undefined;for(const channel of handleChannels)ipcMain.removeHandler(channel);ipcMain.removeListener(CHANNELS.windowControl,windowControl);ipcMain.removeListener(CHANNELS.replyAction,replyAction);registered=false;}};
 }

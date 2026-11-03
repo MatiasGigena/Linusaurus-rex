@@ -83,6 +83,7 @@ export class ActivityRegistry {
     for (const [key, target] of this.targets) if (target.hostId === hostId) { this.targets.delete(key); this.panes.delete(key); this.unread.delete(key); }
     this.publishBadge();
   }
+  isIdle(){return ![...this.panes.values()].some(pane=>[...pane.records.values()].some(record=>record.state==='working'||record.state==='blocked'));}
   private notice(hostId: string, sessionId: string, blockId: string, kind: NotificationEvent['kind'], title: string, body: string) {
     const settings = this.preferences();
     if (!noticeAllowed(settings,kind)) return;
