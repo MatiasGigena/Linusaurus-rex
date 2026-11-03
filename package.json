@@ -7,12 +7,15 @@
   "main": "dist-electron/main.js",
   "author": "Matias Gigena",
   "license": "MIT",
+  "desktopName": "linusaurus-rex.desktop",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "npm run typecheck && vite build && npm run build:electron",
     "build:electron": "esbuild electron/main.ts --bundle --platform=node --format=esm --packages=external --outfile=dist-electron/main.js && esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
+    "test:integration": "REX_INTEGRATION=1 tsx --test tests/rex.integration.test.ts",
+    "test:ui": "npm run build && tsx tests/electron.smoke.ts",
     "start": "electron .",
     "package": "npm run build && electron-builder --linux AppImage deb --publish never",
     "package:dir": "npm run build && electron-builder --linux dir --publish never"
@@ -54,6 +57,8 @@
     "linux": {
       "category": "Development",
       "executableName": "linusaurus-rex",
+      "desktop": { "entry": { "Name": "Linusaurus Rex", "StartupWMClass": "linusaurus-rex" } },
+      "syncDesktopName": true,
       "icon": "resources/icon.png",
       "target": [
         "AppImage",

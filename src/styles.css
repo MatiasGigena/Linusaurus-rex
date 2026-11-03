@@ -102,7 +102,7 @@ kbd { font: 10px 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; color
 
 .workspace { display: flex; flex: 1; min-width: 0; flex-direction: column; overflow: hidden; background: var(--surface); }
 .workspace-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 59px; min-height: 59px; padding: 0 17px 0 21px; border-bottom: 1px solid #c6d8df07; -webkit-app-region: drag; user-select: none; }
-.toolbar-leading { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.toolbar-leading { display: flex; flex: 1; align-items: center; gap: 9px; min-width: 0; overflow: hidden; }
 .toolbar-terminal-icon { display: inline-flex; color: #9cabb4; }
 .toolbar-title { display: flex; align-items: center; gap: 9px; background: transparent; border: 0; padding: 5px 0; font-size: 12px; font-weight: 500; min-width: 0; color: #c4cfd5; }
 .toolbar-title > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
@@ -113,7 +113,7 @@ kbd { font: 10px 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; color
 .toolbar-connection:not(.is-connected) { color: #b39b86; }
 .toolbar-connection .status-dot { width: 4px; height: 4px; }
 .toolbar-divider { width: 1px; height: 15px; margin: 0 6px; background: #8da6b21c; }
-.window-controls { display: flex; align-items: center; margin-left: 12px; padding-left: 8px; border-left: 1px solid #8da6b21c; -webkit-app-region: no-drag; gap: 2px; }
+.window-controls { display: flex; flex-shrink: 0; align-items: center; margin-left: 12px; padding-left: 8px; border-left: 1px solid #8da6b21c; -webkit-app-region: no-drag; gap: 2px; }
 .window-controls .icon-button { width: 28px; color: #83939d; }
 .window-controls .window-close:hover { color: #e5b2aa; background: #c085751f; }
 .pane-close-action { background: transparent; border: 0; color: #8a9aa4; font-size: 10px; border-radius: 5px; height: 28px; padding: 0 6px; }
@@ -129,8 +129,7 @@ kbd { font: 10px 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; color
 .pane-header > div { display: flex; align-items: center; gap: 1px; margin-left: auto; }
 .terminal-container { flex: 1; min-width: 0; min-height: 0; overflow: hidden; padding: 12px 12px 6px 18px; }
 .terminal-container .xterm { height: 100%; }
-.terminal-container .xterm-viewport { scrollbar-width: thin; scrollbar-color: #6c808d55 transparent; }
-.terminal-container .xterm-screen { min-height: 100%; }
+.terminal-container .xterm-viewport { background-color: var(--surface); scrollbar-width: thin; scrollbar-color: #6c808d55 transparent; }
 .terminal-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #7e939f; font-size: 11px; pointer-events: none; }
 .terminal-error { position: absolute; left: 12px; right: 12px; bottom: 10px; display: flex; align-items: center; gap: 8px; background: #3e3835ed; color: #d3bca0; border: 1px solid #b69b7738; border-radius: 6px; padding: 9px 12px; font-size: 10px; line-height: 1.6; z-index: 5; }
 .workspace-statusbar, .workspace-status, .statusbar { display: flex; align-items: center; justify-content: space-between; min-height: 27px; gap: 18px; padding: 0 18px; background: #2b3238; color: #637d8b; font-size: 9px; border-top: 1px solid #b2ccd80a; user-select: none; }
@@ -234,7 +233,8 @@ kbd { font: 10px 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; color
 @keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (min-width: 1600px) { .sidebar { width: 302px; min-width: 302px; } .workspace-toolbar { padding-right: 22px; } }
-@media (max-width: 1000px) { .toolbar-subtitle, .toolbar-connection { display: none; } .toolbar-actions { gap: 2px; } .workspace-toolbar { padding-left: 16px; padding-right: 10px; } .toolbar-divider { margin: 0 3px; } }
+@media (max-width: 1100px) { .toolbar-subtitle, .toolbar-connection, .toolbar-settings, .pane-close-action { display: none; } .toolbar-actions { gap: 2px; } .workspace-toolbar { padding-left: 16px; padding-right: 10px; } .toolbar-divider { margin: 0 3px; } .toolbar-title > span:first-child { max-width: 180px; } }
+@media (max-width: 900px) { .sidebar { width: 245px; min-width: 245px; } .toolbar-title > span:first-child { max-width: 130px; } .window-controls { margin-left: 5px; padding-left: 4px; } }
 @media (max-width: 760px) { .sidebar { width: 245px; min-width: 245px; } .sidebar-titlebar { padding-left: 16px; gap: 7px; } .beta-label { display: none; } .toolbar-settings, .toolbar-palette, .toolbar-terminal-icon { display: none; } .toolbar-title > span:first-child { max-width: 130px; } .toolbar-actions .icon-button { width: 26px; } .workspace-toolbar { gap: 5px; } .sidebar-build span:last-child { display: none; } .server-status { font-size: 8px; } .workspace-statusbar, .workspace-status, .statusbar { font-size: 8px; padding: 0 10px; } .status-version { display: none !important; } .window-controls { margin-left: 4px; padding-left: 3px; } }
 @media (max-width: 580px) { .sidebar { position: absolute; inset: 0 auto 0 0; width: 278px; min-width: 278px; z-index: 30; box-shadow: 12px 0 40px #111b2666; } .workspace-toolbar { height: 50px; min-height: 50px; padding-left: 12px; } .toolbar-actions { gap: 0; } .toolbar-divider { margin: 0 2px; } .dialog-backdrop { padding: 14px; } .dialog-header { padding: 20px 18px 16px; } .dialog-body { padding: 0 20px 20px; } .command-dialog { margin-top: 10vh; } .pane-close-action { display: none; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
