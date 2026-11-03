@@ -3,7 +3,7 @@
   --active-pane-color: #a1c291;
   --active-pane-opacity: 0.15;
 }
-:root[data-theme='midnight'] {
+:root[data-theme="midnight"] {
   --sidebar: #171c25;
   --surface: #1e2430;
   --surface-raised: #283041;
@@ -13,7 +13,7 @@
   background: #1e2430;
   color: var(--text);
 }
-:root[data-theme='light'] {
+:root[data-theme="light"] {
   color-scheme: light;
   --sidebar: #e3e9ec;
   --surface: #f2f5f6;
@@ -25,35 +25,35 @@
   color: var(--text);
   background: var(--surface);
 }
-:root[data-theme='light'] .brand-name,
-:root[data-theme='light'] .window-item.is-selected,
-:root[data-theme='light'] .toolbar-title,
-:root[data-theme='light'] .dialog-header h2,
-:root[data-theme='light'] .empty-state h1 {
+:root[data-theme="light"] .brand-name,
+:root[data-theme="light"] .window-item.is-selected,
+:root[data-theme="light"] .toolbar-title,
+:root[data-theme="light"] .dialog-header h2,
+:root[data-theme="light"] .empty-state h1 {
   color: #2a3943;
 }
-:root[data-theme='light'] .window-item.is-selected {
+:root[data-theme="light"] .window-item.is-selected {
   background: #bed0d478;
   border-color: #8ca4ae55;
 }
-:root[data-theme='light'] .dialog,
-:root[data-theme='light'] .palette-search,
-:root[data-theme='light'] .dialog-footer {
+:root[data-theme="light"] .dialog,
+:root[data-theme="light"] .palette-search,
+:root[data-theme="light"] .dialog-footer {
   background: var(--surface-raised);
   color: var(--text);
 }
-:root[data-theme='light'] .form-input,
-:root[data-theme='light'] .form-select {
+:root[data-theme="light"] .form-input,
+:root[data-theme="light"] .form-select {
   background: #fff;
   color: #2a3943;
   border-color: #a9bbc477;
 }
-:root[data-theme='light'] .palette-search input,
-:root[data-theme='light'] .palette-item,
-:root[data-theme='light'] .settings-row {
+:root[data-theme="light"] .palette-search input,
+:root[data-theme="light"] .palette-item,
+:root[data-theme="light"] .settings-row {
   color: var(--text);
 }
-:root[data-theme='light'] .workspace-status {
+:root[data-theme="light"] .workspace-status {
   background: #e4ebee;
 }
 .tabs-right .sidebar {
@@ -308,7 +308,7 @@
   cursor: row-resize;
 }
 .split-divider::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: 2px;
   background: transparent;
@@ -660,7 +660,7 @@
   flex-shrink: 0;
 }
 .toggle-row input::before {
-  content: '';
+  content: "";
   position: absolute;
   width: 11px;
   height: 11px;
@@ -697,7 +697,7 @@
   text-align: right;
   color: var(--muted);
 }
-.settings-row input[type='color'] {
+.settings-row input[type="color"] {
   width: 32px;
   height: 24px;
   padding: 1px;
@@ -768,7 +768,7 @@
   border: 1px solid var(--border);
   background: var(--sidebar);
   font:
-    11px/1.7 'DejaVu Sans Mono',
+    11px/1.7 "DejaVu Sans Mono",
     monospace;
   color: var(--muted);
   white-space: pre-wrap;
@@ -806,7 +806,7 @@
 .config-editor {
   height: 42vh;
   font:
-    11px/1.7 'DejaVu Sans Mono',
+    11px/1.7 "DejaVu Sans Mono",
     monospace;
   white-space: pre;
   tab-size: 2;
@@ -817,12 +817,12 @@
     opacity: 0.35;
   }
 }
-:root[data-animation='off'] *,
-:root[data-animation='off'] *::after {
+:root[data-animation="off"] *,
+:root[data-animation="off"] *::after {
   animation: none !important;
   transition: none !important;
 }
-:root[data-animation='natural'] .terminal-layout > div {
+:root[data-animation="natural"] .terminal-layout > div {
   transition:
     left 0.12s ease-out,
     top 0.12s ease-out,
@@ -881,5 +881,37 @@
   }
   .horizontal-tab {
     min-width: 105px;
+  }
+}
+.active-pane-highlight {
+  position: absolute;
+  pointer-events: none;
+  z-index: 30;
+  box-sizing: border-box;
+  border: 1px solid var(--active-pane-color);
+  border-radius: 7px;
+  opacity: var(--active-pane-opacity);
+}
+.active-pane-highlight[data-visible="false"] {
+  opacity: 0;
+}
+.active-pane-highlight.highlight-fade {
+  transition: opacity 85ms ease;
+}
+.active-pane-highlight.highlight-move {
+  transition:
+    left 160ms ease,
+    top 160ms ease,
+    width 160ms ease,
+    height 160ms ease,
+    opacity 100ms ease;
+}
+.terminal-layout:has(> .active-pane-highlight)
+  .terminal-pane.is-focused::after {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .active-pane-highlight {
+    transition: none !important;
   }
 }

@@ -489,7 +489,12 @@ export function Sidebar(props: SidebarProps) {
                                               className={`extra-program-icon ${props.settings?.tabIconColors === "always" || (props.settings?.tabIconColors === "active-tab" && selected) ? "" : "monochrome"}`}
                                               key={index}
                                             >
-                                              <ProgramIcon program={program} />
+                                              <ProgramIcon
+                                                program={program}
+                                                shellTheme={
+                                                  props.settings?.shellIconTheme
+                                                }
+                                              />
                                             </span>
                                           ))}
                                     </button>

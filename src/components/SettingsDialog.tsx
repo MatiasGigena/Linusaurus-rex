@@ -13,6 +13,8 @@ import {
   Bell,
 } from "lucide-react";
 import { Dialog } from "./Dialog";
+import { ThemeLibrary } from "./ThemeLibrary";
+import { migrateThemeLibrary } from "../core/themeLibrary";
 import type { Host, IntegrationPreview, Settings } from "../shared/types";
 import { DEFAULT_SETTINGS } from "../shared/types";
 import { errorMessage } from "../core/workspace";
@@ -34,6 +36,7 @@ interface Props {
   onEditHost(host: Host): void;
   onConfig(): void;
   onDiagnostics(): void;
+  onNativeServices?(): void;
 }
 const tabs = [
   ["appearance", "Appearance", Palette],
@@ -54,9 +57,10 @@ export function SettingsDialog({
   onEditHost,
   onConfig,
   onDiagnostics,
+  onNativeServices,
 }: Props) {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
-  const [draft, setDraft] = useState(settings);
+  const [draft, setDraft] = useState(() => migrateThemeLibrary(settings));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
   const [integrationOutput, setIntegrationOutput] = useState("");
@@ -125,22 +129,6 @@ export function SettingsDialog({
         .then((result) => setIntegrationOutput(result.output))
         .catch((failure) => setIntegrationOutput(errorMessage(failure)));
   }, [tab]);
-  const importTheme = async (target: "light" | "dark") => {
-    try {
-      const theme = await window.rex.request("importTheme", {});
-      if (theme) {
-        setDraft((previous) => ({
-          ...previous,
-          theme: "system",
-          customTheme: undefined,
-          [target === "light" ? "customLightTheme" : "customDarkTheme"]: theme,
-        }));
-        setError(undefined);
-      }
-    } catch (failure) {
-      setError(errorMessage(failure));
-    }
-  };
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     if (saving) return;
@@ -206,7 +194,19 @@ export function SettingsDialog({
                     ["system", "Follow system"],
                   ]}
                   onChange={(value) =>
-                    update("theme", value as Settings["theme"])
+                    setDraft((previous) =>
+                      value === "system"
+                        ? { ...previous, theme: "system" }
+                        : {
+                            ...previous,
+                            theme: value as Settings["theme"],
+                            customTheme: undefined,
+                            customLightTheme: undefined,
+                            customDarkTheme: undefined,
+                            lightThemeId: "",
+                            darkThemeId: "",
+                          },
+                    )
                   }
                 />
                 <Select
@@ -222,6 +222,9 @@ export function SettingsDialog({
                       ...previous,
                       theme: "system",
                       lightTheme: value as Settings["lightTheme"],
+                      lightThemeId: "",
+                      customLightTheme: undefined,
+                      customTheme: undefined,
                     }))
                   }
                 />
@@ -238,6 +241,9 @@ export function SettingsDialog({
                       ...previous,
                       theme: "system",
                       darkTheme: value as Settings["darkTheme"],
+                      darkThemeId: "",
+                      customDarkTheme: undefined,
+                      customTheme: undefined,
                     }))
                   }
                 />
@@ -326,43 +332,33 @@ export function SettingsDialog({
                     update("tabIconColors", value as Settings["tabIconColors"])
                   }
                 />
-                <div className="settings-buttons">
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => void importTheme("light")}
-                  >
-                    Import light palette…
-                  </button>
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => void importTheme("dark")}
-                  >
-                    Import dark palette…
-                  </button>
-                </div>
-                {(draft.customTheme ||
-                  draft.customLightTheme ||
-                  draft.customDarkTheme) && (
-                  <div className="imported-theme">
-                    <span>Custom Ghostty / iTerm palettes available</span>
-                    <button
-                      className="text-button"
-                      type="button"
-                      onClick={() =>
-                        setDraft((previous) => ({
-                          ...previous,
-                          customTheme: undefined,
-                          customLightTheme: undefined,
-                          customDarkTheme: undefined,
-                        }))
-                      }
-                    >
-                      Use built-in palettes
-                    </button>
-                  </div>
-                )}
+                <Toggle
+                  label="Tint interface with terminal theme"
+                  value={draft.tintInterface}
+                  onChange={(value) => update("tintInterface", value)}
+                />
+                <Select
+                  label="Shell icon theme"
+                  value={draft.shellIconTheme}
+                  choices={[
+                    ["default", "Default artwork"],
+                    ["theme", "Theme background and foreground"],
+                    ["accent", "Theme accent"],
+                  ]}
+                  onChange={(value) =>
+                    update(
+                      "shellIconTheme",
+                      value as Settings["shellIconTheme"],
+                    )
+                  }
+                />
+              </Section>
+              <Section title="NAMED THEMES">
+                <ThemeLibrary
+                  settings={draft}
+                  onChange={setDraft}
+                  onError={setError}
+                />
               </Section>
               <Section title="PANES">
                 <Select
@@ -380,6 +376,22 @@ export function SettingsDialog({
                   label="Show pane headers"
                   value={draft.showPaneHeaders}
                   onChange={(value) => update("showPaneHeaders", value)}
+                />
+                <Toggle
+                  label="Match full-screen program backgrounds"
+                  value={draft.matchProgramBackground}
+                  onChange={(value) => update("matchProgramBackground", value)}
+                />
+                <Select
+                  label="Padding color"
+                  value={draft.paddingColor}
+                  choices={[
+                    ["pane", "Pane background"],
+                    ["extend", "Extend edge-cell backgrounds"],
+                  ]}
+                  onChange={(value) =>
+                    update("paddingColor", value as Settings["paddingColor"])
+                  }
                 />
                 <Range
                   label="Horizontal padding"
@@ -414,6 +426,36 @@ export function SettingsDialog({
                   max={100}
                   unit="%"
                   onChange={(value) => update("highlightOpacity", value / 100)}
+                />
+                <Select
+                  label="Active pane highlight animation"
+                  value={draft.highlightAnimation}
+                  choices={[
+                    ["fade", "Fade"],
+                    ["move", "Move"],
+                    ["instant", "Instant"],
+                  ]}
+                  onChange={(value) =>
+                    update(
+                      "highlightAnimation",
+                      value as Settings["highlightAnimation"],
+                    )
+                  }
+                />
+                <Select
+                  label="Fade inactive pane elements"
+                  value={draft.inactivePaneFadeTarget}
+                  choices={[
+                    ["content", "Terminal content"],
+                    ["surfaces", "Pane surfaces"],
+                    ["both", "Surfaces and content"],
+                  ]}
+                  onChange={(value) =>
+                    update(
+                      "inactivePaneFadeTarget",
+                      value as Settings["inactivePaneFadeTarget"],
+                    )
+                  }
                 />
                 <Range
                   label="Fade inactive panes"
@@ -468,7 +510,7 @@ export function SettingsDialog({
               </Section>
               <Section title="WINDOW">
                 <Range
-                  label="Fade terminal content in inactive windows"
+                  label="Fade inactive windows"
                   value={draft.inactiveWindowFade}
                   min={0}
                   max={0.8}
@@ -616,6 +658,30 @@ export function SettingsDialog({
                   value={draft.ligatures}
                   onChange={(value) => update("ligatures", value)}
                 />
+                <Select
+                  label="Bold text policy"
+                  value={draft.boldPolicy}
+                  choices={[
+                    ["always", "Always allow bold"],
+                    ["font", "Only when a bold face is available"],
+                    ["never", "Never render bold"],
+                  ]}
+                  onChange={(value) =>
+                    update("boldPolicy", value as Settings["boldPolicy"])
+                  }
+                />
+                <Select
+                  label="Italic text policy"
+                  value={draft.italicPolicy}
+                  choices={[
+                    ["always", "Always allow italic"],
+                    ["font", "Only when an italic face is available"],
+                    ["never", "Never render italic"],
+                  ]}
+                  onChange={(value) =>
+                    update("italicPolicy", value as Settings["italicPolicy"])
+                  }
+                />
                 <Range
                   label="Bold weight"
                   value={draft.fontWeightBold}
@@ -664,7 +730,44 @@ export function SettingsDialog({
                   <span>All systems ready. λ 0123456789</span>
                 </div>
               </Section>
+              <Section title="RENDERING">
+                <Toggle
+                  label="Render inline terminal images"
+                  hint="Images are decoded with bounded memory and follow terminal scrolling."
+                  value={draft.graphicsEnabled}
+                  onChange={(value) => update("graphicsEnabled", value)}
+                />
+                <Toggle
+                  label="Force theme palette for RGB text"
+                  value={draft.forceThemePalette}
+                  onChange={(value) => update("forceThemePalette", value)}
+                />
+                <Toggle
+                  label="Use Display P3 colors when available"
+                  hint="Requires display and browser color-space support."
+                  value={draft.displayP3}
+                  onChange={(value) => update("displayP3", value)}
+                />
+                <Toggle
+                  label="Smooth terminal resizing"
+                  value={draft.smoothResize}
+                  onChange={(value) => update("smoothResize", value)}
+                />
+              </Section>
               <Section title="CURSOR & INPUT">
+                <Select
+                  label="Cursor effect"
+                  value={draft.cursorEffect}
+                  choices={[
+                    ["off", "Off"],
+                    ["warp", "Warp"],
+                    ["comet", "Comet"],
+                    ["blaze", "Blaze"],
+                  ]}
+                  onChange={(value) =>
+                    update("cursorEffect", value as Settings["cursorEffect"])
+                  }
+                />
                 <Select
                   label="Cursor style"
                   value={draft.cursorStyle}
@@ -1198,6 +1301,15 @@ export function SettingsDialog({
                   <button className="button" type="button" onClick={onConfig}>
                     Edit Rex configuration…
                   </button>
+                  {onNativeServices && (
+                    <button
+                      className="button"
+                      type="button"
+                      onClick={onNativeServices}
+                    >
+                      Updates and Linux services…
+                    </button>
+                  )}
                 </div>
                 <p className="form-hint">
                   Your existing server and sessions are retained. Configuration
@@ -1309,6 +1421,7 @@ function Select({
       <span>{label}</span>
       <select
         className="form-select"
+        aria-label={label}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >

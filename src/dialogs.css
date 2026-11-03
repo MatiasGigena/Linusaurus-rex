@@ -255,3 +255,79 @@
 .app-shell[data-native-focused="false"] .terminal-emulator {
   opacity: var(--inactive-window-opacity, 1);
 }
+.theme-library {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.theme-library-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.theme-library-list {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 8px;
+}
+.theme-library-entry {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 0;
+}
+.theme-library-entry + .theme-library-entry {
+  border-top: 1px solid var(--border);
+}
+.theme-library-entry .form-input {
+  min-width: 0;
+  flex: 1;
+  font-size: 11px;
+}
+.theme-swatches {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 7px;
+  border: 1px solid #ffffff18;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+.theme-swatches span {
+  display: block;
+  width: 7px;
+  height: 18px;
+  border-radius: 1px;
+}
+.theme-library-empty {
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+.program-icon.shell-artwork {
+  border: 1px solid #a1c29140;
+  border-radius: 5px;
+  padding: 2px;
+  background: #a1c29113;
+  color: #a1c291;
+  box-sizing: content-box;
+}
+.program-icon.shell-artwork.shell-theme {
+  border-color: color-mix(
+    in srgb,
+    var(--shell-foreground, var(--text)) 45%,
+    transparent
+  );
+  background: var(--shell-background, var(--surface));
+  color: var(--shell-foreground, var(--text));
+}
+.program-icon.shell-artwork.shell-accent {
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+  color: var(--green);
+}
