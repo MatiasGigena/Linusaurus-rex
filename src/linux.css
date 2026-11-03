@@ -34,6 +34,26 @@
   font: 11px/1.7 monospace;
   resize: vertical;
 }
+.service-origin-preview {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+}
+.service-origin-preview h3 {
+  font-size: 12px;
+  font-weight: 500;
+  margin: 16px 0 8px;
+}
+.service-origin-preview pre {
+  background: var(--surface);
+  border-radius: 4px;
+  padding: 12px;
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .onboarding-pane {
   height: 100%;
   display: flex;

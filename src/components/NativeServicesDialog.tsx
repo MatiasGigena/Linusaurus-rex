@@ -3,6 +3,7 @@ import { Download, RefreshCw, Server, ShieldCheck } from "lucide-react";
 import { Dialog } from "./Dialog";
 import type {
   ServerManagementInfo,
+  ServerOriginPreview,
   Settings,
   UpdateState,
 } from "../shared/types";
@@ -25,6 +26,8 @@ export function NativeServicesDialog({
   const [server, setServer] = useState<ServerManagementInfo>();
   const [update, setUpdate] = useState<UpdateState>();
   const [patterns, setPatterns] = useState("");
+  const [preview, setPreview] = useState<ServerOriginPreview>();
+  const [originNotice, setOriginNotice] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const host = settings.hosts.find((host) => host.id === hostId);
@@ -62,8 +65,26 @@ export function NativeServicesDialog({
     };
   }, [hostId]);
   useEffect(() => {
-    setPatterns((host?.websocketOrigins ?? server?.origins ?? []).join("\n"));
-  }, [host?.websocketOrigins, server?.origins.join("\n")]);
+    setPatterns(
+      (
+        server?.service?.configuredOrigins ??
+        host?.websocketOrigins ??
+        server?.origins ??
+        []
+      ).join("\n"),
+    );
+    setPreview(undefined);
+  }, [
+    hostId,
+    host?.websocketOrigins,
+    server?.service?.configuredOrigins.join("\n"),
+    server?.origins.join("\n"),
+  ]);
+  const origins = () =>
+    patterns
+      .split("\n")
+      .map((value) => value.trim())
+      .filter(Boolean);
   const lifecycle = (operation: "start" | "stop" | "restart") =>
     void run(async () => {
       setServer(
@@ -112,6 +133,23 @@ export function NativeServicesDialog({
             <dd>{server?.executable || "Not discovered"}</dd>
             <dt>Version</dt>
             <dd>{server?.version || "Unknown"}</dd>
+            {server?.service && (
+              <>
+                <dt>Service</dt>
+                <dd>
+                  {server.service.unit} ({server.service.scope})
+                </dd>
+                <dt>Service state</dt>
+                <dd>
+                  {server.service.activeState}
+                  {server.service.subState
+                    ? ` / ${server.service.subState}`
+                    : ""}
+                </dd>
+                <dt>Restart policy</dt>
+                <dd>{server.service.restart}</dd>
+              </>
+            )}
           </dl>
           <p className="form-hint">
             Stop and restart are allowed only when Rex atomically confirms it
@@ -158,60 +196,163 @@ export function NativeServicesDialog({
             *.example.com. Changes apply at the next idle restart. An empty list
             removes additional origins.
           </p>
+          {server?.service && (
+            <p className="form-hint">
+              Review a dedicated user service override before saving. Saving
+              reloads the service configuration and leaves the running server
+              and its sessions in place.
+            </p>
+          )}
+          <dl className="server-facts">
+            <dt>Running origins</dt>
+            <dd>{server?.origins.join(", ") || "No additional origins"}</dd>
+            {server?.service && (
+              <>
+                <dt>Configured origins</dt>
+                <dd>
+                  {server.service.configuredOrigins.join(", ") ||
+                    "No additional origins"}
+                </dd>
+              </>
+            )}
+          </dl>
           <label className="form-field">
             Allowed web origins
             <textarea
               className="form-input services-origins"
               rows={4}
               value={patterns}
-              disabled={!server?.local}
-              onChange={(event) => setPatterns(event.target.value)}
+              disabled={
+                !server?.local ||
+                (!!server.service && !server.service.canManage)
+              }
+              onChange={(event) => {
+                setPatterns(event.target.value);
+                setPreview(undefined);
+                setOriginNotice(undefined);
+              }}
             />
           </label>
           <div className="settings-buttons">
-            <button
-              className="button"
-              disabled={busy || !server?.local}
-              onClick={() =>
-                void run(async () => {
-                  const origins = patterns
-                    .split("\n")
-                    .map((value) => value.trim())
-                    .filter(Boolean);
-                  await onSave({
-                    ...settings,
-                    hosts: settings.hosts.map((item) =>
-                      item.id === hostId
-                        ? { ...item, websocketOrigins: origins }
-                        : item,
-                    ),
-                  });
-                  await load();
-                })
-              }
-            >
-              Save origin patterns
-            </button>
-            <button
-              className="button"
-              disabled={busy || host?.websocketOrigins === undefined}
-              onClick={() =>
-                void run(async () => {
-                  await onSave({
-                    ...settings,
-                    hosts: settings.hosts.map((item) => {
-                      if (item.id !== hostId) return item;
-                      const { websocketOrigins: _pending, ...rest } = item;
-                      return rest;
-                    }),
-                  });
-                  await load();
-                })
-              }
-            >
-              Discard pending changes
-            </button>
+            {server?.service ? (
+              <button
+                className="button"
+                disabled={busy || !server.service.canManage}
+                onClick={() =>
+                  void run(async () => {
+                    setOriginNotice(undefined);
+                    setPreview(
+                      await window.rex.request("previewServerOrigins", {
+                        hostId,
+                        origins: origins(),
+                      }),
+                    );
+                  })
+                }
+              >
+                Review service override
+              </button>
+            ) : (
+              <button
+                className="button"
+                disabled={busy || !server?.local}
+                onClick={() =>
+                  void run(async () => {
+                    const pending = origins();
+                    await onSave({
+                      ...settings,
+                      hosts: settings.hosts.map((item) =>
+                        item.id === hostId
+                          ? { ...item, websocketOrigins: pending }
+                          : item,
+                      ),
+                    });
+                    await load();
+                  })
+                }
+              >
+                Save origin patterns
+              </button>
+            )}
+            {!server?.service && (
+              <button
+                className="button"
+                disabled={busy || host?.websocketOrigins === undefined}
+                onClick={() =>
+                  void run(async () => {
+                    await onSave({
+                      ...settings,
+                      hosts: settings.hosts.map((item) => {
+                        if (item.id !== hostId) return item;
+                        const { websocketOrigins: _pending, ...rest } = item;
+                        return rest;
+                      }),
+                    });
+                    await load();
+                  })
+                }
+              >
+                Discard pending changes
+              </button>
+            )}
           </div>
+          {preview && (
+            <section
+              className="service-origin-preview"
+              aria-label="Service origin override preview"
+            >
+              <dl className="server-facts">
+                <dt>Service</dt>
+                <dd>{preview.unit}</dd>
+                <dt>Override file</dt>
+                <dd>{preview.path}</dd>
+                {preview.backupPath && (
+                  <>
+                    <dt>Backup</dt>
+                    <dd>{preview.backupPath}</dd>
+                  </>
+                )}
+              </dl>
+              <h3>Current override</h3>
+              <pre>{preview.before ?? "No existing override"}</pre>
+              <h3>Proposed override</h3>
+              <pre>{preview.after}</pre>
+              <div className="settings-buttons">
+                <button
+                  className="button primary"
+                  disabled={busy || !server?.service?.canManage}
+                  onClick={() =>
+                    void run(async () => {
+                      setPreview(undefined);
+                      const applied = await window.rex.request(
+                        "applyServerOrigins",
+                        { hostId, previewId: preview.previewId },
+                      );
+                      setServer(applied);
+                      setPreview(undefined);
+                      setOriginNotice(
+                        "Service override saved. It applies at the next idle restart.",
+                      );
+                    })
+                  }
+                >
+                  Apply reviewed override
+                </button>
+                <button
+                  className="button"
+                  disabled={busy}
+                  onClick={() => setPreview(undefined)}
+                >
+                  Cancel review
+                </button>
+              </div>
+            </section>
+          )}
+          {originNotice && (
+            <p className="form-hint" role="status">
+              {originNotice}
+            </p>
+          )}
           {server?.pendingOrigins && (
             <p className="form-hint">
               Saved origin changes are waiting for an idle restart.
@@ -232,6 +373,14 @@ export function NativeServicesDialog({
               <dd>
                 <code>{server?.arguments.join(" ") || "Not discovered"}</code>
               </dd>
+              {server?.service && (
+                <>
+                  <dt>Service file</dt>
+                  <dd>{server.service.fragmentPath || "Unavailable"}</dd>
+                  <dt>Service overrides</dt>
+                  <dd>{server.service.dropInPaths.join("\n") || "None"}</dd>
+                </>
+              )}
             </dl>
           </details>
         </>
