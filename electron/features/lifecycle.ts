@@ -11,7 +11,19 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { spawn } from "node:child_process";
+import {
+  originPatterns,
+  validateOrigins,
+  withOrigins,
+} from "./server-origins.js";
+export {
+  originPatterns,
+  validateOrigins,
+  withOrigins,
+} from "./server-origins.js";
 import type { Host, ServerManagementInfo } from "../../src/shared/types.js";
+import { SystemdUserServices } from "./systemd.js";
+import { attestLocalRex } from "./local-attestation.js";
 import { effectiveEndpoint } from "../rex/service.js";
 import { localEndpoint } from "../rex/control.js";
 
@@ -20,6 +32,8 @@ type Profile = {
   executable: string;
   args: string[];
   env: Record<string, string>;
+  serviceUnit?: string;
+  serviceScope?: "user" | "system";
 };
 type ServerCall = (
   host: Host,
@@ -32,6 +46,7 @@ export interface LifecycleOptions {
   launch?: (profile: Profile) => Promise<void>;
   process?: (pid: number, endpoint: string) => Promise<Profile>;
   now?: () => number;
+  systemd?: SystemdUserServices | null;
 }
 const managementBusy = new Set<string>();
 const local = (endpoint: string) =>
@@ -60,76 +75,8 @@ const value = (args: string[], name: string) => {
         .find((argument) => argument.startsWith(`${name}=`))
         ?.slice(name.length + 1);
 };
-export function originPatterns(args: readonly string[]): string[] {
-  const values: string[] = [];
-  for (let index = 0; index < args.length; index++) {
-    if (args[index] === "--websocket-origin-pattern" && args[index + 1])
-      values.push(args[++index]);
-    else if (args[index].startsWith("--websocket-origin-pattern="))
-      values.push(args[index].slice(27));
-  }
-  return values;
-}
-export function validateOrigins(origins: unknown): string[] {
-  if (!Array.isArray(origins) || origins.length > 64)
-    throw new Error("Allow at most 64 web origin patterns.");
-  return [
-    ...new Set(
-      origins.map((input) => {
-        if (
-          typeof input !== "string" ||
-          input.length > 512 ||
-          /[\s\x00-\x1f]/.test(input)
-        )
-          throw new Error(
-            "Use a browser origin or specific host[:port] pattern.",
-          );
-        let origin = input;
-        if (/^https?:\/\//i.test(origin)) {
-          const parsed = new URL(origin);
-          if (
-            parsed.username ||
-            parsed.password ||
-            !["", "/"].includes(parsed.pathname) ||
-            parsed.search ||
-            parsed.hash
-          )
-            throw new Error(
-              "A browser origin contains only scheme, hostname and optional port.",
-            );
-          origin = parsed.host;
-        }
-        if (
-          !/^[a-zA-Z0-9.*:\[\]_-]+$/.test(origin) ||
-          !origin ||
-          origin === "*"
-        )
-          throw new Error(
-            "Use a specific host[:port] or wildcard subdomain, such as localhost:3000 or *.example.com.",
-          );
-        return origin.toLowerCase();
-      }),
-    ),
-  ];
-}
-export function withOrigins(
-  args: readonly string[],
-  origins: readonly string[],
-): string[] {
-  const result: string[] = [];
-  for (let index = 0; index < args.length; index++) {
-    if (args[index] === "--websocket-origin-pattern") {
-      index++;
-      continue;
-    }
-    if (!args[index].startsWith("--websocket-origin-pattern="))
-      result.push(args[index]);
-  }
-  for (const origin of origins)
-    result.push("--websocket-origin-pattern", origin);
-  return result;
-}
 async function processProfile(pid: number, endpoint: string): Promise<Profile> {
+  await attestLocalRex(endpoint, pid);
   const metadata = await stat(`/proc/${pid}`);
   if (metadata.uid !== process.getuid?.())
     throw new Error("The Rex process belongs to another user.");
@@ -177,7 +124,19 @@ async function processProfile(pid: number, endpoint: string): Promise<Profile> {
 export class LinuxServerManager {
   private profiles = new Map<string, Profile>();
   private busy = managementBusy;
-  constructor(private options: LifecycleOptions) {}
+  private systemd?: SystemdUserServices;
+  constructor(private options: LifecycleOptions) {
+    this.systemd =
+      options.systemd === null
+        ? undefined
+        : options.systemd ||
+          (!options.process
+            ? new SystemdUserServices({
+                call: options.call,
+                attest: attestLocalRex,
+              })
+            : undefined);
+  }
   private endpoint(host: Host) {
     return effectiveEndpoint(host.endpoint) || localEndpoint();
   }
@@ -266,6 +225,8 @@ export class LinuxServerManager {
       /* A stopped local server is valid and can use its saved launch profile. */
     }
     let profile = await this.profile(endpoint);
+    let service:
+      Awaited<ReturnType<SystemdUserServices["inspect"]>> | undefined;
     if (result) {
       info.running = true;
       info.pid = result.pid;
@@ -285,14 +246,34 @@ export class LinuxServerManager {
           result.pid,
           endpoint,
         );
+        service = await this.systemd?.discover(endpoint, result.pid);
+        if (service) {
+          profile.serviceUnit = service.unit;
+          profile.serviceScope = service.scope;
+        }
         await this.save(profile);
       } catch (error) {
         info.reason = (error as Error).message;
         profile = undefined;
       }
     }
+    if (profile?.serviceUnit && !service) {
+      try {
+        service = await this.systemd?.inspect(
+          profile.serviceUnit,
+          profile.serviceScope || "user",
+        );
+      } catch (error) {
+        info.reason = `The saved service cannot be inspected: ${(error as Error).message}`;
+        return info;
+      }
+    }
+    if (service) {
+      info.service = this.systemd!.info(service);
+      if (!service.canManage) info.reason = service.reason;
+    }
     if (profile) {
-      info.canManage = true;
+      info.canManage = service ? service.canManage : true;
       info.executable = profile.executable;
       info.arguments = profile.args.map((argument, index) =>
         /auth.*key(?!.*file)|password|secret|token/i.test(
@@ -317,7 +298,14 @@ export class LinuxServerManager {
       info.reason =
         "Start creates an isolated local server with its own state/configuration directory. Existing installed server state is not overwritten.";
     }
-    if (host.websocketOrigins !== undefined) {
+    if (
+      service &&
+      service.scope === "user" &&
+      JSON.stringify([...service.configuredOrigins].sort()) !==
+        JSON.stringify([...info.origins].sort())
+    )
+      info.pendingOrigins = service.configuredOrigins;
+    else if (host.websocketOrigins !== undefined && !service) {
       const pending = validateOrigins(host.websocketOrigins);
       if (
         JSON.stringify([...pending].sort()) !==
@@ -326,6 +314,22 @@ export class LinuxServerManager {
         info.pendingOrigins = pending;
     }
     return info;
+  }
+  async previewOrigins(host: Host, origins: string[]) {
+    const status = await this.status(host);
+    if (!status.service || !this.systemd)
+      throw new Error("This host is not managed by a user service.");
+    const unit = await this.systemd.inspect(
+      status.service.unit,
+      status.service.scope,
+    );
+    return this.systemd.preview(host, this.endpoint(host), unit, origins);
+  }
+  async applyOrigins(host: Host, previewId: string) {
+    if (!this.systemd)
+      throw new Error("The user service manager is unavailable.");
+    await this.systemd.apply(host, this.endpoint(host), previewId);
+    return this.status(host);
   }
   async perform(
     host: Host,
@@ -433,7 +437,10 @@ export class LinuxServerManager {
             "This Rex version does not advertise atomic idle shutdown. Update Rex before using lifecycle controls.",
           );
         // The server performs this test atomically, refusing races and other clients.
-        await this.options.call(host, "server.stop", { if_idle: true });
+        if (before.service?.scope === "user" && this.systemd) {
+          const unit = await this.systemd.inspect(before.service.unit);
+          await this.systemd.stop(host, endpoint, before.pid!, unit);
+        } else await this.options.call(host, "server.stop", { if_idle: true });
         for (let attempt = 0; attempt < 50; attempt++) {
           try {
             await this.options.call(host, "server.status", {});
@@ -448,6 +455,17 @@ export class LinuxServerManager {
       if (operation === "stop") return this.status(host);
       const profile = await this.profile(endpoint);
       if (!profile) throw new Error("The saved launch profile is missing.");
+      if (profile.serviceUnit) {
+        if (!this.systemd || profile.serviceScope === "system")
+          throw new Error("This service is read-only.");
+        await this.systemd.start(profile.serviceUnit);
+        for (let attempt = 0; attempt < 100; attempt++) {
+          const after = await this.status(host);
+          if (after.running) return after;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        throw new Error("The service started but Rex did not become ready.");
+      }
       const launch = {
         ...profile,
         args:

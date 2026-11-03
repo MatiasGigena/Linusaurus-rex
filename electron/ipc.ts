@@ -15,6 +15,7 @@ import { parseTheme } from './features/themes.js';
 import { isLocalEndpoint, readConfig, writeConfig } from './features/config.js';
 import {desktopAllowed,noticeSound} from './features/notifications.js';
 import {LinuxServerManager} from './features/lifecycle.js';
+import {validateOrigins} from './features/server-origins.js';
 import {resolveCurrentAppImage} from './features/update-target.js';
 import {LinuxUpdateManager} from './features/updates.js';
 import {linkDecision} from './features/links.js';
@@ -160,6 +161,8 @@ class WindowContext {
     if(method==='credentialStatus')return(await credentials()).status(credentialKey(host));
     if(method==='removeCredentials'){await(await credentials()).remove(credentialKey(host));this.rex.reconnect(host);return;}
     if(method==='serverManagement')return this.lifecycle.status(host);
+    if(method==='previewServerOrigins')return this.lifecycle.previewOrigins(host,validateOrigins(args.origins));
+    if(method==='applyServerOrigins')return this.lifecycle.applyOrigins(host,identifier(args.previewId,'origins preview'));
     if(method==='serverLifecycle'){if(!['start','stop','restart'].includes(String(args.operation)))throw new Error('Invalid server lifecycle operation');return this.lifecycle.perform(host,args.operation as 'start'|'stop'|'restart');}
     if(method==='createTutorial'){
       const created=await this.rex.callMethod(host,'session.create',{label:'Rex tutorial',initial_windows:[{window_label:'Getting started',layout:{block:{flavor:'com.superlogical.onboarding.onboarding',options:{}}}}]}) as {session_id:string};
