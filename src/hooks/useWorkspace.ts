@@ -59,7 +59,7 @@ export function useWorkspace() {
   const inspectionGeneration = useRef(0);
   const inspectionSequences = useRef(new Map<string, number>());
   const mounted = useRef(true);
-  const configured = useRef(new Map<string, string>());
+  const configured = useRef(new Map<string, { endpoint: string }>());
   const delayedRefresh = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -180,27 +180,35 @@ export function useWorkspace() {
           configured.current.delete(host.id);
           continue;
         }
-        if (configured.current.get(host.id) === host.endpoint) continue;
-        configured.current.set(host.id, host.endpoint);
+        if (configured.current.get(host.id)?.endpoint === host.endpoint)
+          continue;
+        const configuration = { endpoint: host.endpoint };
+        configured.current.set(host.id, configuration);
+        const ownsKeymap = () =>
+          mounted.current &&
+          configured.current.get(host.id) === configuration &&
+          settingsRef.current?.hosts.some(
+            (current) =>
+              current.id === host.id && current.endpoint === host.endpoint,
+          );
         void window.rex
           .request("keymap", { hostId: host.id })
           .then((keymap) => {
-            if (
-              !mounted.current ||
-              !settingsRef.current?.hosts.some(
-                (current) =>
-                  current.id === host.id && current.endpoint === host.endpoint,
-              )
-            ) {
-              if (configured.current.get(host.id) === host.endpoint)
+            if (!ownsKeymap()) {
+              if (configured.current.get(host.id) === configuration)
                 configured.current.delete(host.id);
               return;
             }
             setKeymaps((previous) => ({ ...previous, [host.id]: keymap }));
           })
-          .catch(() => {
-            if (configured.current.get(host.id) === host.endpoint)
+          .catch((failure) => {
+            const current = ownsKeymap();
+            if (configured.current.get(host.id) === configuration)
               configured.current.delete(host.id);
+            if (current)
+              setError(
+                `Keyboard shortcuts for ${host.label}: ${errorMessage(failure)}`,
+              );
           });
       }
       setHosts(nextHosts);

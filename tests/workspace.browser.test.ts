@@ -24,6 +24,7 @@ window.fixture={calls,
  dispatch(name,args={}){const noop=()=>{};const execute=createWorkspaceActions({workspace:workspace.operations,settings,hosts:workspace.hosts,views:workspace.views,selection:workspace.selection,keymaps:workspace.keymaps,focusedPane:workspace.focusedPane,workspaceElement:{current:null},setPalette:noop,setSettingsTab:noop,setDiagnostics:noop,setPairing:noop,setEditingHost:noop,setConfirmation:noop,setForm:noop,setCollapsedSessions:noop,setActivityOnly:noop,setActivityOpen:noop,setActivityGroup:noop,setDirectoryBrowser:noop,onError:noop});window.fixture.mutation='pending';void execute(name,args).then(value=>{window.fixture.mutation='complete';window.fixture.completed=value;},error=>{window.fixture.mutation=error.message;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
  preferences(patch){settings={...settings,...patch};for(const listener of listeners)listener({type:'settings',settings});},
  changeHosts(hosts){settings={...settings,hosts};for(const listener of listeners)listener({type:'settings',settings});},
+ status(hostId,connected){for(const listener of listeners)listener({type:'status',hostId,connected});},
  unmount(){setVisible(false);}
 };
 window.rex={
@@ -65,6 +66,7 @@ interface WorkspaceFixtureWindow {
     reloadAfterResize(): void;
     reloadResult?: string;
     changeHosts(hosts: { id: string; label: string; endpoint: string }[]): void;
+    status(hostId: string, connected: boolean): void;
     unmount(): void;
   };
 }
@@ -938,10 +940,21 @@ for (const scenario of [
           assert.equal(await mutationStatus(page), "pending");
           if (scenario === "balancing rejects") {
             await complete(page, inspected, view("s", "Committed split"));
-            await expect.poll(() => mutationStatus(page)).toMatch(/split completed.*balanc.*failed/i);
-            assert.equal((await snapshot(page)).views["one/s"], "Committed split");
-            assert.equal(await page.evaluate("window.fixture.failureCause"), true);
-            assert.equal(await page.evaluate("window.fixture.failureMethod"), "layoutAction");
+            await expect
+              .poll(() => mutationStatus(page))
+              .toMatch(/split completed.*balanc.*failed/i);
+            assert.equal(
+              (await snapshot(page)).views["one/s"],
+              "Committed split",
+            );
+            assert.equal(
+              await page.evaluate("window.fixture.failureCause"),
+              true,
+            );
+            assert.equal(
+              await page.evaluate("window.fixture.failureMethod"),
+              "layoutAction",
+            );
           } else if (scenario === "inspection rejects") {
             await fail(page, inspected, "Split inspection failed");
             await assertReconciliationFailure(
@@ -1460,6 +1473,237 @@ test(
           ),
           /inspection was superseded/,
         );
+      },
+    );
+  },
+);
+
+test(
+  "current keymap initialization failure is visible and a later refresh retries",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-keymap-failure-retry",
+      source,
+      async (page) => {
+        const inspected = await startInspection(page);
+        await page.evaluate(() => {
+          (window as unknown as WorkspaceFixtureWindow).fixture.deferKeymaps =
+            true;
+        });
+        await complete(page, inspected, view("s", "Initial session"));
+        const failed = await pending(page, "keymap", "one");
+        await page.evaluate(
+          (id) =>
+            (window as unknown as WorkspaceFixtureWindow).fixture.fail(
+              id,
+              "Keymap denied",
+            ),
+          failed,
+        );
+        await expect
+          .poll(async () => (await snapshot(page)).error)
+          .toBe("Keyboard shortcuts for Host one: Keymap denied");
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.refresh(),
+        );
+        await complete(
+          page,
+          await startInspection(page),
+          view("s", "Retried session"),
+        );
+        const retry = await pending(page, "keymap", "one");
+        assert.notEqual(retry, failed);
+        await complete(page, retry, {
+          actions: [],
+          bindings: [],
+          modes: [],
+          warnings: [],
+        });
+        await expect
+          .poll(async () => (await snapshot(page)).keymapHosts)
+          .toEqual(["one"]);
+        assert.equal(
+          await page.evaluate(
+            () =>
+              (
+                window as unknown as WorkspaceFixtureWindow
+              ).fixture.calls.filter((call) => call.method === "keymap").length,
+          ),
+          2,
+        );
+      },
+    );
+  },
+);
+
+for (const lifetime of ["removed", "replaced", "unmounted"] as const) {
+  test(
+    `a delayed keymap initialization failure stays quiet after its host is ${lifetime}`,
+    options,
+    async () => {
+      await withBrowserFixture(
+        `workspace-keymap-${lifetime}-failure`,
+        source,
+        async (page) => {
+          const inspected = await startInspection(page);
+          await page.evaluate(() => {
+            (window as unknown as WorkspaceFixtureWindow).fixture.deferKeymaps =
+              true;
+          });
+          await complete(page, inspected, view("s", "Initial session"));
+          const old = await pending(page, "keymap", "one");
+          if (lifetime === "unmounted") {
+            await page.evaluate(() =>
+              (window as unknown as WorkspaceFixtureWindow).fixture.unmount(),
+            );
+            await expect(page.getByText("Workspace unmounted")).toBeVisible();
+          } else {
+            await page.evaluate(
+              (replaced) =>
+                (
+                  window as unknown as WorkspaceFixtureWindow
+                ).fixture.changeHosts(
+                  replaced
+                    ? [
+                        {
+                          id: "one",
+                          label: "Replacement host",
+                          endpoint: "unix:///replacement.sock",
+                        },
+                      ]
+                    : [],
+                ),
+              lifetime === "replaced",
+            );
+            if (lifetime === "removed")
+              await expect
+                .poll(async () => (await snapshot(page)).settingsHosts)
+                .toEqual([]);
+          }
+          const replacement =
+            lifetime === "replaced" ? await startInspection(page) : undefined;
+          if (replacement !== undefined)
+            await complete(page, replacement, view("s", "Replacement session"));
+          const current =
+            lifetime === "replaced"
+              ? await pending(page, "keymap", "one", old)
+              : undefined;
+          const marker = await page.evaluate(
+            () =>
+              (window as unknown as WorkspaceFixtureWindow).fixture.calls
+                .length,
+          );
+          await page.evaluate(
+            (id) =>
+              (window as unknown as WorkspaceFixtureWindow).fixture.fail(
+                id,
+                "Old keymap denied",
+              ),
+            old,
+          );
+          await nextFrame(page);
+          if (lifetime === "unmounted") {
+            assert.equal(
+              await page.evaluate(
+                () =>
+                  (window as unknown as WorkspaceFixtureWindow).fixture.calls
+                    .length,
+              ),
+              marker,
+            );
+            await expect(page.getByText("Workspace unmounted")).toBeVisible();
+          } else {
+            assert.equal((await snapshot(page)).error, undefined);
+            if (current !== undefined) {
+              await complete(page, current, {
+                actions: [],
+                bindings: [],
+                modes: [],
+                warnings: [],
+              });
+              await expect
+                .poll(async () => (await snapshot(page)).keymapHosts)
+                .toEqual(["one"]);
+            } else
+              assert.equal(
+                (await snapshot(page)).keymapHosts.includes("one"),
+                false,
+              );
+          }
+        },
+      );
+    },
+  );
+}
+
+test(
+  "an older same-endpoint keymap failure cannot invalidate the replacement request",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-keymap-request-owner",
+      source,
+      async (page) => {
+        const inspected = await startInspection(page);
+        await page.evaluate(() => {
+          (window as unknown as WorkspaceFixtureWindow).fixture.deferKeymaps =
+            true;
+        });
+        await complete(page, inspected, view("s", "Initial session"));
+        const old = await pending(page, "keymap", "one");
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.status(
+            "one",
+            false,
+          ),
+        );
+        await complete(
+          page,
+          await startInspection(page),
+          view("s", "Reconnected session"),
+        );
+        const current = await pending(page, "keymap", "one", old);
+        await page.evaluate(
+          (id) =>
+            (window as unknown as WorkspaceFixtureWindow).fixture.fail(
+              id,
+              "Old keymap denied",
+            ),
+          old,
+        );
+        await nextFrame(page);
+        assert.equal((await snapshot(page)).error, undefined);
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.refresh(),
+        );
+        await complete(
+          page,
+          await startInspection(page),
+          view("s", "Refreshed session"),
+        );
+        await expect
+          .poll(async () => (await snapshot(page)).views["one/s"])
+          .toBe("Refreshed session");
+        assert.equal(
+          await page.evaluate(
+            () =>
+              (
+                window as unknown as WorkspaceFixtureWindow
+              ).fixture.calls.filter((call) => call.method === "keymap").length,
+          ),
+          2,
+          "A stale failure cannot clear another request's initialization marker",
+        );
+        await complete(page, current, {
+          actions: [],
+          bindings: [],
+          modes: [],
+          warnings: [],
+        });
+        await expect
+          .poll(async () => (await snapshot(page)).keymapHosts)
+          .toEqual(["one"]);
       },
     );
   },
