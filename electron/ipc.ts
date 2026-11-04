@@ -380,13 +380,10 @@ class WindowContext {
       return;
     }
     if (method === "integrationsStatus") {
-      const result = (await this.integrations.status()) as Record<
-        string,
-        unknown
-      >;
+      const result = await this.integrations.status();
       return {
         output: JSON.stringify(result, null, 2),
-        agents: result.harnesses ?? [],
+        agents: result.harnesses,
       };
     }
     if (method === "integrationsPreview")
