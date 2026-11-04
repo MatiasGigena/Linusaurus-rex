@@ -85,6 +85,8 @@ type Pending = {
 };
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
+const failureMessage = (failure: unknown) =>
+  failure instanceof Error ? failure.message : String(failure);
 async function readProcessStartTicks(pid: number): Promise<string | undefined> {
   try {
     const text = await readFile(`/proc/${pid}/stat`, "utf8"),
@@ -357,6 +359,7 @@ export class SystemdUserServices {
       throw error;
     });
     const removed = new Map<string, string>();
+    let scanFailure: { error: unknown } | undefined;
     try {
       for (const name of names) {
         if (
@@ -366,7 +369,10 @@ export class SystemdUserServices {
         )
           continue;
         const path = join(directory, name),
-          identity = await lstat(path).catch(() => undefined);
+          identity = await lstat(path).catch((error) => {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+            throw error;
+          });
         if (
           !identity?.isFile() ||
           identity.uid !== process.getuid?.() ||
@@ -384,7 +390,10 @@ export class SystemdUserServices {
           (await readProcessStartTicks(Number(match[1]))) === match[2]
         )
           continue;
-        const current = await lstat(path).catch(() => undefined);
+        const current = await lstat(path).catch((error) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+          throw error;
+        });
         if (
           current?.ino !== identity.ino ||
           current.dev !== identity.dev ||
@@ -396,23 +405,42 @@ export class SystemdUserServices {
         await unlink(path);
         removed.set(path, text);
       }
-    } finally {
-      if (removed.size) {
-        try {
-          await this.run("systemctl", ["--user", "daemon-reload"]);
-        } catch (error) {
-          // Retain a recognizable stale marker for the next explicit retry.
-          for (const [path, text] of removed)
-            await writeFile(path, text, { flag: "wx", mode: 0o600 }).catch(
-              (failure) => {
-                if ((failure as NodeJS.ErrnoException).code !== "EEXIST")
-                  throw failure;
-              },
+    } catch (error) {
+      scanFailure = { error };
+    }
+    if (removed.size) {
+      try {
+        await this.run("systemctl", ["--user", "daemon-reload"]);
+      } catch (reloadError) {
+        const errors: unknown[] = scanFailure
+          ? [scanFailure.error, reloadError]
+          : [reloadError];
+        const states: string[] = [];
+        // Each removed marker needs an independent attempt, even after another
+        // marker fails. Exclusive writes preserve any competing replacement.
+        for (const [path, text] of removed) {
+          try {
+            await writeFile(path, text, { flag: "wx", mode: 0o600 });
+            states.push(`Stale marker restored at ${path}.`);
+          } catch (markerError) {
+            errors.push(markerError);
+            states.push(
+              (markerError as NodeJS.ErrnoException).code === "EEXIST"
+                ? `A conflicting file at ${path} was left untouched; marker restoration failed: ${failureMessage(markerError)}.`
+                : `Stale marker restoration failed at ${path}: ${failureMessage(markerError)}.`,
             );
-          throw error;
+          }
         }
+        if (errors.length > 1)
+          throw new AggregateError(
+            errors,
+            `${scanFailure ? `Stale idle-guard scan failed: ${failureMessage(scanFailure.error)}. ` : ""}The service manager reload failed: ${failureMessage(reloadError)}. Its effective Restart policy is unconfirmed. ${states.join(" ")}`,
+            { cause: scanFailure ? scanFailure.error : reloadError },
+          );
+        throw reloadError;
       }
     }
+    if (scanFailure) throw scanFailure.error;
   }
   private async guard(unit: ServiceSnapshot) {
     const owner = await readProcessStartTicks(process.pid);
@@ -436,33 +464,57 @@ export class SystemdUserServices {
     }
     const identity = await lstat(path);
     let removed = false;
+    let status = `The owned runtime Restart guard remains at ${path}.`;
     const restore = async () => {
       if (removed) return;
-      const current = await lstat(path).catch(() => undefined);
+      status = `The owned runtime Restart guard at ${path} could not be verified; restoration reload was not attempted. Its effective Restart policy is unconfirmed.`;
+      const current = await lstat(path).catch((error) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw error;
+      });
+      if (!current) {
+        status = `The owned runtime Restart guard is missing at ${path}; restoration reload was not attempted. Its effective Restart policy is unconfirmed.`;
+        throw new Error(status);
+      }
       if (
-        current?.ino !== identity.ino ||
+        current.ino !== identity.ino ||
         current.dev !== identity.dev ||
         (await readFile(path, "utf8")) !== text
-      )
-        throw new Error(
-          "The owned runtime Restart guard changed; it was left untouched.",
-        );
+      ) {
+        status = `The owned runtime Restart guard changed; the conflicting file at ${path} was left untouched. Restoration reload was not attempted, so its effective Restart policy is unconfirmed.`;
+        throw new Error(status);
+      }
+      status = `The owned runtime Restart guard was verified at ${path}, but removal did not complete; restoration reload was not attempted. Its effective Restart policy is unconfirmed.`;
       await unlink(path);
       removed = true;
+      status = `The owned runtime Restart guard was removed; the service manager reload has not completed. Its effective Restart policy is unconfirmed.`;
       try {
         await this.run("systemctl", ["--user", "daemon-reload"]);
-      } catch (error) {
+        status =
+          "The owned runtime Restart guard was removed and the service manager reload completed.";
+      } catch (reloadError) {
+        status = `The owned runtime Restart guard was removed, but the service manager reload failed. Its effective Restart policy is unconfirmed.`;
         // A failed reload can leave the manager caching Restart=no. An explicitly
         // abandoned marker allows the next action to retry while this app lives.
-        await writeFile(
-          path,
-          text.replace("[Service]", "# State: abandoned\n[Service]"),
-          { flag: "wx", mode: 0o600 },
-        ).catch((failure) => {
-          if ((failure as NodeJS.ErrnoException).code !== "EEXIST")
-            throw failure;
-        });
-        throw error;
+        try {
+          await writeFile(
+            path,
+            text.replace("[Service]", "# State: abandoned\n[Service]"),
+            { flag: "wx", mode: 0o600 },
+          );
+          status += ` An abandoned marker was written at ${path} for explicit retry.`;
+        } catch (markerError) {
+          status +=
+            (markerError as NodeJS.ErrnoException).code === "EEXIST"
+              ? ` A conflicting file at ${path} was left untouched; abandoned marker restoration failed.`
+              : ` Abandoned marker restoration failed at ${path}.`;
+          throw new AggregateError(
+            [reloadError, markerError],
+            `${status} Reload failure: ${failureMessage(reloadError)}. Marker failure: ${failureMessage(markerError)}`,
+            { cause: reloadError },
+          );
+        }
+        throw reloadError;
       }
     };
     try {
@@ -477,9 +529,17 @@ export class SystemdUserServices {
         throw new Error(
           "The service Restart guard could not be verified without changing its process.",
         );
-      return restore;
+      return { restore, status: () => status };
     } catch (error) {
-      await restore();
+      try {
+        await restore();
+      } catch (restoreError) {
+        throw new AggregateError(
+          [error, restoreError],
+          `Setting up the runtime Restart guard failed: ${failureMessage(error)}. Guard restoration failed: ${failureMessage(restoreError)}. ${status}`,
+          { cause: error },
+        );
+      }
       throw error;
     }
   }
@@ -491,11 +551,13 @@ export class SystemdUserServices {
     const before = await this.inspect(unit.unit);
     if (before.mainPID !== pid)
       throw new Error("The service process changed. Refresh before retrying.");
-    const restore = await this.guard(before);
+    const guard = await this.guard(before);
+    let stopFailure: { error: unknown } | undefined;
     try {
       // The caller checks advertised if_idle support; the server atomically refuses
       // all existing sessions and other connected clients. No StopUnit is issued.
       await this.options.call(host, "server.stop", { if_idle: true });
+      let exited = false;
       for (let attempt = 0; attempt < 100; attempt++) {
         const after = await this.inspect(unit.unit);
         if (after.mainPID !== pid) {
@@ -503,16 +565,30 @@ export class SystemdUserServices {
             throw new Error(
               "Another actor started a new Rex process. It has been preserved.",
             );
-          return;
+          exited = true;
+          break;
         }
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
-      throw new Error(
-        "The Rex service has not exited yet. No process was killed.",
-      );
-    } finally {
-      await restore();
+      if (!exited)
+        throw new Error(
+          "The Rex service has not exited yet. No process was killed.",
+        );
+    } catch (error) {
+      stopFailure = { error };
     }
+    try {
+      await guard.restore();
+    } catch (restoreError) {
+      if (stopFailure)
+        throw new AggregateError(
+          [stopFailure.error, restoreError],
+          `Stopping the Rex service failed: ${failureMessage(stopFailure.error)}. Guard restoration failed: ${failureMessage(restoreError)}. ${guard.status()}`,
+          { cause: stopFailure.error },
+        );
+      throw restoreError;
+    }
+    if (stopFailure) throw stopFailure.error;
   }
   private path(unit: string) {
     if (!isServiceUnitName(unit)) throw new Error("Invalid Rex service name.");
