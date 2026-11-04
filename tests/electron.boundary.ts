@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import {
@@ -70,6 +71,158 @@ async function rejectedBridge(page: Page) {
   );
 }
 
+async function verifyCredentialAdapter(app: ElectronApplication, page: Page) {
+  const secret = "native-boundary-fixture-token";
+  const host = {
+    id: "boundary-credentials",
+    label: "Credential fixture",
+    endpoint: "http://127.0.0.1:1",
+  };
+  const key = (endpoint: string) =>
+    `${host.id}:${createHash("sha256").update(endpoint).digest("hex")}`;
+  const path = join(
+    await app.evaluate(({ app }) => app.getPath("userData")),
+    "host-credentials.json",
+  );
+  const entries = async () => {
+    const text = await readFile(path, "utf8").catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return "{}";
+        throw error;
+      },
+    );
+    assert.equal(
+      text.includes(secret),
+      false,
+      "Credential storage must never contain plaintext fixture secrets",
+    );
+    const value: unknown = JSON.parse(text);
+    assert.ok(value && typeof value === "object" && !Array.isArray(value));
+    return value as Record<string, unknown>;
+  };
+  const status = () =>
+    page.evaluate(
+      (hostId) => window.rex.request("credentialStatus", { hostId }),
+      host.id,
+    );
+  const save = () =>
+    page.evaluate(
+      ({ hostId, token }) =>
+        window.rex.request("setCredentials", { hostId, token }),
+      { hostId: host.id, token: secret },
+    );
+  await assert.rejects(
+    page.evaluate(
+      (token) =>
+        window.rex.request("setCredentials", { hostId: "local", token }),
+      secret,
+    ),
+    /explicit HTTP/,
+  );
+  await page.evaluate(async (host) => {
+    const settings = await window.rex.getSettings();
+    await window.rex.setSettings({
+      ...settings,
+      hosts: [...settings.hosts, host],
+    });
+  }, host);
+  try {
+    const initial = await status();
+    const native = await app.evaluate(async ({ safeStorage }) => ({
+      available: await safeStorage.isAsyncEncryptionAvailable(),
+      backend: safeStorage.getSelectedStorageBackend(),
+    }));
+    assert.deepEqual(initial, {
+      stored: false,
+      secureStorageAvailable:
+        native.available && native.backend !== "basic_text",
+    });
+    if (initial.secureStorageAvailable) {
+      await save();
+      assert.equal((await status()).stored, true);
+      const encrypted = (await entries())[key(host.endpoint)];
+      assert.ok(typeof encrypted === "string");
+      assert.equal(
+        await app.evaluate(
+          async ({ safeStorage }, { encrypted, expected }) => {
+            const decoded: unknown = JSON.parse(
+              (
+                await safeStorage.decryptStringAsync(
+                  Buffer.from(encrypted, "base64"),
+                )
+              ).result,
+            );
+            return (
+              decoded !== null &&
+              typeof decoded === "object" &&
+              "token" in decoded &&
+              decoded.token === expected
+            );
+          },
+          { encrypted, expected: secret },
+        ),
+        true,
+        "The real safeStorage adapter must round-trip without returning a secret to the renderer",
+      );
+      const replacement = "http://127.0.0.1:2";
+      await page.evaluate(
+        async ({ hostId, endpoint }) => {
+          const settings = await window.rex.getSettings();
+          await window.rex.setSettings({
+            ...settings,
+            hosts: settings.hosts.map((host) =>
+              host.id === hostId ? { ...host, endpoint } : host,
+            ),
+          });
+        },
+        { hostId: host.id, endpoint: replacement },
+      );
+      assert.equal((await status()).stored, false);
+      assert.equal(
+        Object.hasOwn(await entries(), key(host.endpoint)),
+        false,
+        "Endpoint replacement removes the old namespace",
+      );
+      await save();
+      assert.ok(
+        Object.hasOwn(await entries(), key(replacement)),
+        "Saved keys remain compatible with the endpoint-bound namespace",
+      );
+    } else {
+      await assert.rejects(save(), /secure desktop secret store|keyring/i);
+      assert.equal((await status()).stored, false);
+      console.log(
+        `Credential adapter correctly refuses unavailable secure storage (${native.backend}); encrypted round-trip is not available in this environment.`,
+      );
+    }
+    assert.equal(
+      JSON.stringify(
+        await page.evaluate(() => window.rex.getSettings()),
+      ).includes(secret),
+      false,
+      "Renderer settings never reveal stored secrets",
+    );
+    await page.evaluate(
+      (hostId) => window.rex.request("removeCredentials", { hostId }),
+      host.id,
+    );
+    assert.equal((await status()).stored, false);
+    assert.ok(
+      !Object.keys(await entries()).some((entry) =>
+        entry.startsWith(`${host.id}:`),
+      ),
+    );
+  } finally {
+    await page.evaluate(async (hostId) => {
+      const settings = await window.rex.getSettings();
+      await window.rex.setSettings({
+        ...settings,
+        hosts: settings.hosts.filter((host) => host.id !== hostId),
+      });
+    }, host.id);
+  }
+}
+
 try {
   const config = join(directory, "config");
   await mkdir(join(config, "Linusaurus Rex"), { recursive: true });
@@ -111,6 +264,7 @@ try {
     await page.evaluate(() => window.rex.readClipboard()),
     "trusted clipboard",
   );
+  await verifyCredentialAdapter(app, page);
   assert.equal(
     await page.evaluate(() =>
       window.rex.request("setContext", { uiBusy: false }),
