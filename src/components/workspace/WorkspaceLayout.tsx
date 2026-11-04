@@ -3,12 +3,12 @@ import { AlertCircle } from "lucide-react";
 import {
   usePaneGeometry,
   type PaneGeometryOperations,
-} from "../hooks/usePaneGeometry";
-import { errorMessage, viewKey } from "../core/workspace";
-import type { HostState, PaneMetadata } from "../core/workspaceSnapshot";
-import type { WorkspaceOperations } from "../core/workspaceOperations";
-import type { Selection, SessionView, Settings } from "../shared/types";
-import { enrichWindow } from "../workspace/presentation";
+} from "../../hooks/usePaneGeometry";
+import { errorMessage, viewKey } from "../../core/workspace";
+import type { HostState, PaneMetadata } from "../../core/workspaceSnapshot";
+import type { WorkspaceOperations } from "../../core/workspaceOperations";
+import type { Selection, SessionView, Settings } from "../../shared/types";
+import { enrichWindow } from "../../workspace/presentation";
 import { WorkspaceWindow } from "./WorkspaceWindow";
 
 interface WorkspaceLayoutProps {

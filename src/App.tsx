@@ -12,7 +12,7 @@ import {
   buildActivityFeed,
   enrichWindow,
 } from "./workspace/presentation";
-import { WorkspaceLayout } from "./components/WorkspaceLayout";
+import { WorkspaceLayout } from "./components/workspace/WorkspaceLayout";
 import { FormDialog, ConfirmDialog } from "./components/WorkspaceDialogs";
 import { useInterfaceAppearance } from "./hooks/useInterfaceAppearance";
 import { createWorkspaceActions } from "./workspace/actions/createWorkspaceActions";

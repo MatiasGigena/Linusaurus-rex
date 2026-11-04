@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { expect, type Page } from "@playwright/test";
 import { withBrowserFixture } from "./browser-fixture";
 const source = `
-import React from'react';import{createRoot}from'react-dom/client';import{OnboardingPane}from'/src/components/OnboardingPane.tsx';import{DEFAULT_SETTINGS}from'/src/shared/types.ts';
+import React from'react';import{createRoot}from'react-dom/client';import{OnboardingPane}from'/src/components/workspace/OnboardingPane.tsx';import{DEFAULT_SETTINGS}from'/src/shared/types.ts';
 let update;const calls=[],pending=[];let id=0;
 window.fixture={calls,change:patch=>update(current=>({...current,...patch})),finish(id,value){const request=pending.find(item=>item.id===id);if(!request)throw Error('Missing request');request.resolve(value);},fail(id){pending.find(item=>item.id===id).reject(new Error('State denied'));}};
 window.rex={request(method,args){const current={id:++id,method,args};calls.push(current);return new Promise((resolve,reject)=>pending.push({...current,resolve,reject}));}};

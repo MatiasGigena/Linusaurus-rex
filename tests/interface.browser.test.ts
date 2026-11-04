@@ -9,7 +9,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { SettingsDialog } from '/src/components/preferences/SettingsDialog.tsx';
 import { ProgramIcon } from '/src/components/ProgramIcon.tsx';
-import { ActivePaneHighlight } from '/src/components/ActivePaneHighlight.tsx';
+import { ActivePaneHighlight } from '/src/components/workspace/ActivePaneHighlight.tsx';
 import { DEFAULT_SETTINGS } from '/src/shared/types.ts';
 import { migrateThemeLibrary } from '/src/core/themeLibrary.ts';
 import '/src/styles.css';import '/src/advanced.css';import '/src/dialogs.css';

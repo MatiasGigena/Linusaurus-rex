@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { PaneRect } from "../shared/types";
+import type { PaneRect } from "../../shared/types";
 
 export function ActivePaneHighlight({
   rect,

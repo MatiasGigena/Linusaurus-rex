@@ -9,9 +9,9 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import type { TerminalPaneProps } from "../terminal/TerminalPane";
-import { errorMessage } from "../core/workspace";
-import { canonicalActionName, configuredShortcut } from "../shared/actions";
+import type { TerminalPaneProps } from "../../terminal/TerminalPane";
+import { errorMessage } from "../../core/workspace";
+import { canonicalActionName, configuredShortcut } from "../../shared/actions";
 
 const STEPS = [
   "welcome",

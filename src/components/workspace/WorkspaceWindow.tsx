@@ -1,8 +1,8 @@
 import { TerminalSquare } from "lucide-react";
-import type { WorkspaceOperations } from "../core/workspaceOperations";
-import { errorMessage } from "../core/workspace";
-import type { RexWindow, Selection, Settings } from "../shared/types";
-import type { usePaneGeometry } from "../hooks/usePaneGeometry";
+import type { WorkspaceOperations } from "../../core/workspaceOperations";
+import { errorMessage } from "../../core/workspace";
+import type { RexWindow, Selection, Settings } from "../../shared/types";
+import type { usePaneGeometry } from "../../hooks/usePaneGeometry";
 import { ActivePaneHighlight } from "./ActivePaneHighlight";
 import { WorkspacePane } from "./WorkspacePane";
 

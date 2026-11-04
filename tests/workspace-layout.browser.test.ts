@@ -5,7 +5,7 @@ import { withBrowserFixture } from "./browser-fixture";
 
 const source = `
 import React from 'react';import{createRoot}from'react-dom/client';
-import{WorkspaceLayout}from'/src/components/WorkspaceLayout.tsx';
+import{WorkspaceLayout}from'/src/components/workspace/WorkspaceLayout.tsx';
 import{DEFAULT_SETTINGS}from'/src/shared/types.ts';
 import{SupersededSessionInspectionError}from'/src/core/workspaceOperations.ts';
 import{dispatchTerminalCommandAsync}from'/src/terminal/commands.ts';
