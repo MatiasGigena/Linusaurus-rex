@@ -2,23 +2,7 @@ import { useEffect, useState } from "react";
 import { Copy, ExternalLink, RefreshCw } from "lucide-react";
 import { Dialog } from "./Dialog";
 import { errorMessage } from "../core/workspace";
-type ServerDetails = {
-  started_at?: string;
-  api_revision?: number;
-  api_min_revision?: number;
-  session_count?: number;
-  tailscale?: {
-    state: string;
-    allow_tailnet_members: boolean;
-    dns_name?: string;
-    auth_url?: string;
-    control_url?: string;
-    tags?: string[];
-    error?: string;
-    account?: { login_name: string };
-    https?: { state: string; url?: string };
-  };
-};
+import { decodeServerDetails, type ServerDetails } from "../core/serverDetails";
 export function DiagnosticsDialog({
   hostId,
   onClose,
@@ -35,6 +19,7 @@ export function DiagnosticsDialog({
   const [controlUrl, setControlUrl] = useState("");
   const [tags, setTags] = useState("");
   const [allowMembers, setAllowMembers] = useState(false);
+  const reportFailure = (failure: unknown) => setError(errorMessage(failure));
   const load = () => {
     void Promise.all([
       window.rex.request("diagnostics", { hostId }),
@@ -43,18 +28,29 @@ export function DiagnosticsDialog({
         : Promise.resolve({}),
     ])
       .then(([info, status]) => {
-        const server = status as ServerDetails;
-        setReport({ ...info, status: server });
-        setDetails(server);
-        setAllowMembers(server.tailscale?.allow_tailnet_members || false);
-        setControlUrl(server.tailscale?.control_url || "");
-        setTags((server.tailscale?.tags || []).join(", "));
-        setHostname(server.tailscale?.dns_name?.split(".")[0] || "");
+        const server = decodeServerDetails(status);
+        const next = {
+          report: { ...info, status: server },
+          details: server,
+          allowMembers: server.tailscale?.allow_tailnet_members ?? false,
+          controlUrl: server.tailscale?.control_url ?? "",
+          tags: (server.tailscale?.tags ?? []).join(", "),
+          hostname: server.tailscale?.dns_name?.split(".")[0] ?? "",
+        };
+        setReport(next.report);
+        setDetails(next.details);
+        setAllowMembers(next.allowMembers);
+        setControlUrl(next.controlUrl);
+        setTags(next.tags);
+        setHostname(next.hostname);
+        setError(undefined);
       })
-      .catch((failure) => setError(errorMessage(failure)));
+      .catch(reportFailure);
   };
   useEffect(load, [hostId]);
   const ts = details?.tailscale;
+  const remoteUrl = ts?.https?.url;
+  const authUrl = ts?.auth_url;
   const startArgs = {
     allow_tailnet_members: allowMembers,
     ...(hostname.trim() ? { hostname: hostname.trim() } : {}),
@@ -101,12 +97,16 @@ export function DiagnosticsDialog({
             <dd>{ts.https?.state || "Not serving"}</dd>
             <dt>Address</dt>
             <dd>
-              {ts.https?.url || ts.dns_name || "Not assigned"}
-              {ts.https?.url && (
+              {remoteUrl || ts.dns_name || "Not assigned"}
+              {remoteUrl && (
                 <button
                   className="icon-button"
                   aria-label="Copy remote address"
-                  onClick={() => void window.rex.writeClipboard(ts.https!.url!)}
+                  onClick={() =>
+                    void window.rex
+                      .writeClipboard(remoteUrl)
+                      .catch(reportFailure)
+                  }
                 >
                   <Copy size={12} />
                 </button>
@@ -171,11 +171,13 @@ export function DiagnosticsDialog({
             >
               Disable serving…
             </button>
-            {ts.auth_url && (
+            {authUrl && (
               <button
                 className="button"
                 onClick={() =>
-                  void window.rex.request("openExternal", { url: ts.auth_url! })
+                  void window.rex
+                    .request("openExternal", { url: authUrl })
+                    .catch(reportFailure)
                 }
               >
                 <ExternalLink size={13} />
@@ -225,7 +227,9 @@ export function DiagnosticsDialog({
           className="button"
           disabled={!report}
           onClick={() =>
-            void window.rex.writeClipboard(JSON.stringify(report, null, 2))
+            void window.rex
+              .writeClipboard(JSON.stringify(report, null, 2))
+              .catch(reportFailure)
           }
         >
           <Copy size={13} />
