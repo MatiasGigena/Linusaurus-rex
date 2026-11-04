@@ -11,6 +11,10 @@ import type {
   Settings,
 } from "../shared/types";
 import { errorMessage, paneKey, viewKey } from "../core/workspace";
+import {
+  collectHostSnapshot,
+  reconcileSelection,
+} from "../core/workspaceSnapshot";
 
 export interface HostState extends Host {
   connected: boolean;
@@ -94,63 +98,31 @@ export function useWorkspace() {
     inFlight.current = true;
     const startingEpoch = viewEpoch.current;
     try {
-      const allViews: Record<string, SessionView> = {};
-      const nextHosts = await Promise.all(
-        config.hosts.map(async (host): Promise<HostState> => {
-          try {
-            const status = await window.rex.request("status", {
-              hostId: host.id,
-            });
-            if (!status.connected) {
-              configured.current.delete(host.id);
-              return {
-                ...host,
-                connected: false,
-                error: status.error,
-                status,
-                sessions: [],
-              };
-            }
-            const sessions = await window.rex.request("listSessions", {
-              hostId: host.id,
-            });
-            await Promise.all(
-              sessions.map(async (session) => {
-                try {
-                  allViews[viewKey(host.id, session.id)] =
-                    await window.rex.request("inspectSession", {
-                      hostId: host.id,
-                      sessionId: session.id,
-                    });
-                } catch {
-                  /* A concurrent client may have just closed this session. */
-                }
-              }),
-            );
-            if (!configured.current.has(host.id)) {
-              configured.current.add(host.id);
-              void window.rex
-                .request("keymap", { hostId: host.id })
-                .then((keymap) => {
-                  if (mounted.current)
-                    setKeymaps((previous) => ({
-                      ...previous,
-                      [host.id]: keymap,
-                    }));
-                })
-                .catch(() => configured.current.delete(host.id));
-            }
-            return { ...host, connected: true, status, sessions };
-          } catch (failure) {
-            return {
-              ...host,
-              connected: false,
-              error: errorMessage(failure),
-              sessions: [],
-            };
-          }
-        }),
+      const snapshots = await Promise.all(
+        config.hosts.map((host) =>
+          collectHostSnapshot(host, window.rex.request),
+        ),
       );
+      const nextHosts = snapshots.map((snapshot) => snapshot.host);
+      const allViews = Object.assign(
+        {},
+        ...snapshots.map((snapshot) => snapshot.views),
+      ) as Record<string, SessionView>;
+      for (const host of nextHosts) {
+        if (!host.connected) {
+          configured.current.delete(host.id);
+          continue;
+        }
+        if (configured.current.has(host.id)) continue;
+        configured.current.add(host.id);
+        void window.rex
+          .request("keymap", { hostId: host.id })
+          .then((keymap) => {
+            if (mounted.current)
+              setKeymaps((previous) => ({ ...previous, [host.id]: keymap }));
+          })
+          .catch(() => configured.current.delete(host.id));
+      }
       if (!mounted.current) return;
       if (startingEpoch !== viewEpoch.current) {
         refreshQueued.current = true;
@@ -165,54 +137,13 @@ export function useWorkspace() {
               if (key.startsWith(`${host.id}/`)) next[key] = view;
         return next;
       });
-      const current = selectionRef.current;
-      const currentHost =
-        current && nextHosts.find((host) => host.id === current.hostId);
-      const currentView =
-        current && allViews[viewKey(current.hostId, current.sessionId)];
-      if (currentView) {
-        setFocusedPane(
-          current.blockId ||
-            currentView.windows.find(
-              (window) => window.id === current?.windowId,
-            )?.focusedBlockId,
-        );
-        if (current.blockId)
-          setSelection((previous) =>
-            previous
-              ? {
-                  hostId: previous.hostId,
-                  sessionId: previous.sessionId,
-                  windowId: previous.windowId,
-                }
-              : previous,
-          );
-        if (
-          !currentView.windows.some((window) => window.id === current.windowId)
-        )
-          setSelection({
-            ...current,
-            windowId:
-              currentView.activeWindowId || currentView.windows[0]?.id || "",
-          });
-      } else if (current && !current.sessionId && currentHost) {
-        // An explicitly chosen empty host must stay selected.
-      } else if (!current || !currentHost || currentHost.connected) {
-        const host = nextHosts.find(
-          (host) => host.connected && host.sessions.length,
-        );
-        const session = host?.sessions[0];
-        const first = host && session && allViews[viewKey(host.id, session.id)];
-        setSelection(
-          host && session && first
-            ? {
-                hostId: host.id,
-                sessionId: session.id,
-                windowId: first.activeWindowId || first.windows[0]?.id || "",
-              }
-            : undefined,
-        );
-      }
+      const reconciled = reconcileSelection(
+        selectionRef.current,
+        nextHosts,
+        allViews,
+      );
+      setSelection(reconciled.selection);
+      if (reconciled.updateFocus) setFocusedPane(reconciled.focusedPane);
     } catch (failure) {
       if (mounted.current) setError(errorMessage(failure));
     } finally {
@@ -394,16 +325,14 @@ export function useWorkspace() {
     if (!window.rex) return;
     void window.rex
       .request("setContext", {
-        ...selection,
-        blockId: focusedPane,
+        selection: selection ? { ...selection, blockId: focusedPane } : null,
         visible: !document.hidden,
       })
       .catch(() => {});
     const visibility = () =>
       void window.rex
         .request("setContext", {
-          ...selection,
-          blockId: focusedPane,
+          selection: selection ? { ...selection, blockId: focusedPane } : null,
           visible: !document.hidden,
         })
         .catch(() => {});
