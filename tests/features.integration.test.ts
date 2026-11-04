@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { RexService } from '../electron/rex/service.js';
-import { ClientFeatures } from '../electron/features/client.js';
+import { ClientFeatures } from '../electron/client/client.js';
 import { DEFAULT_SETTINGS } from '../src/shared/types.js';
 import { layoutAction } from '../electron/features/layout.js';
 

@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { RexService } from "../electron/rex/service.js";
-import { quoteSystemdArgument } from "../electron/features/systemd.js";
+import { quoteSystemdArgument } from "../electron/server-management/systemd.js";
 const execute = promisify(execFile);
 /** Test-owned runtime service only. No installed unit or existing Rex session is used. */
 export async function createOwnedSystemdFixture() {

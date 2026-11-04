@@ -9,7 +9,7 @@ import {
   checksumFor,
   newerVersion,
   selectRelease,
-} from "../electron/features/updates.js";
+} from "../electron/updates/updates.js";
 const root =
   "https://github.com/MatiasGigena/Linusaurus-rex/releases/download/v0.3.0/";
 const bytes = Buffer.from("new verified AppImage fixture");
@@ -286,7 +286,7 @@ test("cancel aborts the in-flight release request without changing canceled stat
 });
 
 test("automatic update idleness follows program status including seeded history and cleared hosts", async () => {
-  const { ActivityRegistry } = await import("../electron/features/activity.js");
+  const { ActivityRegistry } = await import("../electron/client/activity.js");
   const { DEFAULT_SETTINGS } = await import("../src/shared/types.js");
   const registry = new ActivityRegistry(
     () => {},

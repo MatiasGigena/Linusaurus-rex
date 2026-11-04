@@ -6,7 +6,7 @@ import {
   type Host,
 } from "../src/shared/types.js";
 import { migrateThemeLibrary } from "../src/core/themeLibrary.js";
-import { validateOrigins } from "./features/server-origins.js";
+import { validateOrigins } from "./server-management/server-origins.js";
 import { validateTrustedLink } from "./features/links.js";
 
 export function record(value: unknown): Record<string, unknown> {

@@ -3,13 +3,13 @@ import { test } from "node:test";
 import {
   ActivityRegistry,
   parseActivity,
-} from "../electron/features/activity.js";
+} from "../electron/client/activity.js";
 import {
   ClientFeatures,
   type FeatureHooks,
-} from "../electron/features/client.js";
-import { KeymapRouter } from "../electron/features/keymap.js";
-import { normalizeKeymap } from "../electron/features/keymap-data.js";
+} from "../electron/client/client.js";
+import { KeymapRouter } from "../electron/client/keymap.js";
+import { normalizeKeymap } from "../electron/client/keymap-data.js";
 import type { RexControl, RexEvent } from "../electron/rex/control.js";
 import type { RexService } from "../electron/rex/service.js";
 import { DEFAULT_SETTINGS, type ClientEvent } from "../src/shared/types.js";

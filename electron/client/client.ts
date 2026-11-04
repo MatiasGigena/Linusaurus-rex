@@ -11,7 +11,7 @@ import type {
 } from "../../src/shared/types.js";
 import type { RexService } from "../rex/service.js";
 import type { RexControl, RexEvent } from "../rex/control.js";
-import { CLIENT_ACTIONS, SHORTCUT_ACTIONS, serverShortcut } from "./actions.js";
+import { CLIENT_ACTIONS, SHORTCUT_ACTIONS, serverShortcut } from "../features/actions.js";
 import { ActivityRegistry } from "./activity.js";
 import { KeymapRouter } from "./keymap.js";
 import { normalizeKeymap } from "./keymap-data.js";

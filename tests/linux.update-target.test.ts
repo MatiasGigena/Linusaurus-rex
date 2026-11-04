@@ -10,7 +10,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolveCurrentAppImage } from "../electron/features/update-target.js";
+import { resolveCurrentAppImage } from "../electron/updates/update-target.js";
 
 test("AppImage mount and extract-and-run identities bind updates to their persistent image", () => {
   for (const appDir of [

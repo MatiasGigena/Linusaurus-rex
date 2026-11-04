@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   ActivityRegistry,
   parseActivity,
-} from "../electron/features/activity.js";
+} from "../electron/client/activity.js";
 import {
   CredentialsStore,
   validateCredentials,
@@ -19,12 +19,12 @@ import { parseTheme } from "../electron/features/themes.js";
 import { validateBounds } from "../electron/features/layout.js";
 import { readConfig, writeConfig } from "../electron/features/config.js";
 import { DEFAULT_SETTINGS, type ClientEvent } from "../src/shared/types.js";
-import { KeymapRouter, matchesKey } from "../electron/features/keymap.js";
+import { KeymapRouter, matchesKey } from "../electron/client/keymap.js";
 import {
   desktopAllowed,
   noticeSound,
-} from "../electron/features/notifications.js";
-import { TailscaleNotices } from "../electron/features/tailscale.js";
+} from "../electron/client/notifications.js";
+import { TailscaleNotices } from "../electron/client/tailscale.js";
 import {
   linkDecision,
   validateTrustedLink,

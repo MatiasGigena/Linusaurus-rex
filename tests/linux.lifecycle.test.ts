@@ -8,7 +8,7 @@ import {
   originPatterns,
   validateOrigins,
   withOrigins,
-} from "../electron/features/lifecycle.js";
+} from "../electron/server-management/lifecycle.js";
 import { RexControl } from "../electron/rex/control.js";
 import { RexService } from "../electron/rex/service.js";
 import { DEFAULT_SETTINGS } from "../src/shared/types.js";

@@ -1,5 +1,5 @@
 import type { Host } from "../../src/shared/types.js";
-import { attestLocalRex, type LocalRexIdentity } from "./local-attestation.js";
+import { attestLocalRex, type LocalRexIdentity } from "../server-management/local-attestation.js";
 import { readConfig, writeConfig } from "./config.js";
 import { record, string } from "../settings.js";
 

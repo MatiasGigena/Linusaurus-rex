@@ -39,7 +39,7 @@ import {
   identifier,
   integer,
 } from "./settings.js";
-import { ClientFeatures } from "./features/client.js";
+import { ClientFeatures } from "./client/client.js";
 import { CredentialsStoreCache } from "./features/credentials.js";
 import {
   IntegrationManager,
@@ -49,12 +49,12 @@ import { layoutAction, validateBounds } from "./features/layout.js";
 import { parseTheme } from "./features/themes.js";
 import { isLocalEndpoint } from "./features/config.js";
 import { ConfigurationEditor } from "./features/configuration-editor.js";
-import { UpdateCoordinator } from "./features/update-coordinator.js";
-import { desktopAllowed, noticeSound } from "./features/notifications.js";
-import { LinuxServerManager } from "./features/lifecycle.js";
-import { validateOrigins } from "./features/server-origins.js";
-import { resolveCurrentAppImage } from "./features/update-target.js";
-import { LinuxUpdateManager } from "./features/updates.js";
+import { UpdateCoordinator } from "./updates/update-coordinator.js";
+import { desktopAllowed, noticeSound } from "./client/notifications.js";
+import { LinuxServerManager } from "./server-management/lifecycle.js";
+import { validateOrigins } from "./server-management/server-origins.js";
+import { resolveCurrentAppImage } from "./updates/update-target.js";
+import { LinuxUpdateManager } from "./updates/updates.js";
 import { linkDecision } from "./features/links.js";
 
 type SenderEvent = IpcMainInvokeEvent | IpcMainEvent;

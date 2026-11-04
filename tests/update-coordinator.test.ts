@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { UpdateCoordinator } from "../electron/features/update-coordinator.js";
+import { UpdateCoordinator } from "../electron/updates/update-coordinator.js";
 import {
   DEFAULT_SETTINGS,
   type Settings,
