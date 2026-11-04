@@ -224,6 +224,63 @@ function registerTerminalPresentation(
   };
 }
 
+function registerTerminalSubscription(
+  ref: TerminalRef,
+  session: TerminalCommandSession,
+  writer: TerminalFrameWriter,
+  onRecovered: (hadFrame: boolean) => void,
+  onAcceptedFrame: () => void,
+) {
+  const subscriptionId = crypto.randomUUID();
+  let disposed = false;
+  let sawFrame = false;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  const start = () => {
+    if (!disposed && !session.isDisposed)
+      void window.rex
+        .request("subscribe", { ...ref, subscriptionId })
+        .catch(session.fail);
+  };
+  const unsubscribe = window.rex.onTerminal((frame) => {
+    if (
+      disposed ||
+      session.isDisposed ||
+      frame.subscriptionId !== subscriptionId
+    )
+      return;
+    if (frame.error) {
+      session.fail(frame.error);
+      return;
+    }
+    if (frame.data === undefined && frame.kind !== "resize") return;
+    if (session.receiveFrame()) onRecovered(sawFrame);
+    sawFrame = true;
+    if (!frame.kind || frame.kind === "snapshot") session.beginSnapshot();
+    if (!writer.enqueue(frame, session.frameGeneration)) {
+      session.fail(
+        "Output exceeded the rendering buffer; resynchronizing with Rex.",
+      );
+      void window.rex
+        .request("unsubscribe", { subscriptionId })
+        .catch(() => {})
+        .finally(() => {
+          if (!disposed && !session.isDisposed)
+            retryTimer = setTimeout(start, 250);
+        });
+      return;
+    }
+    onAcceptedFrame();
+  });
+  start();
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    clearTimeout(retryTimer);
+    unsubscribe();
+    void window.rex.request("unsubscribe", { subscriptionId }).catch(() => {});
+  };
+}
+
 interface TerminalCommandBindings {
   runtime: TerminalRuntime;
   ref: TerminalRef;
@@ -440,17 +497,8 @@ export function TerminalPane(props: TerminalPaneProps) {
       onError: (failure) => setError(`Resize failed: ${displayError(failure)}`),
     });
     viewportRef.current = viewport;
-    let sawFrame = false;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const ref = { hostId, sessionId, blockId };
-    const subscriptionId = crypto.randomUUID();
     const enqueue = (send: () => Promise<unknown>) => session.enqueue(send);
-    const startSubscription = () => {
-      if (!session.isDisposed)
-        void window.rex
-          .request("subscribe", { ...ref, subscriptionId })
-          .catch(session.fail);
-    };
     const writer = new TerminalFrameWriter(runtime, {
       scrollOnOutput: () => settingsRef.current.scrollOnOutput,
       error: (failure, source) => {
@@ -492,46 +540,33 @@ export function TerminalPane(props: TerminalPaneProps) {
       onError: session.reportError,
       onMenu: setMenu,
     });
-    const unsubscribe = window.rex.onTerminal((frame) => {
-      if (session.isDisposed || frame.subscriptionId !== subscriptionId) return;
-      if (frame.error) {
-        session.fail(frame.error);
-        return;
-      }
-      if (frame.data === undefined && frame.kind !== "resize") return;
-      const recovered = session.receiveFrame();
-      if (recovered) input.reset();
-      if (recovered && callbacks.current.focused)
-        enqueue(() =>
-          window.rex.request("focusEvent", { ...ref, focused: true }),
-        );
-      if (recovered && isVisible()) {
-        if (sawFrame) runtime.serverThemeSignature = undefined;
-        synchronizeTheme(runtime, ref, settingsRef.current, (message) => {
-          if (!session.isDisposed) setError(message);
-        });
-      }
-      sawFrame = true;
-      if (!frame.kind || frame.kind === "snapshot") session.beginSnapshot();
-      if (!writer.enqueue(frame, session.frameGeneration)) {
-        session.fail(
-          "Output exceeded the rendering buffer; resynchronizing with Rex.",
-        );
-        void window.rex
-          .request("unsubscribe", { subscriptionId })
-          .catch(() => {})
-          .finally(() => {
-            retryTimer = setTimeout(startSubscription, 250);
+    viewport.start();
+    const disposeSubscription = registerTerminalSubscription(
+      ref,
+      session,
+      writer,
+      (hadFrame) => {
+        input.reset();
+        if (callbacks.current.focused)
+          enqueue(() =>
+            window.rex.request("focusEvent", { ...ref, focused: true }),
+          );
+        if (isVisible()) {
+          if (hadFrame) runtime.serverThemeSignature = undefined;
+          synchronizeTheme(runtime, ref, settingsRef.current, (message) => {
+            if (!session.isDisposed) setError(message);
           });
-        return;
-      }
-      if (
-        callbacks.current.focused &&
-        isVisible() &&
-        document.activeElement === document.body
-      )
-        term.focus();
-    });
+        }
+      },
+      () => {
+        if (
+          callbacks.current.focused &&
+          isVisible() &&
+          document.activeElement === document.body
+        )
+          term.focus();
+      },
+    );
     commandRef.current = (command) => {
       void commands.execute(command).catch(() => {});
     };
@@ -573,13 +608,10 @@ export function TerminalPane(props: TerminalPaneProps) {
       if (show) commandRegistration.activate();
     };
     runtime.visibilityChanged = visibilityChanged;
-    viewport.start();
-    startSubscription();
     return () => {
       session.dispose();
-      clearTimeout(retryTimer);
       viewport.dispose();
-      unsubscribe();
+      disposeSubscription();
       disposePresentation();
       input.dispose();
       titleListener.dispose();
@@ -587,9 +619,6 @@ export function TerminalPane(props: TerminalPaneProps) {
       resultsListener.dispose();
       commandRegistration.dispose();
       writer.dispose();
-      void window.rex
-        .request("unsubscribe", { subscriptionId })
-        .catch(() => {});
       releaseTerminal(runtime);
       if (runtimeRef.current === runtime) runtimeRef.current = undefined;
       if (viewportRef.current === viewport) viewportRef.current = undefined;
