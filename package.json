@@ -16,6 +16,7 @@
     "test": "tsx --test tests/*.test.ts",
     "test:integration": "REX_INTEGRATION=1 tsx --test tests/rex.integration.test.ts tests/features.integration.test.ts",
     "test:ui": "npm run build && node scripts/test-desktop.mjs smoke",
+    "test:boundary": "npm run build && node scripts/test-desktop.mjs --isolated-rex boundary",
     "start": "electron .",
     "package": "npm run build && electron-builder --linux AppImage deb --publish never",
     "package:dir": "npm run build && electron-builder --linux dir --publish never",

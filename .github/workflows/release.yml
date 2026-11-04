@@ -61,11 +61,40 @@ jobs:
         run: npm ci
 
       - name: Run automated tests
-        # Installed-Rex and graphical fixtures are opt-in and run locally.
         run: npm test
+
+      - name: Install graphical test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes xvfb xauth
+          npx playwright install --with-deps chromium
+
+      - name: Run browser behavior and pixel tests
+        shell: bash
+        run: |
+          chromium_path=$(node --input-type=module -e 'import { chromium } from "@playwright/test"; console.log(chromium.executablePath())')
+          CHROMIUM_PATH="$chromium_path" npm run test:terminal
+
+      - name: Fetch pinned Rex test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          rex_tools="$RUNNER_TEMP/rex-test-runtime"
+          mkdir -p "$rex_tools"
+          curl --fail --location --retry 3 \
+            https://blob.superlogical.com/download/rex/snapshot/d018d2de8cc31281265906a4648ec9cae8d2f4c5/rex-linux-amd64.tar.gz \
+            --output "$rex_tools/rex.tar.gz"
+          echo "3d664c120300d726934a2939d09ccd2aa7ebd880ad85e610cda4338dafea8152  $rex_tools/rex.tar.gz" | sha256sum --check -
+          tar --extract --gzip --file "$rex_tools/rex.tar.gz" --directory "$rex_tools" rex
+          "$rex_tools/rex" version
+          echo "$rex_tools" >> "$GITHUB_PATH"
+          echo "REX_EXECUTABLE=$rex_tools/rex" >> "$GITHUB_ENV"
 
       - name: Build x86-64 AppImage and Debian package
         run: npm run package -- --x64
+
+      - name: Run isolated Electron smoke and authorization tests
+        run: node scripts/test-desktop.mjs --isolated-rex smoke boundary
 
       - name: Normalize asset names and verify checksums
         shell: bash
