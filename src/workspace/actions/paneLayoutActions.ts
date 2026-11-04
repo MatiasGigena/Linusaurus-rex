@@ -1,10 +1,36 @@
-import type { RexPane, LayoutActionArgs } from "../../shared/types";
+import type { RexPane, LayoutActionArgs, RexMethods } from "../../shared/types";
 import { adjacentPane } from "../../core/workspace";
 import {
   UNHANDLED,
   type PaneLayoutActionsDependencies,
   type PaneLayoutActionsTarget,
 } from "./context";
+
+type FocusDirection = "left" | "right" | "up" | "down";
+type MoveDirection = RexMethods["movePane"]["args"]["direction"];
+
+function focusDirection(value: unknown): FocusDirection {
+  if (
+    value === "left" ||
+    value === "right" ||
+    value === "up" ||
+    value === "down"
+  )
+    return value;
+  throw new Error("Use left, right, up or down for the pane direction.");
+}
+function moveDirection(value: unknown): MoveDirection {
+  if (value === "up") return "above";
+  if (value === "down") return "below";
+  if (
+    value === "left" ||
+    value === "right" ||
+    value === "above" ||
+    value === "below"
+  )
+    return value;
+  throw new Error("Use left, right, above or below for the pane direction.");
+}
 
 export function createPaneLayoutActions(
   dependencies: PaneLayoutActionsDependencies,
@@ -42,19 +68,14 @@ export function createPaneLayoutActions(
               1.4
             ? "right"
             : "below";
-        const directions: Record<string, "left" | "right" | "above" | "below"> =
-          {
-            left: "left",
-            right: "right",
-            up: "above",
-            down: "below",
-            above: "above",
-            below: "below",
-            auto,
-          };
+        const requested =
+          args.direction === undefined
+            ? name === "pane.split"
+              ? "right"
+              : name.split(".").at(-1)
+            : args.direction;
         const direction =
-          directions[String(args.direction || name.split(".").at(-1))] ||
-          "right";
+          requested === "auto" ? auto : moveDirection(requested);
         const completed = await workspace.mutateSession(
           { hostId, sessionId },
           async () => {
@@ -80,7 +101,11 @@ export function createPaneLayoutActions(
       case "pane.focus_next":
       case "pane.focus_previous": {
         if (!currentWindow) return;
-        if (name === "pane.focus" && !args.block_id && !args.direction) {
+        if (
+          name === "pane.focus" &&
+          !args.block_id &&
+          args.direction === undefined
+        ) {
           setForm({
             title: "Focus pane",
             description: "Choose the pane by its block ID.",
@@ -115,7 +140,11 @@ export function createPaneLayoutActions(
           target = adjacentPane(
             currentWindow.panes,
             blockId,
-            String(args.direction || name.split(".").at(-1)) as "left",
+            focusDirection(
+              args.direction === undefined
+                ? name.split(".").at(-1)
+                : args.direction,
+            ),
           );
         if (target)
           return workspace.focusPane({ hostId, sessionId, blockId: target.id });
@@ -128,20 +157,40 @@ export function createPaneLayoutActions(
       case "pane.move.down": {
         requirePane();
         if (!currentWindow) return;
-        const direction = String(args.direction || name.split(".").at(-1));
+        const requested =
+          args.direction === undefined
+            ? name === "pane.move"
+              ? undefined
+              : name.split(".").at(-1)
+            : args.direction;
+        const direction =
+          requested === undefined ? undefined : moveDirection(requested);
         const target = args.anchor_id
           ? currentWindow.panes.find(
               (pane) => pane.id === String(args.anchor_id),
             )
-          : ["left", "right", "up", "down"].includes(direction)
-            ? adjacentPane(currentWindow.panes, blockId, direction as "left")
+          : direction
+            ? adjacentPane(
+                currentWindow.panes,
+                blockId,
+                direction === "above"
+                  ? "up"
+                  : direction === "below"
+                    ? "down"
+                    : direction,
+              )
             : undefined;
-        if (!target) {
+        if (!target || !direction) {
           setForm({
             title: "Move pane",
             description: "Choose the destination pane and a direction.",
             fields: [
-              { name: "anchor", label: "Destination pane ID", required: true },
+              {
+                name: "anchor",
+                label: "Destination pane ID",
+                value: target?.id,
+                required: true,
+              },
               {
                 name: "direction",
                 label: "Direction",
@@ -150,15 +199,12 @@ export function createPaneLayoutActions(
               },
             ],
             submit: async (values) => {
-              if (
-                !["left", "right", "above", "below"].includes(values.direction)
-              )
-                throw new Error("Use left, right, above or below.");
+              const direction = moveDirection(values.direction);
               await workspace.run(hostId, () =>
                 window.rex.request("movePane", {
                   ...terminalRef,
                   anchorBlockId: values.anchor,
-                  direction: values.direction as "right",
+                  direction,
                 }),
               );
             },
@@ -169,10 +215,7 @@ export function createPaneLayoutActions(
           window.rex.request("movePane", {
             ...terminalRef,
             anchorBlockId: target.id,
-            direction:
-              (({ up: "above", down: "below" } as Record<string, string>)[
-                direction
-              ] as "above") || (direction as "right"),
+            direction,
           }),
         );
       }

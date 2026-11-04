@@ -9,7 +9,10 @@ import type {
   Form,
   WorkspaceActionOptions,
 } from "../src/workspace/actions/context.js";
-import { terminalCommands } from "../src/terminal/commands.js";
+import {
+  terminalCommands,
+  type TerminalCommandCompletion,
+} from "../src/terminal/commands.js";
 import {
   DEFAULT_SETTINGS,
   type ClientEvent,
@@ -111,6 +114,9 @@ function fixture(t: TestContext) {
     renameSession: async () => {},
     newWindow: async () => {},
     resizeWindow: async () => {},
+    movePane: async () => {},
+    creators: async () => ({}),
+    createBlock: async () => ({}),
     removeCredentials: async () => {},
     invokeAction: async () => ({ accepted: true }),
   };
@@ -245,6 +251,7 @@ function fixture(t: TestContext) {
     saved,
     inspections,
     timeline,
+    responders,
     execute: (
       name: string,
       args?: Record<string, unknown>,
@@ -284,6 +291,113 @@ test("remote host-only mutations cannot borrow the displayed local session or pa
     /Choose a session first/,
   );
   assert.deepEqual(current.requests, []);
+});
+
+test("pane closure reports balancing as partial failure without suggesting another close", async (t) => {
+  const current = fixture(t);
+  current.settings.set({ ...current.settings.get(), autobalanceSplits: true });
+  const failure = new Error("balance permission denied");
+  current.responders.layoutAction = async () => {
+    throw failure;
+  };
+  await current.execute("pane.close");
+  assert.equal(current.requests.length, 0);
+  const confirmation = current.confirmation.get();
+  assert.ok(confirmation);
+  await assert.rejects(confirmation.submit(), (error) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /pane closed.*balanc.*failed/i);
+    assert.equal(error.cause, failure);
+    return true;
+  });
+  assert.deepEqual(
+    current.requests.map((request) => request.method),
+    ["closePane", "layoutAction"],
+  );
+});
+
+test("closing the last pane does not balance a pane that no longer exists", async (t) => {
+  const current = fixture(t);
+  current.settings.set({ ...current.settings.get(), autobalanceSplits: true });
+  const window = current.views["local/local-session"].windows[0];
+  window.panes = window.panes.filter(
+    (pane) => pane.id === "local-session-right",
+  );
+  await current.execute("pane.close");
+  const confirmation = current.confirmation.get();
+  assert.ok(confirmation);
+  await confirmation.submit();
+  assert.deepEqual(
+    current.requests.map((request) => request.method),
+    ["closePane"],
+  );
+});
+
+test("dynamic pane directions are validated before focus or mutation", async (t) => {
+  for (const [name, direction] of [
+    ["pane.focus", "diagonal"],
+    ["pane.move", "diagonal"],
+    ["pane.split", "diagonal"],
+    ["pane.focus", null],
+    ["pane.split", {}],
+  ]) {
+    await t.test(`${name}: ${JSON.stringify(direction)}`, async (t) => {
+      const current = fixture(t);
+      await assert.rejects(
+        current.execute(String(name), {
+          direction,
+          anchor_id: "local-session-left",
+        }),
+        /direction|Use left/i,
+      );
+      assert.deepEqual(current.requests, []);
+      assert.deepEqual(current.selections, []);
+    });
+  }
+});
+
+test("direct and form pane movement share direction normalization", async (t) => {
+  const current = fixture(t);
+  await current.execute("pane.move", {
+    anchor_id: "local-session-left",
+    direction: "up",
+  });
+  assert.equal(
+    (current.requests.at(-1)?.args as RexMethods["movePane"]["args"]).direction,
+    "above",
+  );
+  await current.execute("pane.move");
+  const form = current.form.get();
+  assert.ok(form);
+  await form.submit({ anchor: "local-session-left", direction: "down" });
+  assert.equal(
+    (current.requests.at(-1)?.args as RexMethods["movePane"]["args"]).direction,
+    "below",
+  );
+});
+
+test("block options require a JSON object before the creation RPC", async (t) => {
+  const current = fixture(t);
+  await current.execute("pane.new_block");
+  const form = current.form.get();
+  assert.ok(form);
+  for (const options of ["null", "[]", '"text"', "42"]) {
+    await assert.rejects(
+      form.submit({ flavor: "example.block", options }),
+      /JSON object/,
+    );
+  }
+  assert.equal(
+    current.requests.filter((request) => request.method === "createBlock")
+      .length,
+    0,
+  );
+  await form.submit({ flavor: "example.block", options: '{"count":2}' });
+  assert.deepEqual(
+    (current.requests.at(-1)?.args as RexMethods["createBlock"]["args"])
+      .options,
+    { count: 2 },
+  );
 });
 
 test("aliases and remote events retain explicit targets without borrowing a local window", async (t) => {
@@ -327,16 +441,17 @@ test("aliases and remote events retain explicit targets without borrowing a loca
       },
     });
   }
-  await current.execute(
-    "split-right",
-    {
-      host_id: "local",
-      session_id: "local-session",
-      block_id: "local-session-left",
-      ratio: 0.4,
-    },
-    event,
+  const localSplit = {
+    host_id: "local",
+    session_id: "local-session",
+    block_id: "local-session-left",
+    ratio: 0.4,
+  };
+  await assert.rejects(
+    current.execute("split-right", localSplit, event),
+    /another host/,
   );
+  await current.execute("split-right", localSplit);
   assert.deepEqual(current.requests.at(-1), {
     method: "split",
     args: {
@@ -498,6 +613,67 @@ test("new-tab fallback prompts for a session on the requested host before creati
   ]);
   assert.equal(current.selections.at(-1)?.hostId, "remote");
   assert.equal(current.selections.at(-1)?.sessionId, "created");
+});
+
+test("only source-bound paste uses queued terminal completion and conflicting sources never reach an executor", async (t) => {
+  const current = fixture(t);
+  const received: {
+    hostId: string;
+    command: string;
+    completion: TerminalCommandCompletion;
+  }[] = [];
+  const registrations = ["local", "remote"].map((hostId) =>
+    terminalCommands.register(
+      {
+        hostId,
+        sessionId: `${hostId}-session`,
+        blockId: `${hostId}-session-right`,
+      },
+      {
+        available: () => true,
+        focused: () => hostId === "local",
+        execute: async (command, _signal, completion) => {
+          received.push({ hostId, command, completion });
+        },
+        onError: () => {},
+      },
+    ),
+  );
+  t.after(() =>
+    registrations.forEach((registration) => registration.dispose()),
+  );
+  const source: ClientEvent = {
+    type: "action",
+    requestId: "server-paste",
+    name: "client.paste",
+    args: {},
+    hostId: "remote",
+    sessionId: "remote-session",
+    blockId: "remote-session-right",
+  };
+  // The legacy spelling must receive the same policy as the canonical action.
+  await current.execute("paste", {}, source);
+  const localTarget = {
+    host_id: "local",
+    session_id: "local-session",
+    block_id: "local-session-right",
+  };
+  await current.execute("client.paste", localTarget);
+  await current.execute("client.copy", {}, { ...source, name: "client.copy" });
+  await assert.rejects(
+    current.execute("client.paste", localTarget, source),
+    /another host/,
+  );
+  assert.deepEqual(received, [
+    { hostId: "remote", command: "paste", completion: "queued" },
+    { hostId: "local", command: "paste", completion: "settled" },
+    { hostId: "remote", command: "copy", completion: "settled" },
+  ]);
+  assert.deepEqual(
+    current.requests,
+    [],
+    "Rejected source overrides cannot fall through to a bridge RPC",
+  );
 });
 
 test("settings actions preserve unrelated state and unknown commands require an advertised server action", async (t) => {

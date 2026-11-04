@@ -1,4 +1,6 @@
 import type { PaneDivider } from "../../shared/types";
+import { errorMessage } from "../../core/workspace";
+import { parseMethodArgs } from "../../terminal/blocks";
 import {
   UNHANDLED,
   type PaneActionsDependencies,
@@ -38,17 +40,24 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
           "Close this pane?",
           "This terminal and its running program will close on the Rex server.",
           async () => {
+            const remaining = currentWindow?.panes.find(
+              (pane) => pane.id !== blockId,
+            );
             await window.rex.request("closePane", terminalRef);
-            if (settings.autobalanceSplits && currentWindow?.panes[0])
-              await window.rex
-                .request("layoutAction", {
+            if (settings.autobalanceSplits && remaining) {
+              try {
+                await window.rex.request("layoutAction", {
                   ...terminalRef,
-                  blockId:
-                    currentWindow.panes.find((pane) => pane.id !== blockId)
-                      ?.id || blockId,
+                  blockId: remaining.id,
                   operation: "balance",
-                })
-                .catch(() => {});
+                });
+              } catch (failure) {
+                throw new Error(
+                  `The pane closed, but balancing the remaining panes failed: ${errorMessage(failure)} Refresh the layout to check the result; do not repeat the closure.`,
+                  { cause: failure },
+                );
+              }
+            }
           },
         );
         return;
@@ -200,14 +209,14 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
         return localCommand("prompt-previous");
       case "client.prompt.next":
         return localCommand("prompt-next");
-      case "clear-content-server":
+      case "pane.clear_content":
       case "clear-scrollback-server":
         requirePane();
         return window.rex.request("invokeAction", {
           ...terminalRef,
           action: "com.superlogical.terminal.clear",
         });
-      case "reset-terminal":
+      case "pane.reset_terminal":
         requirePane();
         setConfirmation({
           title: "Reset terminal?",
@@ -252,7 +261,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
                 sessionId,
                 windowId: currentWindow?.id,
                 flavor: values.flavor,
-                options: JSON.parse(values.options || "{}"),
+                options: parseMethodArgs(values.options || "{}"),
               }),
             );
           },
