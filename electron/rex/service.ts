@@ -86,7 +86,8 @@ export class RexService {
     await this.call(host, 'session.close_window', { session_id: sessionId, window_id: windowId });
   }
 
-  async split(host: RexHost, sessionId: string, blockId: string, direction: 'right' | 'below' | 'left' | 'above', cwd?: string, ratio?: number, command?: string) {
+  async split(host: RexHost, sessionId: string, blockId: string, direction: 'right' | 'below' | 'left' | 'above', options: { cwd?: string; ratio?: number; command?: string } = {}) {
+    const { cwd, ratio, command } = options;
     await this.call(host, 'session.new_split', {
       session_id: sessionId, anchor_id: blockId, direction: ['below', 'above'].includes(direction) ? 'vertical' : 'horizontal',
       side: ['left', 'above'].includes(direction) ? 'before' : 'after', layout: shellLayout(cwd, command), focus: true, ...(ratio !== undefined ? { ratio } : {}),

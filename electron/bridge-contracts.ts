@@ -1,0 +1,98 @@
+import type {
+  LayoutActionArgs,
+  PathPickerArgs,
+  RendererContext,
+} from "../src/shared/types.js";
+import { identifier, record, string } from "./settings.js";
+
+/** Validate the same operation-dependent requirements exposed by the preload types. */
+export function parseLayoutAction(
+  args: Record<string, unknown>,
+): LayoutActionArgs {
+  const operation = identifier(args.operation, "layout operation");
+  if (operation === "moveToTab") {
+    if (args.layerId !== undefined)
+      throw new Error("Moving to a tab cannot specify a floating layer.");
+    return {
+      operation,
+      targetWindowId: identifier(args.targetWindowId, "destination tab"),
+    };
+  }
+  if (operation === "minimize" || operation === "restore") {
+    if (args.targetWindowId !== undefined)
+      throw new Error(
+        "Floating layer operations cannot specify a destination tab.",
+      );
+    return { operation, layerId: identifier(args.layerId, "floating pane ID") };
+  }
+  if (!["float", "balance", "moveToNewTab"].includes(operation))
+    throw new Error("Unsupported layout operation.");
+  if (args.layerId !== undefined || args.targetWindowId !== undefined)
+    throw new Error(
+      "This layout operation does not accept a layer or destination tab.",
+    );
+  return { operation: operation as "float" | "balance" | "moveToNewTab" };
+}
+
+export function parsePathPicker(args: Record<string, unknown>): PathPickerArgs {
+  if (args.save !== undefined && typeof args.save !== "boolean")
+    throw new Error("Invalid save operation.");
+  const defaultPath =
+    args.defaultPath === undefined
+      ? undefined
+      : string(args.defaultPath, "default path");
+  if (args.save === true) {
+    if (args.directory !== undefined)
+      throw new Error("Saving content cannot select a directory.");
+    return {
+      save: true,
+      defaultPath,
+      ...(args.content === undefined
+        ? {}
+        : {
+            content: string(
+              args.content,
+              "export content",
+              32 * 1024 * 1024,
+              true,
+            ),
+          }),
+    };
+  }
+  if (args.content !== undefined)
+    throw new Error("Export content requires a save operation.");
+  if (args.directory !== undefined && typeof args.directory !== "boolean")
+    throw new Error("Invalid directory selection.");
+  return { save: false, directory: args.directory, defaultPath };
+}
+
+export function updateRendererContext(
+  previous: RendererContext,
+  args: Record<string, unknown>,
+): RendererContext {
+  const next = { ...previous };
+  for (const key of ["visible", "uiBusy"] as const) {
+    if (args[key] === undefined) continue;
+    if (typeof args[key] !== "boolean")
+      throw new Error(`Invalid renderer ${key}.`);
+    next[key] = args[key];
+  }
+  if (args.selection === null) next.selection = null;
+  else if (args.selection !== undefined) {
+    const selection = record(args.selection);
+    next.selection = {
+      hostId: identifier(selection.hostId, "selected host"),
+      sessionId: string(selection.sessionId, "selected session", 256),
+      windowId: string(selection.windowId, "selected tab", 256),
+      ...(selection.blockId === undefined
+        ? {}
+        : { blockId: identifier(selection.blockId, "selected pane") }),
+    };
+    if (
+      !next.selection.sessionId &&
+      (next.selection.windowId || next.selection.blockId)
+    )
+      throw new Error("An empty host selection cannot contain a tab or pane.");
+  }
+  return next;
+}

@@ -48,6 +48,32 @@ export interface Selection {
   windowId: string;
   blockId?: string;
 }
+/** Selection is a snapshot; omitted fields in context updates are independent patches. */
+export interface RendererContext {
+  selection?: Selection | null;
+  visible?: boolean;
+  uiBusy?: boolean;
+}
+export type LayoutActionArgs =
+  | { operation: "moveToTab"; targetWindowId: string; layerId?: never }
+  | {
+      operation: "minimize" | "restore";
+      layerId: string;
+      targetWindowId?: never;
+    }
+  | {
+      operation: "balance" | "float" | "moveToNewTab";
+      targetWindowId?: never;
+      layerId?: never;
+    };
+export type PathPickerArgs =
+  | { save: true; content?: string; directory?: never; defaultPath?: string }
+  | {
+      save?: false;
+      directory?: boolean;
+      content?: never;
+      defaultPath?: string;
+    };
 export interface NotificationChannel {
   tabs: boolean;
   desktop: boolean;
@@ -474,17 +500,7 @@ export interface RexMethods {
   };
   swapPanes: { args: TerminalRef & { otherBlockId: string }; result: void };
   layoutAction: {
-    args: TerminalRef & {
-      operation:
-        | "balance"
-        | "float"
-        | "minimize"
-        | "restore"
-        | "moveToNewTab"
-        | "moveToTab";
-      targetWindowId?: string;
-      layerId?: string;
-    };
+    args: TerminalRef & LayoutActionArgs;
     result: unknown;
   };
   resizeLayer: {
@@ -558,11 +574,7 @@ export interface RexMethods {
   };
   removeCredentials: { args: { hostId: string }; result: void };
   setContext: {
-    args: Partial<Selection> & {
-      blockId?: string;
-      visible?: boolean;
-      uiBusy?: boolean;
-    };
+    args: RendererContext;
     result: void;
   };
   openExternal: { args: { url: string }; result: void };
@@ -592,12 +604,7 @@ export interface RexMethods {
     result: Record<string, string> | null;
   };
   pickPath: {
-    args: {
-      directory?: boolean;
-      save?: boolean;
-      content?: string;
-      defaultPath?: string;
-    };
+    args: PathPickerArgs;
     result: string | null;
   };
   resizeWindow: { args: { deltaWidth: number }; result: void };
