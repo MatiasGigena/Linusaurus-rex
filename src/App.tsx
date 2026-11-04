@@ -69,7 +69,7 @@ export default function App() {
       : undefined;
   const [updateState, setUpdateState] = useState<UpdateState>();
   const [connectionRevisions, setConnectionRevisions] = useState<
-    Record<string, number>
+    Partial<Record<string, number>>
   >({});
   const [menu, setMenu] = useState<Menu>();
   const [activityOpen, setActivityOpen] = useState(false);
