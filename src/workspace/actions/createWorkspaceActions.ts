@@ -69,7 +69,6 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
       setConfirmation: options.setConfirmation,
       setForm: options.setForm,
       setDirectoryBrowser: options.setDirectoryBrowser,
-      setReport: options.setReport,
       requestClose,
     }),
     createPaneLayoutActions({

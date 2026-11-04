@@ -194,7 +194,6 @@ export default function App() {
     setActivityOpen,
     setActivityGroup,
     setDirectoryBrowser,
-    setReport,
     onError: ws.setError,
   });
 

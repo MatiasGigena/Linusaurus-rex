@@ -232,7 +232,6 @@ function fixture(t: TestContext) {
     setActivityOpen: discard,
     setActivityGroup: discard,
     setDirectoryBrowser: discard,
-    setReport: discard,
     onError: discard,
   };
   return {
@@ -330,6 +329,29 @@ test("closing the last pane does not balance a pane that no longer exists", asyn
   assert.deepEqual(
     current.requests.map((request) => request.method),
     ["closePane"],
+  );
+});
+
+test("block creation presents advertised flavors before creating the chosen block", async (t) => {
+  const current = fixture(t);
+  current.responders.creators = async () => ({
+    creators: [
+      {
+        name: "example",
+        flavors: [{ flavor: "example.chart" }, { flavor: "example.notes" }],
+      },
+      { name: "invalid", flavors: [null, { flavor: 42 }] },
+    ],
+  });
+  await current.execute("pane.new_block");
+  const form = current.form.get();
+  assert.ok(form);
+  assert.match(form.description ?? "", /example\.chart/);
+  assert.match(form.description ?? "", /example\.notes/);
+  assert.equal(
+    current.requests.length,
+    1,
+    "choosing a type must not create a block",
   );
 });
 

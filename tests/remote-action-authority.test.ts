@@ -120,7 +120,6 @@ function fixture(t: TestContext) {
     setActivityOpen: discard,
     setActivityGroup: discard,
     setDirectoryBrowser: discard,
-    setReport: discard,
     onError: discard,
   });
   let incoming: ((event: RexEvent) => void) | undefined;

@@ -17,7 +17,6 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
       setConfirmation,
       setForm,
       setDirectoryBrowser,
-      setReport,
       requestClose,
     } = dependencies;
     const {
@@ -237,14 +236,33 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
         return localCommand("paste");
       case "pane.new_block": {
         const creators = await window.rex.request("creators", { hostId });
-        setReport({
-          title: "Available block types",
-          body: JSON.stringify(creators, null, 2),
-        });
+        const advertisedCreators =
+          creators && typeof creators === "object" && "creators" in creators
+            ? creators.creators
+            : undefined;
+        const flavors = Array.isArray(advertisedCreators)
+          ? advertisedCreators.flatMap((creator: unknown): string[] => {
+              if (
+                !creator ||
+                typeof creator !== "object" ||
+                !("flavors" in creator) ||
+                !Array.isArray(creator.flavors)
+              )
+                return [];
+              return creator.flavors.flatMap((item: unknown): string[] =>
+                item &&
+                typeof item === "object" &&
+                "flavor" in item &&
+                typeof item.flavor === "string"
+                  ? [item.flavor]
+                  : [],
+              );
+            })
+          : [];
+        const advertised = [...new Set(flavors)];
         setForm({
           title: "Create block",
-          description:
-            "Choose a flavor advertised by this Rex server. Non-terminal blocks expose their available methods in the inspector.",
+          description: `${advertised.length ? `Available flavors: ${advertised.join(", ")}.` : "This server has not advertised any block flavors."} Non-terminal blocks expose their available methods in the inspector.`,
           fields: [
             { name: "flavor", label: "Block flavor", required: true },
             {
@@ -266,7 +284,6 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
             );
           },
         });
-        setReport(undefined);
         return;
       }
       default:

@@ -59,7 +59,6 @@ export interface WorkspaceActionOptions {
   setDirectoryBrowser: StateSetter<
     { mode: "insert" | "directory"; ref: TerminalRef } | undefined
   >;
-  setReport: StateSetter<{ title: string; body: string } | undefined>;
   onError(message: string): void;
 }
 export interface ResolvedCommand {
@@ -131,7 +130,7 @@ export type PaneActionsTarget = Pick<
 >;
 export type PaneActionsDependencies = Pick<
   WorkspaceActionOptions,
-  "setConfirmation" | "setForm" | "setDirectoryBrowser" | "setReport"
+  "setConfirmation" | "setForm" | "setDirectoryBrowser"
 > & {
   workspace: Pick<WorkspaceOperations, "run">;
   settings: Settings;
