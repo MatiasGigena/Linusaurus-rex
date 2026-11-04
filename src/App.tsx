@@ -2124,6 +2124,7 @@ export default function App() {
           onNewWindow={() => dispatch("client.tab.new")}
           onZoom={() => dispatch("pane.zoom")}
           zoomed={!!activeWindow?.zoomedBlockId}
+          canZoom={!macChrome || (activeWindow?.panes.length ?? 0) > 1}
           onCloseWindow={() => dispatch("client.tab.close")}
           onPalette={() => setPalette("all")}
           onSettings={() => setSettingsTab("appearance")}

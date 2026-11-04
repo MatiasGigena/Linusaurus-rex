@@ -16,6 +16,8 @@ export interface ToolbarProps {
   onSettings: () => void;
   disabled?: boolean;
   zoomed?: boolean;
+  /** False hides "Maximize pane" while there is nothing to maximize (macOS theme). */
+  canZoom?: boolean;
   onRename?: () => void;
   onRenameWindow?: () => void;
   onClosePane?: () => void;
@@ -46,7 +48,7 @@ export function Toolbar(props: ToolbarProps) {
       <IconButton label="New terminal" shortcut="Ctrl Shift T" onClick={props.onNewWindow} disabled={props.disabled}><Plus size={18} /></IconButton>
       <IconButton label="Split right" shortcut="Ctrl Shift D" onClick={() => props.onSplit('right')} disabled={props.disabled}><Columns2 size={17} /></IconButton>
       <IconButton label="Split below" shortcut="Ctrl Shift Alt D" onClick={() => props.onSplit('below')} disabled={props.disabled}><Rows2 size={17} /></IconButton>
-      <IconButton label={props.zoomed ? 'Restore panes' : 'Maximize pane'} shortcut="Ctrl Shift Enter" onClick={props.onZoom} disabled={props.disabled} active={props.zoomed}><Maximize2 size={16} /></IconButton>
+      {(props.canZoom !== false || props.zoomed) && <IconButton label={props.zoomed ? 'Restore panes' : 'Maximize pane'} shortcut="Ctrl Shift Enter" onClick={props.onZoom} disabled={props.disabled} active={props.zoomed}><Maximize2 size={16} /></IconButton>}
       <span className="toolbar-divider" />
       <IconButton label="Command palette" shortcut="Ctrl Shift P" onClick={props.onPalette} className="toolbar-palette"><Command size={17} /></IconButton>
       <IconButton label="Settings" onClick={props.onSettings} className="toolbar-settings"><Settings2 size={17} /></IconButton>
