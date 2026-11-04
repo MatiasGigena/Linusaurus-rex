@@ -18,6 +18,7 @@ export function registerTerminalViewport(options: ViewportOptions) {
   let resizeTimer: ReturnType<typeof setTimeout> | undefined;
   let resizeAnimation = 0;
   let lastSize = "";
+  let resizeRevision = 0;
   const canMeasure = () =>
     !disposed &&
     options.visible() &&
@@ -29,10 +30,11 @@ export function registerTerminalViewport(options: ViewportOptions) {
     const size = `${term.cols}/${term.rows}`;
     if (size === lastSize) return;
     lastSize = size;
+    const revision = ++resizeRevision;
     void window.rex
       .request("resize", { ...ref, cols: term.cols, rows: term.rows })
       .catch((failure: unknown) => {
-        if (disposed) return;
+        if (disposed || revision !== resizeRevision) return;
         lastSize = "";
         options.onError(failure);
       });
@@ -85,6 +87,7 @@ export function registerTerminalViewport(options: ViewportOptions) {
       if (disposed) return;
       if (show) refresh();
       else {
+        resizeRevision++;
         cancelPending();
         void window.rex.request("releaseViewport", ref).catch(() => {});
       }

@@ -62,6 +62,8 @@ function registerKeyboard(options: TerminalInputOptions) {
     nativeTextUntil = 0;
   let layout: ReadonlyMap<string, string> | undefined;
   const pressedKeys = new Set<string>();
+  const nativeSequenceActive = () =>
+    composing || deadKey || performance.now() < nativeTextUntil;
   const dataListener = term.onData((data) => {
     // Rex's Ghostty already answered terminal queries. Only native IME/dead-key
     // text enters this path; keys, paste, mouse and focus use typed events.
@@ -74,6 +76,8 @@ function registerKeyboard(options: TerminalInputOptions) {
   term.attachCustomKeyEventHandler((event) => {
     if (event.defaultPrevented || !isVisible() || !isOnline()) return false;
     if (isCompositionKey(event) || composing || deadKey) {
+      // A reset revokes the old native sequence, including its late keyup.
+      if (event.type !== "keydown" && !nativeSequenceActive()) return false;
       nativeTextUntil = performance.now() + NATIVE_TEXT_GRACE_MS;
       if (event.key === "Dead") deadKey = true;
       else if (event.type === "keyup") deadKey = false;
@@ -92,15 +96,27 @@ function registerKeyboard(options: TerminalInputOptions) {
     return false;
   });
   const compositionStart = () => {
+    if (!isVisible() || !isOnline()) return;
     composing = true;
     nativeTextUntil = performance.now() + NATIVE_TEXT_GRACE_MS;
   };
   const compositionEnd = () => {
+    // Cached xterm instances can deliver an old end event after hide/reconnect
+    // or remount. Only a composition admitted by this input owner renews grace.
+    if (!composing) return;
     composing = false;
-    nativeTextUntil = performance.now() + COMPOSITION_COMMIT_GRACE_MS;
+    nativeTextUntil =
+      isVisible() && isOnline()
+        ? performance.now() + COMPOSITION_COMMIT_GRACE_MS
+        : 0;
   };
   const beforeInput = (event: InputEvent) => {
-    if (event.isComposing || event.inputType.startsWith("insertComposition"))
+    if (
+      isVisible() &&
+      isOnline() &&
+      nativeSequenceActive() &&
+      (event.isComposing || event.inputType.startsWith("insertComposition"))
+    )
       nativeTextUntil = performance.now() + NATIVE_TEXT_GRACE_MS;
   };
   const focusIn = () =>
