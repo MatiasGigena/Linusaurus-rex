@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   _electron as electron,
   type ElectronApplication,
@@ -152,7 +153,9 @@ try {
     await page.waitForTimeout(50);
   }
   assert.ok(ready, "The owned image emitter must be ready before test input");
-  await page.waitForTimeout(200);
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+  });
   const emit = async (data: string) => {
     await service.input(
       host,
@@ -160,26 +163,28 @@ try {
       pane.id,
       JSON.stringify({ data: Buffer.from(data).toString("base64") }) + "\n",
     );
-    await page.waitForTimeout(60);
   };
   await emit(
     "\x1b[?25l\x1b[2J\x1b[H\x1b[38;2;255;255;255m\x1b[48;2;0;0;255mM \x1b[0m ",
   );
-  const grid = await page
+  const initialGrid = await page
     .locator(".terminal-pane:visible .xterm-screen")
     .boundingBox();
-  assert.ok(grid);
-  const size = await service.terminalSize(host, sessionId, pane.id),
-    cw = grid.width / size.columns,
+  assert.ok(initialGrid);
+  let grid = initialGrid,
+    cw = 0,
+    ch = 0;
+  const snapshot = async () => {
+    const currentGrid = await page
+      .locator(".terminal-pane:visible .xterm-screen")
+      .boundingBox();
+    assert.ok(currentGrid, "The native terminal must remain visible");
+    const size = await service.terminalSize(host, sessionId!, pane.id);
+    grid = currentGrid;
+    cw = grid.width / size.columns;
     ch = grid.height / size.rows;
-  const imageWidth = Math.ceil(cw * 3),
-    imageHeight = Math.ceil(ch),
-    bytes = Buffer.alloc(imageWidth * imageHeight * 4);
-  for (let index = 0; index < bytes.length; index += 4)
-    bytes.set([255, 0, 0, 255], index);
-  const encoded = bytes.toString("base64");
-  const snapshot = async () =>
-    PNG.sync.read(await page.screenshot({ scale: "css" }));
+    return PNG.sync.read(await page.screenshot({ scale: "css" }));
+  };
   const pixel = (png: ReturnType<typeof PNG.sync.read>, x: number, y: number) =>
     Array.from(
       png.data.subarray(
@@ -224,6 +229,49 @@ try {
       }
     return count;
   };
+  const waitForPixels = async (
+    phase: string,
+    check: (png: ReturnType<typeof PNG.sync.read>) => void,
+  ) => {
+    const started = performance.now();
+    const deadline = started + 15_000;
+    for (;;) {
+      // Transport/screenshot failures are not rendering mismatches to retry.
+      const png = await snapshot();
+      try {
+        check(png);
+        return png;
+      } catch (error) {
+        if (!(error instanceof assert.AssertionError)) throw error;
+        const remaining = deadline - performance.now();
+        if (remaining <= 0)
+          throw new Error(
+            `${phase} did not converge after ${Math.round(performance.now() - started)}ms. Last pixel assertion: ${error.message}`,
+            { cause: error },
+          );
+        await delay(Math.min(50, remaining));
+      }
+    }
+  };
+  await waitForPixels("Native text/background baseline", (png) => {
+    near(
+      png,
+      center(png, 1),
+      [0, 0, 255, 255],
+      "Native explicit background baseline",
+    );
+    const ink = whiteInk(png);
+    assert.ok(
+      ink > 5,
+      `Native baseline glyph must be visible before image placement: whiteInk=${ink}`,
+    );
+  });
+  const imageWidth = Math.ceil(cw * 3),
+    imageHeight = Math.ceil(ch),
+    bytes = Buffer.alloc(imageWidth * imageHeight * 4);
+  for (let index = 0; index < bytes.length; index += 4)
+    bytes.set([255, 0, 0, 255], index);
+  const encoded = bytes.toString("base64");
   const put = async (z: number) => {
     const [old] = await page
       .locator('canvas[data-kitty-image="1"]')
@@ -234,61 +282,66 @@ try {
     if (old)
       await page.waitForFunction((element) => !element?.isConnected, old);
     await page.locator('canvas[data-kitty-image="1"]').waitFor();
-    await page.waitForTimeout(30);
   };
-  let png = await snapshot();
-  near(
-    png,
-    center(png, 1),
-    [0, 0, 255, 255],
-    "Native explicit background baseline",
-  );
-  assert.ok(
-    whiteInk(png) > 5,
-    "Native baseline glyph must be visible before image placement",
-  );
   await put(-1073741825);
-  png = await snapshot();
-  near(
-    png,
-    center(png, 1),
-    [0, 0, 255, 255],
-    "Native deep image below explicit background",
-  );
-  near(
-    png,
-    center(png, 2),
-    [255, 0, 0, 255],
-    "Native deep image visible through default background",
-  );
-  assert.ok(whiteInk(png) > 5);
+  await waitForPixels("Native deep image composition", (png) => {
+    near(
+      png,
+      center(png, 1),
+      [0, 0, 255, 255],
+      "Native deep image below explicit background",
+    );
+    near(
+      png,
+      center(png, 2),
+      [255, 0, 0, 255],
+      "Native deep image visible through default background",
+    );
+    const ink = whiteInk(png);
+    assert.ok(ink > 5, `Native deep image preserves text: whiteInk=${ink}`);
+  });
   await put(-1);
-  png = await snapshot();
-  near(
-    png,
-    center(png, 1),
-    [255, 0, 0, 255],
-    "Native negative image above background",
-  );
-  assert.ok(
-    whiteInk(png) > 5,
-    "Native text must remain above a negative image",
-  );
+  await waitForPixels("Native negative image composition", (png) => {
+    near(
+      png,
+      center(png, 1),
+      [255, 0, 0, 255],
+      "Native negative image above background",
+    );
+    const ink = whiteInk(png);
+    assert.ok(
+      ink > 5,
+      `Native text must remain above a negative image: whiteInk=${ink}`,
+    );
+  });
   await put(0);
-  png = await snapshot();
-  assert.equal(whiteInk(png), 0, "Native nonnegative image covers glyphs");
+  await waitForPixels("Native nonnegative image composition", (png) => {
+    near(
+      png,
+      center(png, 1),
+      [255, 0, 0, 255],
+      "Native nonnegative image covers background",
+    );
+    assert.equal(whiteInk(png), 0, "Native nonnegative image covers glyphs");
+  });
   await page.mouse.move(grid.x + cw * 0.05, grid.y + ch * 0.5);
   await page.mouse.down();
   await page.mouse.move(grid.x + cw * 1.95, grid.y + ch * 0.5, { steps: 6 });
   await page.mouse.up();
-  await page.waitForTimeout(60);
-  png = await snapshot();
-  near(png, center(png, 1), [127, 128, 0, 255], "Native selection above image");
+  await waitForPixels("Native selection composition", (png) => {
+    near(
+      png,
+      center(png, 1),
+      [127, 128, 0, 255],
+      "Native selection above image",
+    );
+  });
   await page.mouse.click(grid.x + cw * 5, grid.y + ch * 2);
   await page.locator(".terminal-pane:visible .xterm-helper-textarea").focus();
   await emit("\x1b[?25h\x1b[2 q\x1b[1;2H");
-  png = await snapshot();
-  near(png, center(png, 1), [255, 255, 0, 255], "Native cursor above image");
+  await waitForPixels("Native cursor composition", (png) => {
+    near(png, center(png, 1), [255, 255, 0, 255], "Native cursor above image");
+  });
   await emit("\x1b[?25l");
   const media = [
     {
@@ -318,14 +371,15 @@ try {
     );
     await page.locator(`canvas[data-kitty-image="${100 + index}"]`).waitFor();
   }
-  png = await snapshot();
-  for (let index = 0; index < media.length; index++)
-    near(
-      png,
-      center(png, index, 3),
-      media[index].color,
-      `Rex-normalized ${media[index].medium} image renders actual native pixels`,
-    );
+  await waitForPixels("Native Rex-normalized media", (png) => {
+    for (let index = 0; index < media.length; index++)
+      near(
+        png,
+        center(png, index, 3),
+        media[index].color,
+        `Rex-normalized ${media[index].medium} image renders actual native pixels`,
+      );
+  });
   assert.deepEqual(errors, []);
   assert.equal(await page.locator(".terminal-error:visible").count(), 0);
   await mkdir(join(root, "test-results"), { recursive: true });
