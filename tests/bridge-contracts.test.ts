@@ -2,10 +2,31 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   parseLayoutAction,
+  parseKeyMode,
   parsePathPicker,
   updateRendererContext,
 } from "../electron/bridge-contracts.js";
 import { trustedRenderer } from "../electron/renderer-boundary.js";
+
+test("key modes require a name only for entry and reject contradictory exit arguments", () => {
+  assert.deepEqual(parseKeyMode({ operation: "enter", name: "resize" }), {
+    operation: "enter",
+    name: "resize",
+  });
+  assert.deepEqual(parseKeyMode({ operation: "exit" }), { operation: "exit" });
+  assert.deepEqual(parseKeyMode({ operation: "exitAll" }), {
+    operation: "exitAll",
+  });
+  for (const args of [
+    { operation: "enter" },
+    { operation: "enter", name: "" },
+    { operation: "enter", name: 42 },
+    { operation: "exit", name: "resize" },
+    { operation: "exitAll", name: "" },
+    { operation: "reset" },
+  ])
+    assert.throws(() => parseKeyMode(args));
+});
 
 test("privileged renderer access rejects unknown senders, subframes and navigated documents", () => {
   const frame = { url: "file:///app/index.html" };

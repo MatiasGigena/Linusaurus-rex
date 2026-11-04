@@ -298,14 +298,14 @@ test("resolved keymaps respect physical/layout keys, shortcut precedence, sequen
   const shortcut = router.route(key("key_x", "ctrl", 120));
   assert.ok(shortcut.kind === "action");
   assert.equal(shortcut.action, "client.sidebar.toggle");
-  router.mode("enter", "resize", true);
+  router.mode({ operation: "enter", name: "resize" }, true);
   assert.equal(router.route(key("arrow_left")).kind, "consume");
   assert.equal(router.route(key("key_y", "", 121, "y")).kind, "consume");
   const modeShortcut = router.route(key("key_h", "", 104, "h"));
   assert.ok(modeShortcut.kind === "action");
   assert.equal(modeShortcut.action, "client.sidebar.toggle");
   assert.equal(router.route(key("key_y", "", 121, "y")).kind, "forward");
-  router.mode("enter", "resize");
+  router.mode({ operation: "enter", name: "resize" });
   assert.equal(router.route(key("escape")).kind, "consume");
   assert.equal(router.route(key("key_y", "", 121, "y")).kind, "forward");
   assert.ok(changes.length > 0);

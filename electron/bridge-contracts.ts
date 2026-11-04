@@ -1,10 +1,22 @@
 import type {
   LayoutActionArgs,
+  KeyModeOperation,
   PathPickerArgs,
   RendererContext,
 } from "../src/shared/types.js";
 import { identifier, string } from "./validation.js";
 import { parseSelection } from "./selection.js";
+
+export function parseKeyMode(args: Record<string, unknown>): KeyModeOperation {
+  if (args.operation === "enter")
+    return { operation: "enter", name: identifier(args.name, "mode name") };
+  if (args.operation === "exit" || args.operation === "exitAll") {
+    if (args.name !== undefined)
+      throw new Error("Exiting a key mode cannot specify a mode name.");
+    return { operation: args.operation };
+  }
+  throw new Error("Invalid key mode operation");
+}
 
 /** Validate the same operation-dependent requirements exposed by the preload types. */
 export function parseLayoutAction(

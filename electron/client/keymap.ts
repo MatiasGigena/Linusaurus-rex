@@ -1,5 +1,6 @@
 import type {
   KeyBinding,
+  KeyModeOperation,
   KeymapResult,
   RexKeyEvent,
 } from "../../src/shared/types.js";
@@ -124,12 +125,13 @@ export class KeymapRouter {
     );
     this.clearPrefix();
   }
-  mode(operation: "enter" | "exit" | "exitAll", name?: string, once = false) {
-    if (operation === "enter") {
+  mode(change: KeyModeOperation, once = false) {
+    if (change.operation === "enter") {
+      const name = change.name;
       if (!name || !this.map.modes.some((value) => value.name === name))
         throw new Error("The key mode does not exist in this client keymap.");
       this.modeStack.push({ name, once });
-    } else if (operation === "exit") this.modeStack.pop();
+    } else if (change.operation === "exit") this.modeStack.pop();
     else this.modeStack = [];
     this.clearPrefix();
   }

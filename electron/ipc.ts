@@ -19,6 +19,7 @@ import { captureRequest } from "../src/shared/requestResult.js";
 import { trustedRenderer } from "./renderer-boundary.js";
 import {
   parseLayoutAction,
+  parseKeyMode,
   parsePathPicker,
   updateRendererContext,
 } from "./bridge-contracts.js";
@@ -447,15 +448,7 @@ class WindowContext {
     if (method === "listSessions") return this.rex.sessions(host);
     if (method === "keymap") return this.features.keymap(host);
     if (method === "keyMode") {
-      if (!["enter", "exit", "exitAll"].includes(String(args.operation)))
-        throw new Error("Invalid key mode operation");
-      this.features.keyMode(
-        host.id,
-        args.operation as "enter" | "exit" | "exitAll",
-        args.name === undefined
-          ? undefined
-          : identifier(args.name, "mode name"),
-      );
+      this.features.keyMode(host.id, parseKeyMode(args));
       return;
     }
     if (method === "configureClient")
@@ -503,7 +496,7 @@ class WindowContext {
       };
     const sessionId = identifier(args.sessionId, "session ID");
     if (method === "inspectSession")
-      return this.features.enrich(
+      return this.features.trackViewAndScheduleMetadata(
         host,
         await this.rex.inspect(host, sessionId),
       );

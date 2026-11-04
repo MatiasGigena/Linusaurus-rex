@@ -60,7 +60,7 @@ test("malformed remote keymap entries are filtered before keyboard routing", () 
     router.setMap(map);
     const route = router.route(key("x"));
     assert.equal(route.kind, "action");
-    router.mode("enter", "exclusive");
+    router.mode({ operation: "enter", name: "exclusive" });
     assert.equal(router.route(key("x")).kind, "consume");
     assert.equal(router.route(key("y")).kind, "consume");
   } finally {
@@ -270,6 +270,7 @@ function preferenceFixture() {
   const failures = new Set<string>();
   const connected = new Map<string, () => void>();
   const controls = new Map<string, RexControl>();
+  const listeners = new Map<string, (event: RexEvent) => void>();
   let saved = false;
   const keymap = () => ({
     actions: [],
@@ -315,6 +316,9 @@ function preferenceFixture() {
     calls,
     failures,
     controls,
+    emit(host: (typeof hosts)[number], type: string) {
+      listeners.get(host.id)?.({ type, payload: { type, payload: {} } });
+    },
     save() {
       saved = true;
       settings.clientLabel = "Saved label";
@@ -323,7 +327,10 @@ function preferenceFixture() {
     connect(host: (typeof hosts)[number]) {
       const control = {
         connected: true,
-        onEvent: () => () => {},
+        onEvent: (listener: (event: RexEvent) => void) => {
+          listeners.set(host.id, listener);
+          return () => listeners.delete(host.id);
+        },
         readyPublic: async () => ({
           protocol: "rex.control.v1",
           api_revision: 10,
@@ -402,6 +409,68 @@ test("saved preference failures are reported per host while other operations and
     );
   } finally {
     features.dispose();
+  }
+});
+
+test("incoming keymap changes report configuration failure, preserve active routing, and can retry", async () => {
+  const current = preferenceFixture();
+  try {
+    await Promise.all(current.hosts.map((host) => current.connect(host)));
+    current.save();
+    const before = current.emitted.length;
+    current.failures.add("first:client.keymap");
+    current.emit(current.hosts[0], "keymap_changed");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.ok(
+      current.emitted
+        .slice(before)
+        .some(
+          (event) =>
+            event.type === "status" &&
+            event.hostId === "first" &&
+            !event.connected &&
+            event.message === "keymap rejected",
+        ),
+    );
+    assert.ok(
+      !current.emitted
+        .slice(before)
+        .some(
+          (event) =>
+            event.type === "status" &&
+            event.hostId === "second" &&
+            !event.connected,
+        ),
+    );
+    await current.features.input(
+      current.hosts[0],
+      "key",
+      "session",
+      "pane",
+      key("x"),
+    );
+    assert.equal(
+      current.emitted.at(-1)?.type,
+      "action",
+      "Failed configuration retains the previous working keymap",
+    );
+    current.failures.clear();
+    current.emit(current.hosts[0], "keymap_changed");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await current.features.input(
+      current.hosts[0],
+      "key",
+      "session",
+      "pane",
+      key("y"),
+    );
+    assert.equal(
+      current.emitted.at(-1)?.type,
+      "action",
+      "A later keymap event can apply the current settings",
+    );
+  } finally {
+    current.features.dispose();
   }
 });
 

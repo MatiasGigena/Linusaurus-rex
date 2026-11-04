@@ -4,6 +4,7 @@ import type {
   ClientEvent,
   Host,
   KeymapResult,
+  KeyModeOperation,
   RexKeyEvent,
   Selection,
   SessionView,
@@ -194,18 +195,17 @@ export class ClientFeatures {
   ): Promise<unknown> {
     if (action === "client.mode.enter") {
       this.router(host.id).mode(
-        "enter",
-        String(args.name || ""),
+        { operation: "enter", name: String(args.name || "") },
         args.once === true,
       );
       return null;
     }
     if (action === "client.mode.exit") {
-      this.router(host.id).mode("exit");
+      this.router(host.id).mode({ operation: "exit" });
       return null;
     }
     if (action === "client.mode.exit_all") {
-      this.router(host.id).mode("exitAll");
+      this.router(host.id).mode({ operation: "exitAll" });
       return null;
     }
     if (
@@ -364,12 +364,8 @@ export class ClientFeatures {
       event: { type: method, payload: value },
     });
   }
-  keyMode(
-    hostId: string,
-    operation: "enter" | "exit" | "exitAll",
-    name?: string,
-  ) {
-    this.router(hostId).mode(operation, name);
+  keyMode(hostId: string, change: KeyModeOperation) {
+    this.router(hostId).mode(change);
   }
   metadata(
     hostId: string,
@@ -397,7 +393,7 @@ export class ClientFeatures {
         value,
       );
   }
-  async enrich(host: Host, view: SessionView) {
+  async trackViewAndScheduleMetadata(host: Host, view: SessionView) {
     this.activity.track(host.id, view);
     const control = await this.rex.control(host);
     if ((control.welcome?.api_revision ?? 0) < 8) return view;
@@ -653,7 +649,7 @@ export class ClientFeatures {
       return;
     }
     if (name === "keymap_changed") {
-      void this.configure(host).catch(() => {});
+      await this.configure(host);
     }
     if (
       name.startsWith("session_") ||

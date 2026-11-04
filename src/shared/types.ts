@@ -393,6 +393,10 @@ export interface TerminalFrame {
 }
 type SessionRef = { hostId: string; sessionId: string };
 type WindowRef = SessionRef & { windowId: string };
+export type KeyModeOperation =
+  | { operation: "enter"; name: string }
+  | { operation: "exit" | "exitAll"; name?: never };
+
 export interface RexMethods {
   previewServerOrigins: {
     args: { hostId: string; origins: string[] };
@@ -477,11 +481,7 @@ export interface RexMethods {
   };
   keymap: { args: { hostId: string }; result: KeymapResult };
   keyMode: {
-    args: {
-      hostId: string;
-      operation: "enter" | "exit" | "exitAll";
-      name?: string;
-    };
+    args: { hostId: string } & KeyModeOperation;
     result: void;
   };
   invokeAction: {
