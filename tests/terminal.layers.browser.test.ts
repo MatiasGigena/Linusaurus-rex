@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 import { createRequire } from "node:module";
 const { PNG } = createRequire(import.meta.url)("pngjs") as {
   PNG: {
@@ -237,7 +237,16 @@ test(
       await page.evaluate(() =>
         (window as any).fixture.runtime().terminal.select(0, 0, 2),
       );
-      await page.waitForTimeout(30);
+      await expect
+        .poll(
+          async () =>
+            center(await snapshot(), 1).every(
+              (value, channel) =>
+                Math.abs(value - [127, 128, 0, 255][channel]) <= 4,
+            ),
+          { message: "Selection highlight must paint above opaque images" },
+        )
+        .toBe(true);
       png = await snapshot();
       near(
         center(png, 1),
@@ -250,7 +259,16 @@ test(
       );
       await page.locator(".xterm-helper-textarea").focus();
       await emit("\x1b[?25h\x1b[1;2H");
-      await page.waitForTimeout(30);
+      await expect
+        .poll(
+          async () =>
+            center(await snapshot(), 1).every(
+              (value, channel) =>
+                Math.abs(value - [255, 255, 0, 255][channel]) <= 4,
+            ),
+          { message: "Native block cursor must paint above opaque images" },
+        )
+        .toBe(true);
       png = await snapshot();
       near(
         center(png, 1),

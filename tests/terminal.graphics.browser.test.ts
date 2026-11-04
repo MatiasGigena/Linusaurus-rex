@@ -66,6 +66,7 @@ test(
         if (["error", "warn"].includes(message.type()))
           console.log("graphics browser", message.text());
       });
+      await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
       await page.goto(`http://127.0.0.1:${address.port}/graphics`);
       await page
         .waitForFunction(
@@ -182,7 +183,7 @@ test(
       await page
         .locator('canvas[data-kitty-image="9"]')
         .waitFor({ state: "attached" });
-      await page.waitForTimeout(120);
+      await page.clock.fastForward(120);
       assert.equal(
         await page.evaluate(
           () =>
@@ -211,7 +212,12 @@ test(
         .locator('canvas[data-kitty-image="7"]')
         .waitFor({ state: "detached" });
       // The released official addon handles Sixel and IIP; it does not generate duplicate program replies.
-      await page.waitForTimeout(200);
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            (window as any).fixture.runtime().terminal.write("", resolve),
+          ),
+      );
       await emit('\x1b[1;1H\x1bPq"1;1;8;6#0;2;100;0;0#0!8~\x1b\\');
       await page.waitForFunction(
         () => (window as any).fixture.runtime().images.storageUsage > 0,
@@ -455,6 +461,7 @@ test(
       await emit("\x1b_Ga=d,d=I,i=201;\x1b\\");
       await relative.waitFor({ state: "detached" });
       // Animation patches, explicit frame selection, clipped replacement, finite loops and stop.
+      await page.clock.pauseAt(new Date("2026-01-02T00:00:00Z"));
       await emit(
         "\x1b_Ga=T,f=32,s=2,v=1,i=301,p=1,c=4,r=2,C=1;" +
           Buffer.from([255, 0, 0, 255, 255, 0, 0, 255]).toString("base64") +
@@ -485,6 +492,7 @@ test(
         [255, 0, 0, 255, 0, 255, 0, 255],
       );
       await emit("\x1b_Ga=a,i=301,c=1,r=1,z=25,s=3,v=2;\x1b\\");
+      await page.clock.runFor(50);
       await page.waitForFunction(() => {
         const canvas = document.querySelector('canvas[data-kitty-image="301"]');
         return (
@@ -492,18 +500,21 @@ test(
           canvas?.getAttribute("data-kitty-animation") === "1"
         );
       });
-      await page.waitForTimeout(80);
+      await page.clock.runFor(200);
       assert.equal(await animated.getAttribute("data-kitty-frame"), "2");
       await emit("\x1b_Ga=a,i=301,c=1,s=3,v=1;\x1b\\");
-      await page.waitForTimeout(60);
-      await emit("\x1b_Ga=a,i=301,c=1,s=1;\x1b\\");
+      await page.clock.runFor(25);
+      assert.equal(await animated.getAttribute("data-kitty-frame"), "2");
+      await page.clock.runFor(25);
+      assert.equal(await animated.getAttribute("data-kitty-frame"), "1");
+      await emit("\x1b_Ga=a,i=301,s=1;\x1b\\");
       await page.waitForFunction(
         () =>
           document
             .querySelector('canvas[data-kitty-image="301"]')
             ?.getAttribute("data-kitty-animation") === "1",
       );
-      await page.waitForTimeout(80);
+      await page.clock.runFor(200);
       assert.equal(await animated.getAttribute("data-kitty-frame"), "1");
       await emit("\x1b_Ga=c,i=301,r=2,c=1,X=1,Y=0,x=0,y=0,w=1,h=1,C=1;\x1b\\");
       await page.waitForFunction(() => {
@@ -527,6 +538,7 @@ test(
       await emit("\x1b_Ga=d,d=f,i=301,r=2;\x1b\\");
       await emit("\x1b_Ga=d,d=I,i=301;\x1b\\");
       await animated.waitFor({ state: "detached" });
+      await page.clock.resume();
       // Public buffer glyphs drive virtual placements, including omitted column diacritics.
       const quadrants = Buffer.from([
         255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
