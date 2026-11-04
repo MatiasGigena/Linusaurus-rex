@@ -219,7 +219,7 @@ export class TerminalVisuals {
     const screen = this.element.querySelector<HTMLElement>(".xterm-screen"),
       composed = screen?.hasAttribute("data-kitty-composition");
     // Read native styles without the compositor's paint-only background mask.
-    if (composed) screen!.removeAttribute("data-kitty-composition");
+    if (screen && composed) screen.removeAttribute("data-kitty-composition");
     const settings = this.settings,
       p3 = settings.displayP3 && supportsDisplayP3();
     const fallback = parseColor(this.theme.background || "#353b41")!;
@@ -278,7 +278,7 @@ export class TerminalVisuals {
       old.appliedBackground = span.style.backgroundColor;
     }
     this.backgrounds(p3);
-    if (composed) screen!.dataset.kittyComposition = "true";
+    if (screen && composed) screen.dataset.kittyComposition = "true";
     this.element.dispatchEvent(new Event("rex-terminal-visuals"));
   }
   private backgrounds(p3: boolean) {

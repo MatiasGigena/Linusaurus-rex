@@ -12,6 +12,9 @@ import type { RexPane, Settings, TerminalRef } from "../shared/types";
 import { formatBlockResult, inspectMethods, parseMethodArgs } from "./blocks";
 import "./terminal.css";
 
+// String preview bounds count decoded UTF-16 units rather than response bytes.
+const MAX_PREVIEW_CHARACTERS = 256 * 1024;
+
 export interface BlockInspectorProps {
   pane: RexPane;
   terminalRef: TerminalRef;
@@ -257,11 +260,11 @@ function InspectBlock({
               </button>
             </div>
             <pre style={{ fontFamily: settings.fontFamily }}>
-              {result.slice(0, 256 * 1024)}
+              {result.slice(0, MAX_PREVIEW_CHARACTERS)}
             </pre>
-            {result.length > 256 * 1024 && (
+            {result.length > MAX_PREVIEW_CHARACTERS && (
               <p className="form-hint">
-                Showing the first 256 KiB. Save JSON to inspect the complete
+                Showing a shortened preview. Save JSON to inspect the complete
                 response.
               </p>
             )}
