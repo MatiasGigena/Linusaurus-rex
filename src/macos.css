@@ -1353,6 +1353,15 @@
   color: var(--mac-orange);
 }
 
+/* Settings and a lost connection show only in the toolbar here, so narrow
+ * windows must keep them. */
+:root[data-chrome="macos"] .toolbar-settings {
+  display: inline-flex;
+}
+:root[data-chrome="macos"] .toolbar-connection:not(.is-connected) {
+  display: flex;
+}
+
 /* No status bar: the window title and sidebar already say where you are. */
 :root[data-chrome="macos"] .workspace-status {
   display: none;
