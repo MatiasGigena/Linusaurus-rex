@@ -109,7 +109,7 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
       case "session.rename": {
         if (!sessionId) throw new Error("Choose a session first.");
         const rename = async (label: string) => {
-          await workspace.run(() =>
+          await workspace.run(hostId, () =>
             window.rex.request("renameSession", { hostId, sessionId, label }),
           );
         };
@@ -132,6 +132,7 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
       case "session.close":
         if (!sessionId) return;
         requestClose(
+          hostId,
           "Close this session?",
           "All tabs, panes and running programs in this session will close on the server.",
           () => window.rex.request("destroySession", { hostId, sessionId }),

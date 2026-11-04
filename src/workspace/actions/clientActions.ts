@@ -1,8 +1,5 @@
 import { DEFAULT_SETTINGS, type Settings } from "../../shared/types";
-import {
-  saveLibraryTheme,
-  uniqueThemeName,
-} from "../../core/themeLibrary";
+import { saveLibraryTheme, uniqueThemeName } from "../../core/themeLibrary";
 import type { SettingsTab } from "../../components/preferences/types";
 import {
   UNHANDLED,
@@ -80,7 +77,7 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
       case "client.update.accept_when_idle":
         return window.rex.request("applyUpdate", { whenIdle: true });
       case "client.server.restart":
-        return workspace.run(() =>
+        return workspace.run(hostId, () =>
           window.rex.request("serverLifecycle", {
             hostId,
             operation: "restart",

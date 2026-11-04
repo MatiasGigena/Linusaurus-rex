@@ -26,18 +26,18 @@ const nativeActions = new Set([
 export function createWorkspaceActions(options: WorkspaceActionOptions) {
   const { workspace, settings } = options;
   if (!settings) return async () => undefined;
-  const requestClose: RequestClose = (title, description, action) => {
+  const requestClose: RequestClose = (hostId, title, description, action) => {
     if (settings.confirmClose)
       options.setConfirmation({
         title,
         description,
         submit: async () => {
-          await workspace.run(action);
+          await workspace.run(hostId, action);
         },
       });
     else
       void workspace
-        .run(action)
+        .run(hostId, action)
         .catch((failure) => options.onError(errorMessage(failure)));
   };
   const handlers = [

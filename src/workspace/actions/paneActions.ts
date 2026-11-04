@@ -34,6 +34,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
       case "pane.close":
         requirePane();
         requestClose(
+          hostId,
           "Close this pane?",
           "This terminal and its running program will close on the Rex server.",
           async () => {
@@ -53,7 +54,9 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
         return;
       case "pane.zoom":
         requirePane();
-        return workspace.run(() => window.rex.request("zoom", terminalRef));
+        return workspace.run(hostId, () =>
+          window.rex.request("zoom", terminalRef),
+        );
       case "pane.copy_id":
         requirePane();
         return window.rex.writeClipboard(blockId);
@@ -83,7 +86,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
             throw new Error(`Choose a border from 1 to ${dividers.length}.`);
           if (!(ratio > 0 && ratio < 1))
             throw new Error("Enter a percentage between 1 and 99.");
-          await workspace.run(() =>
+          await workspace.run(hostId, () =>
             window.rex.request("resizeDivider", {
               hostId,
               sessionId,
@@ -141,7 +144,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
             },
           ],
           submit: async (values) => {
-            await workspace.run(() =>
+            await workspace.run(hostId, () =>
               window.rex.request("renamePane", {
                 ...terminalRef,
                 label: values.label,
@@ -243,7 +246,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
             },
           ],
           submit: async (values) => {
-            await workspace.run(() =>
+            await workspace.run(hostId, () =>
               window.rex.request("createBlock", {
                 hostId,
                 sessionId,

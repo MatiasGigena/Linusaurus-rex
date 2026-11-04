@@ -321,7 +321,7 @@ export default function App() {
     beforeWindowId?: string,
   ) =>
     safely(() =>
-      ws.run(() =>
+      ws.run(hostId, () =>
         window.rex.request("reorderWindow", {
           hostId,
           sessionId,
@@ -759,7 +759,7 @@ export default function App() {
                                   ),
                                 );
                                 safely(() =>
-                                  ws.run(() =>
+                                  ws.run(where.hostId, () =>
                                     globalThis.window.rex.request(
                                       "resizeDivider",
                                       {
@@ -803,7 +803,10 @@ export default function App() {
                   <span>
                     {activeHost?.error || "Connection lost. Reconnecting…"}
                   </span>
-                  <button className="button" onClick={() => void ws.refresh()}>
+                  <button
+                    className="button"
+                    onClick={() => safely(() => ws.refresh())}
+                  >
                     Reconnect
                   </button>
                 </div>
@@ -834,7 +837,10 @@ export default function App() {
                   <Plus size={15} />
                   New session
                 </button>
-                <button className="button" onClick={() => void ws.refresh()}>
+                <button
+                  className="button"
+                  onClick={() => safely(() => ws.refresh())}
+                >
                   <RefreshCw size={14} />
                   Reconnect
                 </button>
@@ -1038,7 +1044,7 @@ export default function App() {
         <ConfigurationDialog
           hostId={activeHost?.id || "local"}
           onClose={() => setConfiguration(false)}
-          onReload={() => void ws.refresh()}
+          onReload={() => safely(() => ws.refresh())}
         />
       )}
       {diagnostics && (

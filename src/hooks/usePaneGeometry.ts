@@ -121,7 +121,7 @@ export function usePaneGeometry(
     const up = () => {
       window.removeEventListener("pointermove", move);
       safely(() =>
-        ws.run(() =>
+        ws.run(where.hostId, () =>
           window.rex.request("resizeLayer", {
             hostId: where.hostId,
             sessionId: where.sessionId,

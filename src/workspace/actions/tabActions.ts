@@ -37,6 +37,7 @@ export function createTabActions(dependencies: TabActionsDependencies) {
       case "client.tab.close":
         if (!currentWindow) return;
         requestClose(
+          hostId,
           "Close this tab?",
           `“${currentWindow.label}” and all of its running programs will close on the server.`,
           () =>
@@ -50,7 +51,7 @@ export function createTabActions(dependencies: TabActionsDependencies) {
       case "client.tab.rename": {
         if (!currentWindow) return;
         const rename = async (label: string) => {
-          await workspace.run(() =>
+          await workspace.run(hostId, () =>
             window.rex.request("renameWindow", {
               hostId,
               sessionId,
@@ -146,7 +147,7 @@ export function createTabActions(dependencies: TabActionsDependencies) {
           return;
         const beforeWindowId =
           target < index ? windows[target].id : windows[target + 1]?.id;
-        return workspace.run(() =>
+        return workspace.run(hostId, () =>
           window.rex.request("reorderWindow", {
             hostId,
             sessionId,

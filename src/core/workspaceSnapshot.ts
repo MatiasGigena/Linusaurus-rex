@@ -21,6 +21,12 @@ export interface PaneMetadata {
   program?: string;
   cwd?: string;
 }
+export interface HostSnapshot {
+  host: HostState;
+  views: Record<string, SessionView>;
+  /** Preserve the rejection for awaited mutations without losing per-host UI feedback. */
+  failure?: unknown;
+}
 
 /** Missing sessions are expected when another client closes one during a refresh. */
 function isMissingSession(failure: unknown): boolean {
@@ -38,7 +44,7 @@ function isMissingSession(failure: unknown): boolean {
 export async function collectHostSnapshot(
   host: Host,
   request: RexBridge["request"],
-): Promise<{ host: HostState; views: Record<string, SessionView> }> {
+): Promise<HostSnapshot> {
   try {
     const status = await request("status", { hostId: host.id });
     if (!status.connected)
@@ -90,6 +96,7 @@ export async function collectHostSnapshot(
         sessions: [],
       },
       views: {},
+      failure,
     };
   }
 }

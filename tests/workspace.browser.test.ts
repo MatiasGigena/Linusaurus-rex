@@ -8,16 +8,20 @@ import React from 'react';
 import {createRoot} from 'react-dom/client';
 import {useWorkspace} from '/src/hooks/useWorkspace.ts';
 import {DEFAULT_SETTINGS} from '/src/shared/types.ts';
+import {createWorkspaceActions} from '/src/workspace/actions/createWorkspaceActions.ts';
 let workspace,setVisible,nextId=0;
 let settings={...structuredClone(DEFAULT_SETTINGS),hosts:[{id:'one',label:'Host one',endpoint:'unix:///one.sock'}],lastSelection:{hostId:'one',sessionId:'s',windowId:'w'}};
 const listeners=new Set(),calls=[],requests=[];
 window.fixture={calls,
  pending(){return requests.filter(request=>!request.settled).map(({id,method,args})=>({id,method,args}));},
+ fail(id,message,code='permission_denied'){const request=requests.find(request=>request.id===id&&!request.settled);if(!request)throw Error('Missing pending request '+id);request.settled=true;const error=Object.assign(new Error(message),{code,method:request.method});window.fixture.lastFailure=error;request.reject(error);},
  complete(id,value){const request=requests.find(request=>request.id===id&&!request.settled);if(!request)throw Error('Missing pending request '+id);request.settled=true;request.resolve(value);},
  refresh(){void workspace.refresh();},reload(hostId,sessionId){void workspace.reloadSession(hostId,sessionId);},
  reloadAfterResize(){const reload=workspace.reloadSession;window.fixture.reloadResult='pending';void window.rex.request('resizeDivider',{hostId:'one',sessionId:'s',beforeBlockId:'before',afterBlockId:'after',direction:'horizontal',ratio:0.5}).then(()=>reload('one','s')).then(()=>{window.fixture.reloadResult='complete';},error=>{window.fixture.reloadResult=error.message;});},
- mutate(){window.fixture.mutation='pending';void workspace.operations.mutateSession({hostId:'one',sessionId:'s',selectActive:true},()=>window.rex.request('renameWindow',{hostId:'one',sessionId:'s',windowId:'w',label:'Updated'})).then(value=>{window.fixture.mutation='complete';window.fixture.completed=value;},error=>{window.fixture.mutation=error.message;});},
- run(){window.fixture.mutation='pending';void workspace.operations.run(()=>window.rex.request('renameWindow',{hostId:'one',sessionId:'s',windowId:'w',label:'Updated'})).then(()=>{window.fixture.mutation='complete';},error=>{window.fixture.mutation=error.message;});},
+ mutate(){window.fixture.mutation='pending';void workspace.operations.mutateSession({hostId:'one',sessionId:'s',selectActive:true},()=>window.rex.request('renameWindow',{hostId:'one',sessionId:'s',windowId:'w',label:'Updated'})).then(value=>{window.fixture.mutation='complete';window.fixture.completed=value;},error=>{window.fixture.mutation=error.message;window.fixture.failureIdentity=error===window.fixture.lastFailure;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
+ run(){window.fixture.mutation='pending';void workspace.operations.run('one',()=>window.rex.request('renameWindow',{hostId:'one',sessionId:'s',windowId:'w',label:'Updated'})).then(()=>{window.fixture.mutation='complete';},error=>{window.fixture.mutation=error.message;window.fixture.failureIdentity=error===window.fixture.lastFailure;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
+ dispatch(name,args={}){const noop=()=>{};const execute=createWorkspaceActions({workspace:workspace.operations,settings,hosts:workspace.hosts,views:workspace.views,selection:workspace.selection,keymaps:workspace.keymaps,focusedPane:workspace.focusedPane,workspaceElement:{current:null},setPalette:noop,setSettingsTab:noop,setDiagnostics:noop,setPairing:noop,setEditingHost:noop,setConfirmation:noop,setForm:noop,setCollapsedSessions:noop,setActivityOnly:noop,setActivityOpen:noop,setActivityGroup:noop,setDirectoryBrowser:noop,setReport:noop,onError:noop});window.fixture.mutation='pending';void execute(name,args).then(value=>{window.fixture.mutation='complete';window.fixture.completed=value;},error=>{window.fixture.mutation=error.message;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
+ preferences(patch){settings={...settings,...patch};for(const listener of listeners)listener({type:'settings',settings});},
  changeHosts(hosts){settings={...settings,hosts};for(const listener of listeners)listener({type:'settings',settings});},
  unmount(){setVisible(false);}
 };
@@ -25,9 +29,9 @@ window.rex={
  getSettings:async()=>settings,
  setSettings:async(next)=>{calls.push({method:'setSettings'});settings=next;return next;},
  onClientEvent:callback=>{listeners.add(callback);return()=>listeners.delete(callback);},
- request(method,args){const id=++nextId;calls.push({id,method,args});if(method==='setContext')return Promise.resolve();if(method==='keymap'&&!window.fixture.deferKeymaps)return Promise.resolve({actions:[],bindings:[],modes:[],warnings:[]});return new Promise(resolve=>requests.push({id,method,args,resolve,settled:false}));}
+ request(method,args){const id=++nextId;calls.push({id,method,args});if(method==='setContext')return Promise.resolve();if(method==='keymap'&&!window.fixture.deferKeymaps)return Promise.resolve({actions:[],bindings:[],modes:[],warnings:[]});return new Promise((resolve,reject)=>requests.push({id,method,args,resolve,reject,settled:false}));}
 };
-function WorkspaceFixture(){const state=useWorkspace();workspace=state;return React.createElement('pre',{id:'workspace-state'},JSON.stringify({settingsHosts:state.settings?.hosts.map(host=>host.id),hosts:state.hosts.map(host=>host.id),views:Object.fromEntries(Object.entries(state.views).map(([key,view])=>[key,view.label])),keymapHosts:Object.keys(state.keymaps),selection:state.selection,focusedPane:state.focusedPane,sessions:Object.fromEntries(state.hosts.map(host=>[host.id,host.sessions.map(session=>session.label)])),busy:state.busy,loading:state.loading,error:state.error}));}
+function WorkspaceFixture(){const state=useWorkspace();workspace=state;return React.createElement('pre',{id:'workspace-state'},JSON.stringify({settingsHosts:state.settings?.hosts.map(host=>host.id),hosts:state.hosts.map(host=>host.id),views:Object.fromEntries(Object.entries(state.views).map(([key,view])=>[key,view.label])),hostErrors:Object.fromEntries(state.hosts.map(host=>[host.id,host.error])),connected:Object.fromEntries(state.hosts.map(host=>[host.id,host.connected])),keymapHosts:Object.keys(state.keymaps),selection:state.selection,focusedPane:state.focusedPane,sessions:Object.fromEntries(state.hosts.map(host=>[host.id,host.sessions.map(session=>session.label)])),busy:state.busy,loading:state.loading,error:state.error}));}
 function Root(){const[visible,show]=React.useState(true);setVisible=show;return visible?React.createElement(WorkspaceFixture):React.createElement('p',null,'Workspace unmounted');}
 createRoot(document.getElementById('root')).render(React.createElement(Root));
 `;
@@ -40,9 +44,19 @@ interface WorkspaceFixtureWindow {
   fixture: {
     calls: PendingRequest[];
     deferKeymaps?: boolean;
+    mutation?: string;
+    failureIdentity?: boolean;
+    failureCause?: boolean;
+    failureCode?: string;
+    failureMethod?: string;
+    fail(id: number, message: string, code?: string): void;
+    dispatch(name: string, args?: Record<string, unknown>): void;
+    preferences(patch: Record<string, unknown>): void;
     pending(): PendingRequest[];
     complete(id: number, value: unknown): void;
     refresh(): void;
+    run(): void;
+    mutate(): void;
     reload(hostId: string, sessionId: string): void;
     reloadAfterResize(): void;
     reloadResult?: string;
@@ -56,6 +70,10 @@ interface WorkspaceSnapshot {
   views: Record<string, string>;
   keymapHosts: string[];
   loading: boolean;
+  busy: boolean;
+  error?: string;
+  hostErrors: Record<string, string | undefined>;
+  connected: Record<string, boolean>;
 }
 const options = { skip: process.env.TERMINAL_UI_TEST !== "1", timeout: 30_000 };
 async function pending(
@@ -556,6 +574,391 @@ for (const lifetime of ["unmount", "host removal"] as const) {
                 : /host.*no longer configured/i,
             );
           if (lifetime === "unmount") assert.deepEqual(lateCalls, []);
+        },
+      );
+    },
+  );
+}
+
+async function initialWorkspace(page: Page) {
+  await complete(
+    page,
+    await startInspection(page),
+    view("s", "Last good session"),
+  );
+  await expect.poll(async () => (await snapshot(page)).loading).toBe(false);
+}
+async function fail(page: Page, id: number, message: string) {
+  await page.evaluate(
+    ({ id, message }) =>
+      (window as unknown as WorkspaceFixtureWindow).fixture.fail(id, message),
+    { id, message },
+  );
+}
+async function mutationStatus(page: Page) {
+  return page.evaluate(
+    () => (window as unknown as WorkspaceFixtureWindow).fixture.mutation,
+  );
+}
+async function assertReconciliationFailure(
+  page: Page,
+  message: string,
+  method: string,
+) {
+  await expect
+    .poll(() => mutationStatus(page))
+    .toContain("The change completed, but refreshing the workspace failed:");
+  assert.match((await mutationStatus(page)) || "", new RegExp(message));
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const fixture = (window as unknown as WorkspaceFixtureWindow).fixture;
+      return {
+        cause: fixture.failureCause,
+        code: fixture.failureCode,
+        method: fixture.failureMethod,
+      };
+    }),
+    { cause: true, code: "permission_denied", method },
+  );
+  await expect
+    .poll(async () => (await snapshot(page)).hostErrors.one)
+    .toBe(message);
+  assert.equal((await snapshot(page)).connected.one, false);
+  assert.equal((await snapshot(page)).views["one/s"], "Last good session");
+  await expect.poll(async () => (await snapshot(page)).busy).toBe(false);
+}
+
+for (const stage of ["listSessions", "inspectSession"] as const) {
+  test(
+    `a completed host mutation rejects a deferred ${stage} failure and preserves the last good snapshot`,
+    options,
+    async () => {
+      await withBrowserFixture(
+        `workspace-failed-${stage.toLowerCase()}`,
+        source,
+        async (page) => {
+          await initialWorkspace(page);
+          await page.evaluate("window.fixture.run()");
+          await complete(
+            page,
+            await pending(page, "renameWindow", "one"),
+            undefined,
+          );
+          await complete(page, await pending(page, "status", "one"), {
+            connected: true,
+          });
+          const listed = await pending(page, "listSessions", "one");
+          let held = listed;
+          if (stage === "inspectSession") {
+            await complete(page, listed, [{ id: "s", label: "Session" }]);
+            held = await pending(page, "inspectSession", "one");
+          }
+          assert.equal(await mutationStatus(page), "pending");
+          await fail(page, held, `${stage} permission failure`);
+          await assertReconciliationFailure(
+            page,
+            `${stage} permission failure`,
+            stage,
+          );
+          // Recovery only retries reads, even though the mutation's result is no longer observable.
+          await complete(
+            page,
+            await startInspection(page),
+            view("s", "Recovered session"),
+          );
+          await expect
+            .poll(async () => (await snapshot(page)).views["one/s"])
+            .toBe("Recovered session");
+          assert.equal(
+            await page.evaluate(
+              "window.fixture.calls.filter(call=>call.method==='renameWindow').length",
+            ),
+            1,
+          );
+        },
+      );
+    },
+  );
+}
+
+test(
+  "targeted session inspection failure rejects with cause and publishes the host error without replacing its view",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-failed-target-inspection",
+      source,
+      async (page) => {
+        await initialWorkspace(page);
+        await page.evaluate("window.fixture.mutate()");
+        await complete(
+          page,
+          await pending(page, "renameWindow", "one"),
+          undefined,
+        );
+        const inspected = await pending(page, "inspectSession", "one");
+        assert.equal(await mutationStatus(page), "pending");
+        await fail(page, inspected, "Target inspection failed");
+        await assertReconciliationFailure(
+          page,
+          "Target inspection failed",
+          "inspectSession",
+        );
+        assert.equal(
+          await page.evaluate(
+            "window.fixture.calls.filter(call=>call.method==='renameWindow').length",
+          ),
+          1,
+        );
+      },
+    );
+  },
+);
+
+test(
+  "an action rejection remains primary when read-only background recovery also fails",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-failed-action-recovery",
+      source,
+      async (page) => {
+        await initialWorkspace(page);
+        await page.evaluate("window.fixture.run()");
+        await fail(
+          page,
+          await pending(page, "renameWindow", "one"),
+          "Original mutation failure",
+        );
+        await expect
+          .poll(() => mutationStatus(page))
+          .toBe("Original mutation failure");
+        assert.equal(
+          await page.evaluate("window.fixture.failureIdentity"),
+          true,
+        );
+        await complete(page, await pending(page, "status", "one"), {
+          connected: true,
+        });
+        await fail(
+          page,
+          await pending(page, "listSessions", "one"),
+          "Recovery list failure",
+        );
+        await expect
+          .poll(async () => (await snapshot(page)).hostErrors.one)
+          .toBe("Recovery list failure");
+        assert.equal((await snapshot(page)).error, "Original mutation failure");
+        assert.equal(await mutationStatus(page), "Original mutation failure");
+        assert.equal(
+          await page.evaluate(
+            "window.fixture.calls.filter(call=>call.method==='renameWindow').length",
+          ),
+          1,
+        );
+      },
+    );
+  },
+);
+
+test(
+  "an unrelated disconnected host stays visible without failing host or session mutation completion",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-unrelated-offline",
+      source,
+      async (page) => {
+        await initialWorkspace(page);
+        await page.evaluate(() => {
+          const fixture = (window as unknown as WorkspaceFixtureWindow).fixture;
+          fixture.changeHosts([
+            { id: "one", label: "Host one", endpoint: "unix:///one.sock" },
+            { id: "two", label: "Offline host", endpoint: "unix:///two.sock" },
+          ]);
+          fixture.refresh();
+        });
+        await complete(page, await pending(page, "status", "two"), {
+          connected: false,
+          error: "Other host is offline",
+        });
+        await complete(
+          page,
+          await startInspection(page),
+          view("s", "Last good session"),
+        );
+        await expect
+          .poll(async () => (await snapshot(page)).hostErrors.two)
+          .toBe("Other host is offline");
+        await page.evaluate("window.fixture.run()");
+        await complete(
+          page,
+          await pending(page, "renameWindow", "one"),
+          undefined,
+        );
+        await complete(page, await pending(page, "status", "two"), {
+          connected: false,
+          error: "Other host is offline",
+        });
+        await complete(
+          page,
+          await startInspection(page),
+          view("s", "Host mutation refreshed"),
+        );
+        await expect.poll(() => mutationStatus(page)).toBe("complete");
+        await page.evaluate("window.fixture.mutate()");
+        await complete(
+          page,
+          await pending(page, "renameWindow", "one"),
+          undefined,
+        );
+        await complete(
+          page,
+          await pending(page, "inspectSession", "one"),
+          view("s", "Session mutation refreshed"),
+        );
+        await expect.poll(() => mutationStatus(page)).toBe("complete");
+        assert.deepEqual((await snapshot(page)).hosts, ["one", "two"]);
+        assert.equal(
+          (await snapshot(page)).hostErrors.two,
+          "Other host is offline",
+        );
+        assert.equal(
+          (await snapshot(page)).views["one/s"],
+          "Session mutation refreshed",
+        );
+      },
+    );
+  },
+);
+
+for (const kind of ["run", "mutate"] as const) {
+  test(
+    `${kind} rejects reconciliation after unmount without launching any further bridge work`,
+    options,
+    async () => {
+      await withBrowserFixture(
+        `workspace-dispose-${kind}`,
+        source,
+        async (page) => {
+          await initialWorkspace(page);
+          await page.evaluate((kind) => {
+            (window as unknown as WorkspaceFixtureWindow).fixture[kind]();
+          }, kind);
+          await complete(
+            page,
+            await pending(page, "renameWindow", "one"),
+            undefined,
+          );
+          const inspected =
+            kind === "run"
+              ? await startInspection(page)
+              : await pending(page, "inspectSession", "one");
+          await page.evaluate(() =>
+            (window as unknown as WorkspaceFixtureWindow).fixture.unmount(),
+          );
+          await expect(page.getByText("Workspace unmounted")).toBeVisible();
+          const marker = await page.evaluate(
+            () =>
+              (window as unknown as WorkspaceFixtureWindow).fixture.calls
+                .length,
+          );
+          await complete(
+            page,
+            inspected,
+            view("s", "Late mutation inspection"),
+          );
+          await expect
+            .poll(() => mutationStatus(page))
+            .toMatch(/change completed.*workspace closed/i);
+          assert.equal(
+            await page.evaluate(
+              () =>
+                (window as unknown as WorkspaceFixtureWindow).fixture.calls
+                  .length,
+            ),
+            marker,
+          );
+        },
+      );
+    },
+  );
+}
+
+for (const scenario of [
+  "balanced",
+  "unbalanced",
+  "inspection rejects",
+] as const) {
+  test(
+    `dispatcher split completion is ordered through ${scenario}`,
+    options,
+    async () => {
+      await withBrowserFixture(
+        `workspace-split-${scenario.replace(" ", "-")}`,
+        source,
+        async (page) => {
+          await initialWorkspace(page);
+          await page.evaluate((scenario) => {
+            const fixture = (window as unknown as WorkspaceFixtureWindow)
+              .fixture;
+            fixture.preferences({
+              autobalanceSplits: scenario !== "unbalanced",
+            });
+            fixture.dispatch("pane.split.right");
+          }, scenario);
+          const split = await pending(page, "split", "one");
+          assert.equal(await mutationStatus(page), "pending");
+          assert.equal(
+            await page.evaluate(
+              "window.fixture.pending().some(call=>call.method==='layoutAction'||call.method==='inspectSession')",
+            ),
+            false,
+          );
+          await complete(page, split, undefined);
+          if (scenario !== "unbalanced") {
+            const balanced = await pending(page, "layoutAction", "one");
+            assert.equal(
+              await page.evaluate(
+                "window.fixture.pending().some(call=>call.method==='inspectSession')",
+              ),
+              false,
+            );
+            assert.equal(await mutationStatus(page), "pending");
+            await complete(page, balanced, undefined);
+          }
+          const inspected = await pending(page, "inspectSession", "one");
+          assert.equal(await mutationStatus(page), "pending");
+          if (scenario === "inspection rejects") {
+            await fail(page, inspected, "Split inspection failed");
+            await assertReconciliationFailure(
+              page,
+              "Split inspection failed",
+              "inspectSession",
+            );
+          } else {
+            await complete(page, inspected, view("s", "Split session"));
+            await expect.poll(() => mutationStatus(page)).toBe("complete");
+            assert.equal(
+              await page.evaluate("window.fixture.completed.label"),
+              "Split session",
+            );
+          }
+          const ordered = await page.evaluate(() =>
+            (window as unknown as WorkspaceFixtureWindow).fixture.calls
+              .filter((call) =>
+                ["split", "layoutAction", "inspectSession"].includes(
+                  call.method,
+                ),
+              )
+              .map((call) => call.method),
+          );
+          assert.deepEqual(
+            ordered,
+            scenario === "unbalanced"
+              ? ["inspectSession", "split", "inspectSession"]
+              : ["inspectSession", "split", "layoutAction", "inspectSession"],
+          );
         },
       );
     },

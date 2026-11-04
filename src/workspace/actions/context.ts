@@ -194,6 +194,7 @@ export type ClientActionsDependencies = Pick<
 };
 
 export type RequestClose = (
+  hostId: string,
   title: string,
   description: string,
   action: () => Promise<unknown>,

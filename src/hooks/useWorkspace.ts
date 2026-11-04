@@ -1,11 +1,13 @@
 import {
   activeSessionSelection,
+  WorkspaceReconciliationError,
   type SessionMutationPlan,
   type WorkspaceOperations,
 } from "../core/workspaceOperations";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ClientEvent,
+  Host,
   KeymapResult,
   RexBridge,
   Selection,
@@ -16,6 +18,7 @@ import type {
 import { errorMessage, paneKey, viewKey } from "../core/workspace";
 import {
   type HostState,
+  type HostSnapshot,
   type PaneMetadata,
   collectHostSnapshot,
   reconcileSelection,
@@ -48,7 +51,7 @@ export function useWorkspace() {
       event?: ClientEvent,
     ) => Promise<unknown>
   >(async () => {});
-  const inFlight = useRef<Promise<void> | undefined>(undefined);
+  const inFlight = useRef<Promise<HostSnapshot[]> | undefined>(undefined);
   const refreshQueued = useRef(false);
   const viewEpoch = useRef(0);
   const mounted = useRef(true);
@@ -68,10 +71,34 @@ export function useWorkspace() {
       );
       if (!configuration)
         throw new Error("The selected host is no longer configured.");
-      const view = await window.rex.request("inspectSession", {
-        hostId,
-        sessionId,
-      });
+      let view: SessionView;
+      try {
+        view = await window.rex.request("inspectSession", {
+          hostId,
+          sessionId,
+        });
+      } catch (failure) {
+        if (
+          mounted.current &&
+          settingsRef.current?.hosts.some(
+            (host) =>
+              host.id === hostId && host.endpoint === configuration.endpoint,
+          )
+        )
+          setHosts((previous) => {
+            const existing = previous.find((host) => host.id === hostId);
+            const failed = {
+              ...(existing || configuration),
+              connected: false,
+              error: errorMessage(failure),
+              sessions: existing?.sessions || [],
+            };
+            return existing
+              ? previous.map((host) => (host.id === hostId ? failed : host))
+              : [...previous, failed];
+          });
+        throw failure;
+      }
       viewEpoch.current++;
       if (
         mounted.current &&
@@ -115,7 +142,9 @@ export function useWorkspace() {
     },
     [],
   );
-  const refreshSnapshot = useCallback(async () => {
+  const refreshSnapshot = useCallback(async (): Promise<
+    HostSnapshot[] | undefined
+  > => {
     if (!mounted.current) return;
     const config = settingsRef.current;
     if (!config) return;
@@ -183,21 +212,26 @@ export function useWorkspace() {
       );
       setSelection(reconciled.selection);
       if (reconciled.updateFocus) setFocusedPane(reconciled.focusedPane);
+      return snapshots;
     } catch (failure) {
       if (mounted.current) setError(errorMessage(failure));
+      throw failure;
     }
   }, []);
-  const refresh = useCallback((): Promise<void> => {
-    if (!mounted.current || !settingsRef.current) return Promise.resolve();
+  const refreshHosts = useCallback((): Promise<HostSnapshot[]> => {
+    if (!mounted.current || !settingsRef.current) return Promise.resolve([]);
     if (inFlight.current) {
       refreshQueued.current = true;
       return inFlight.current;
     }
     const work = (async () => {
+      let snapshots: HostSnapshot[] = [];
       do {
         refreshQueued.current = false;
-        await refreshSnapshot();
+        const next = await refreshSnapshot();
+        if (next) snapshots = next;
       } while (mounted.current && refreshQueued.current);
+      return snapshots;
     })();
     inFlight.current = work;
     const finish = () => {
@@ -207,10 +241,18 @@ export function useWorkspace() {
     void work.then(finish, finish);
     return work;
   }, [refreshSnapshot]);
+  const refresh = useCallback(async (): Promise<void> => {
+    await refreshHosts();
+  }, [refreshHosts]);
+  const refreshInBackground = useCallback(() => {
+    // Per-host failures are published in snapshots; unexpected failures are
+    // already recorded by refreshSnapshot and must not become unhandled rejections.
+    void refresh().catch(() => {});
+  }, [refresh]);
   const scheduleRefresh = useCallback(() => {
     clearTimeout(delayedRefresh.current);
-    delayedRefresh.current = setTimeout(() => void refresh(), 80);
-  }, [refresh]);
+    delayedRefresh.current = setTimeout(refreshInBackground, 80);
+  }, [refreshInBackground]);
   const saveSettings = useCallback(async (next: Settings) => {
     const saved = await window.rex.setSettings(next);
     if (mounted.current) {
@@ -234,8 +276,10 @@ export function useWorkspace() {
       setBusy(true);
       setError(undefined);
       viewEpoch.current++;
+      let applied = false;
       try {
         const result = await action();
+        applied = true;
         viewEpoch.current++;
         if (!mounted.current)
           throw new Error(
@@ -243,11 +287,14 @@ export function useWorkspace() {
           );
         return { result, reconciled: await reconcile(result) };
       } catch (failure) {
+        const reported = applied
+          ? new WorkspaceReconciliationError(failure)
+          : failure;
         if (mounted.current) {
-          setError(errorMessage(failure));
+          setError(errorMessage(reported));
           scheduleRefresh();
         }
-        throw failure;
+        throw reported;
       } finally {
         pendingMutations.current--;
         if (mounted.current) setBusy(pendingMutations.current > 0);
@@ -255,43 +302,64 @@ export function useWorkspace() {
     },
     [scheduleRefresh],
   );
+  const requireCurrentHost = useCallback((host: Host | undefined) => {
+    if (!mounted.current)
+      throw new Error(
+        "The workspace closed before the change could be refreshed.",
+      );
+    if (
+      !host ||
+      !settingsRef.current?.hosts.some(
+        (current) =>
+          current.id === host.id && current.endpoint === host.endpoint,
+      )
+    )
+      throw new Error(
+        "The host configuration changed before the change could be refreshed.",
+      );
+  }, []);
   const run = useCallback(
-    async <T>(action: () => Promise<T>): Promise<T> => {
-      const completed = await completeMutation(action, () => refresh());
+    async <T>(hostId: string, action: () => Promise<T>): Promise<T> => {
+      const host = settingsRef.current?.hosts.find(
+        (host) => host.id === hostId,
+      );
+      requireCurrentHost(host);
+      const completed = await completeMutation(action, async () => {
+        requireCurrentHost(host);
+        const snapshots = await refreshHosts();
+        requireCurrentHost(host);
+        const target = snapshots.find(
+          (snapshot) => snapshot.host.id === hostId,
+        );
+        if (!target)
+          throw new Error("The changed host could not be refreshed.");
+        if ("failure" in target) throw target.failure;
+        if (!target.host.connected)
+          throw new Error(
+            target.host.error || "The changed host is disconnected.",
+          );
+      });
       return completed.result;
     },
-    [completeMutation, refresh],
+    [completeMutation, refreshHosts, requireCurrentHost],
   );
   const mutateSession = useCallback(
     async <T>(
       plan: SessionMutationPlan<T>,
       action: () => Promise<T>,
     ): Promise<{ result: T; view: SessionView }> => {
-      const endpoint = settingsRef.current?.hosts.find(
+      const host = settingsRef.current?.hosts.find(
         (host) => host.id === plan.hostId,
-      )?.endpoint;
-      const requireCurrentTarget = () => {
-        if (!mounted.current)
-          throw new Error(
-            "The workspace closed before the change could be refreshed.",
-          );
-        if (
-          !settingsRef.current?.hosts.some(
-            (host) => host.id === plan.hostId && host.endpoint === endpoint,
-          )
-        )
-          throw new Error(
-            "The host configuration changed before the session could be refreshed.",
-          );
-      };
+      );
+      requireCurrentHost(host);
       const completed = await completeMutation(action, async (result) => {
-        requireCurrentTarget();
+        requireCurrentHost(host);
         const sessionId =
           typeof plan.sessionId === "function"
             ? plan.sessionId(result)
             : plan.sessionId;
         const view = await reloadSession(plan.hostId, sessionId);
-        requireCurrentTarget();
+        requireCurrentHost(host);
         if (plan.selectActive) {
           const next = activeSessionSelection(plan.hostId, view);
           selectionRef.current = next;
@@ -305,7 +373,7 @@ export function useWorkspace() {
       });
       return { result: completed.result, view: completed.reconciled };
     },
-    [completeMutation, reloadSession],
+    [completeMutation, reloadSession, requireCurrentHost],
   );
   const focusPane = useCallback(
     async (target: TerminalRef): Promise<void> => {
@@ -366,7 +434,7 @@ export function useWorkspace() {
         selectionRef.current = saved.lastSelection;
         setSelection(saved.lastSelection);
         setFocusedPane(saved.lastSelection?.blockId);
-        void refresh();
+        refreshInBackground();
       })
       .catch((failure) => {
         setError(errorMessage(failure));
@@ -422,7 +490,7 @@ export function useWorkspace() {
       }
     });
     const timer = setInterval(() => {
-      if (!document.hidden) void refresh();
+      if (!document.hidden) refreshInBackground();
     }, 5000);
     return () => {
       mounted.current = false;
@@ -431,7 +499,7 @@ export function useWorkspace() {
       clearTimeout(delayedRefresh.current);
       unsubscribe();
     };
-  }, [refresh, scheduleRefresh, select]);
+  }, [refreshInBackground, scheduleRefresh, select]);
   useEffect(() => {
     if (!selection || !settingsRef.current) return;
     const timer = setTimeout(() => {

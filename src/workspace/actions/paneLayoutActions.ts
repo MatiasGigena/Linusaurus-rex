@@ -154,7 +154,7 @@ export function createPaneLayoutActions(
                 !["left", "right", "above", "below"].includes(values.direction)
               )
                 throw new Error("Use left, right, above or below.");
-              await workspace.run(() =>
+              await workspace.run(hostId, () =>
                 window.rex.request("movePane", {
                   ...terminalRef,
                   anchorBlockId: values.anchor,
@@ -165,7 +165,7 @@ export function createPaneLayoutActions(
           });
           return;
         }
-        return workspace.run(() =>
+        return workspace.run(hostId, () =>
           window.rex.request("movePane", {
             ...terminalRef,
             anchorBlockId: target.id,
@@ -178,7 +178,7 @@ export function createPaneLayoutActions(
       }
       case "pane.swap":
         requirePane();
-        return workspace.run(() =>
+        return workspace.run(hostId, () =>
           window.rex.request("swapPanes", {
             ...terminalRef,
             otherBlockId: String(args.other_block_id),
@@ -186,7 +186,7 @@ export function createPaneLayoutActions(
         );
       case "pane.balance":
         requirePane();
-        return workspace.run(() =>
+        return workspace.run(hostId, () =>
           window.rex.request("layoutAction", {
             ...terminalRef,
             operation: "balance",
@@ -217,7 +217,7 @@ export function createPaneLayoutActions(
               { name: "windowId", label: "Destination tab ID", required: true },
             ],
             submit: async (values) => {
-              await workspace.run(() =>
+              await workspace.run(hostId, () =>
                 window.rex.request("layoutAction", {
                   ...terminalRef,
                   operation,
