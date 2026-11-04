@@ -111,9 +111,15 @@
 /* ---------- Foundations ---------- */
 
 :root[data-chrome="macos"] {
+  /*
+   * San Francisco when the system has it; otherwise the bundled Inter, whose
+   * optical-size axis switches between text and display cuts the way SF Text
+   * and SF Display do.
+   */
   font-family:
-    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", Inter,
-    "Ubuntu Sans", "Noto Sans", system-ui, sans-serif;
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro",
+    "Inter Variable", Inter, system-ui, sans-serif;
+  font-optical-sizing: auto;
   font-size: 13px;
   letter-spacing: -0.08px;
 }
