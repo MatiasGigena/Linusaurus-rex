@@ -20,7 +20,7 @@ interface WorkspaceLayoutProps {
   selection?: Selection;
   views: SessionViews;
   hosts: Pick<HostState, "id" | "connected" | "error">[];
-  metadata: Record<string, PaneMetadata>;
+  metadata: Partial<Record<string, PaneMetadata>>;
   settings: Settings;
   focusedPane?: string;
   modalOpen: boolean;

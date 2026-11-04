@@ -9,7 +9,7 @@ import {
   windowTitle,
 } from "../core/workspace";
 
-type Metadata = Record<string, PaneMetadata>;
+type Metadata = Partial<Record<string, PaneMetadata>>;
 export function enrichWindow(
   hostId: string,
   sessionId: string,

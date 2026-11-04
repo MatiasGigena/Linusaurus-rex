@@ -20,7 +20,7 @@ export interface WorkspaceActionOptions {
   hosts: HostState[];
   views: SessionViews;
   selection: Selection | undefined;
-  keymaps: Record<string, KeymapResult>;
+  keymaps: Partial<Record<string, KeymapResult>>;
   focusedPane: string | undefined;
   interfaceTheme: string | undefined;
   workspaceElement: RefObject<HTMLDivElement | null>;

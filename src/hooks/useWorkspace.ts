@@ -33,8 +33,12 @@ export function useWorkspace() {
   const [views, setViews] = useState<SessionViews>({});
   const [selection, setSelection] = useState<Selection>();
   const [focusedPane, setFocusedPane] = useState<string>();
-  const [metadata, setMetadata] = useState<Record<string, PaneMetadata>>({});
-  const [keymaps, setKeymaps] = useState<Record<string, KeymapResult>>({});
+  const [metadata, setMetadata] = useState<
+    Partial<Record<string, PaneMetadata>>
+  >({});
+  const [keymaps, setKeymaps] = useState<Partial<Record<string, KeymapResult>>>(
+    {},
+  );
   const [keyHints, setKeyHints] =
     useState<Extract<ClientEvent, { type: "keys" }>>();
   const [notices, setNotices] = useState<

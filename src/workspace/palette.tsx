@@ -7,7 +7,7 @@ import type { DialogActions } from "./dialogs";
 interface PaletteOptions {
   palette: "all" | "sessions" | undefined;
   settings: Settings | undefined;
-  keymaps: Record<string, KeymapResult>;
+  keymaps: Partial<Record<string, KeymapResult>>;
   activeHostId: string | undefined;
   navHosts: NavigationHost[];
   dispatch(name: string, args?: Record<string, unknown>): void;
