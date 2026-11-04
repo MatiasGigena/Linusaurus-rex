@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+  mkdir,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LinuxServerManager } from "../electron/server-management/lifecycle.js";
@@ -12,6 +19,76 @@ import {
 import { RexControl } from "../electron/rex/control.js";
 import { RexService } from "../electron/rex/service.js";
 import { DEFAULT_SETTINGS } from "../src/shared/types.js";
+
+test("corrupt or unreadable launch profiles never authorize a replacement server", async (t) => {
+  const directory = await mkdtemp(
+    join(tmpdir(), "linusaurus-profile-failure-"),
+  );
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const host = {
+    id: "owned",
+    label: "Owned",
+    endpoint: "unix:///owned-profile.sock",
+  };
+  const profile = {
+    endpoint: host.endpoint,
+    executable: "/usr/bin/rex",
+    args: ["server", "run"],
+    env: { PATH: "/usr/bin" },
+  };
+  let running = true,
+    launches = 0;
+  const makeManager = () =>
+    new LinuxServerManager({
+      directory,
+      systemd: null,
+      call: async (_host, method) => {
+        if (!running) throw new Error("ECONNREFUSED");
+        return method === "server.status"
+          ? { pid: 10, session_count: 0 }
+          : { version: "test" };
+      },
+      process: async () => structuredClone(profile),
+      launch: async () => {
+        launches++;
+        throw new Error("Unexpected launch");
+      },
+    });
+  await makeManager().status(host);
+  const path = join(directory, (await readdir(directory))[0]);
+  running = false;
+  for (const content of [
+    "{ invalid JSON",
+    JSON.stringify({ ...profile, args: [42] }),
+    JSON.stringify({ ...profile, env: null }),
+  ]) {
+    await writeFile(path, content);
+    const manager = makeManager();
+    const status = await manager.status(host);
+    assert.equal(status.canManage, false);
+    assert.match(status.reason ?? "", /saved launch profile.*Repair/);
+    await assert.rejects(
+      manager.perform(host, "start"),
+      /saved launch profile/,
+    );
+    assert.equal(await readFile(path, "utf8"), content);
+  }
+  await rm(path);
+  await mkdir(path);
+  const unreadable = makeManager();
+  assert.equal((await unreadable.status(host)).canManage, false);
+  await assert.rejects(
+    unreadable.perform(host, "start"),
+    /saved launch profile/,
+  );
+  assert.equal(launches, 0);
+  await rm(path, { recursive: true });
+  assert.equal(
+    (await makeManager().status(host)).canManage,
+    true,
+    "a genuinely missing profile still permits first-time setup",
+  );
+});
 
 test("origin overrides replace only startup origin flags and reject blanket/control patterns", () => {
   const args = [

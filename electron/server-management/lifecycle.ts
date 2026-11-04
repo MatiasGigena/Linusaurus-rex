@@ -103,12 +103,16 @@ export class LinuxServerManager {
         JSON.parse(await readFile(this.path(endpoint), "utf8")),
         endpoint,
       );
-      if (!parsed) return;
+      if (!parsed) throw new Error("Invalid saved launch metadata.");
       profile = parsed;
       this.profiles.set(endpoint, profile);
       return profile;
-    } catch {
-      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw new Error(
+        "The saved launch profile could not be loaded. Repair or remove it before managing this server.",
+        { cause: error },
+      );
     }
   }
   async status(host: Host): Promise<ServerManagementInfo> {
@@ -144,7 +148,13 @@ export class LinuxServerManager {
       }
       /* A stopped local server is valid and can use its saved launch profile. */
     }
-    let profile = await this.profile(endpoint);
+    let profile: Profile | undefined;
+    try {
+      profile = await this.profile(endpoint);
+    } catch (error) {
+      info.reason = error instanceof Error ? error.message : String(error);
+      return info;
+    }
     let service:
       Awaited<ReturnType<SystemdUserServices["inspect"]>> | undefined;
     if (result) {
