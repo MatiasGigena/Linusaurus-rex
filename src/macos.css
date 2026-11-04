@@ -1144,7 +1144,7 @@
 :root[data-chrome="macos"]
   .palette-item.is-selected
   :is(.palette-item-icon, .palette-item-content small, kbd, .palette-enter) {
-  color: #ffffffd9;
+  color: #ffffff;
 }
 :root[data-chrome="macos"] .palette-item-content {
   font-size: 13px;
