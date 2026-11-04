@@ -192,7 +192,7 @@ export function ServerOriginsEditor({
           <pre>{preview.after}</pre>
           <div className="settings-buttons">
             <button
-              className="button primary"
+              className="button button-primary"
               disabled={busy || !server?.service?.canManage}
               onClick={() =>
                 void run(async () => {
