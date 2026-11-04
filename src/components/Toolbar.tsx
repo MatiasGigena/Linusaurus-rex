@@ -18,7 +18,6 @@ export interface ToolbarProps {
   zoomed?: boolean;
   /** False hides "Maximize pane" while there is nothing to maximize (macOS theme). */
   canZoom?: boolean;
-  onRename?: () => void;
   onRenameWindow?: () => void;
   onClosePane?: () => void;
   onWindowControl?: (action: WindowControlAction) => void;
@@ -36,7 +35,7 @@ export function Toolbar(props: ToolbarProps) {
       {props.onWindowControl && placement === 'leading' && <WindowControls variant="traffic" onWindowControl={props.onWindowControl} />}
       {props.sidebarCollapsed && <IconButton label="Show sidebar" shortcut="Ctrl Shift B" onClick={props.onToggleSidebar}><PanelLeft size={18} /></IconButton>}
       <span className="toolbar-terminal-icon"><Terminal size={19} /></span>
-      <button className="toolbar-title" type="button" onClick={props.onRenameWindow ?? props.onRename ?? props.onPalette} title={props.onRenameWindow || props.onRename ? 'Rename terminal' : 'Switch session'}>
+      <button className="toolbar-title" type="button" onClick={props.onRenameWindow ?? props.onPalette} title={props.onRenameWindow ? 'Rename terminal' : 'Switch session'}>
         <span>{props.title || 'Terminal'}</span>
         {props.subtitle && <span className="toolbar-subtitle">{props.subtitle}</span>}
         <ChevronDown size={12} className="title-chevron" />
