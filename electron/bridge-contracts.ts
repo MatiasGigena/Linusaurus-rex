@@ -3,7 +3,8 @@ import type {
   PathPickerArgs,
   RendererContext,
 } from "../src/shared/types.js";
-import { identifier, record, string } from "./validation.js";
+import { identifier, string } from "./validation.js";
+import { parseSelection } from "./selection.js";
 
 /** Validate the same operation-dependent requirements exposed by the preload types. */
 export function parseLayoutAction(
@@ -79,20 +80,7 @@ export function updateRendererContext(
   }
   if (args.selection === null) next.selection = null;
   else if (args.selection !== undefined) {
-    const selection = record(args.selection);
-    next.selection = {
-      hostId: identifier(selection.hostId, "selected host"),
-      sessionId: string(selection.sessionId, "selected session", 256),
-      windowId: string(selection.windowId, "selected tab", 256),
-      ...(selection.blockId === undefined
-        ? {}
-        : { blockId: identifier(selection.blockId, "selected pane") }),
-    };
-    if (
-      !next.selection.sessionId &&
-      (next.selection.windowId || next.selection.blockId)
-    )
-      throw new Error("An empty host selection cannot contain a tab or pane.");
+    next.selection = parseSelection(args.selection);
   }
   return next;
 }

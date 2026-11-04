@@ -1,6 +1,7 @@
 import type { Host, Selection } from "../../src/shared/types.js";
 import { validateOrigins } from "../server-management/server-origins.js";
 import { identifier, record, string } from "../validation.js";
+import { parseSelection } from "../selection.js";
 
 export function validateHosts(value: unknown): Host[] {
   if (!Array.isArray(value) || !value.length || value.length > 32)
@@ -46,15 +47,5 @@ export function validateLastSelection(
   const selection = record(value);
   const hostId = identifier(selection.hostId, "selected host");
   if (!hosts.some((host) => host.id === hostId)) return undefined;
-  const result: Selection = {
-    hostId,
-    sessionId: string(selection.sessionId, "selected session", 256),
-    windowId: string(selection.windowId, "selected tab", 256),
-    ...(selection.blockId === undefined
-      ? {}
-      : { blockId: identifier(selection.blockId, "selected pane") }),
-  };
-  if (!result.sessionId && (result.windowId || result.blockId))
-    throw new Error("An empty host selection cannot contain a tab or pane.");
-  return result;
+  return parseSelection(selection);
 }
