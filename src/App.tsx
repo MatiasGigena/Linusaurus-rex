@@ -1,3 +1,5 @@
+import { ActivityPanel } from "./components/ActivityPanel";
+import { NoticeStack } from "./components/NoticeStack";
 import { buildPaletteCommands } from "./workspace/palette";
 import { sessionMenuItems, tabMenuItems } from "./workspace/contextMenus";
 import { useWorkspaceGestures } from "./hooks/useWorkspaceGestures";
@@ -18,7 +20,6 @@ import type { Form, Confirmation } from "./workspace/actions/context";
 import { useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
-  Bot,
   ChevronRight,
   Command,
   Eye,
@@ -26,7 +27,6 @@ import {
   Plus,
   RefreshCw,
   TerminalSquare,
-  X,
 } from "lucide-react";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { Toolbar } from "./components/Toolbar";
@@ -46,7 +46,6 @@ import type { UpdateState } from "./shared/types";
 import "./linux.css";
 import { useWorkspace } from "./hooks/useWorkspace";
 import {
-  activityLabel,
   errorMessage,
   matchesShortcut,
   windowTitle,
@@ -612,102 +611,26 @@ export default function App() {
         </footer>
       </main>
       {activityOpen && (
-        <aside className="activity-panel">
-          <div className="activity-panel-heading">
-            <h2>Program activity</h2>
-            <button
-              className="icon-button"
-              aria-label="Close activity"
-              onClick={() => setActivityOpen(false)}
-            >
-              <X size={16} />
-            </button>
-          </div>
-          <div className="activity-controls">
-            <select
-              aria-label="Group activity"
-              className="form-select"
-              value={activityGroup}
-              onChange={(event) =>
-                setActivityGroup(event.target.value as "session")
-              }
-            >
-              <option value="session">By session</option>
-              <option value="priority">By priority</option>
-            </select>
-            <label>
-              <input
-                type="checkbox"
-                checked={activityOnly}
-                onChange={(event) => setActivityOnly(event.target.checked)}
-              />
-              Filter sidebar
-            </label>
-          </div>
-          {allActivities.length ? (
-            allActivities.map(({ host, session, window, pane, activity }) => (
-              <button
-                key={`${pane.id}/${activity.id}`}
-                className={`activity-entry ${activity.state}`}
-                onClick={() => {
-                  ws.select(host.id, session.id, window.id, pane.id);
-                  setActivityOpen(false);
-                }}
-              >
-                <Bot size={17} />
-                <span>
-                  <strong>{activity.app || pane.label}</strong>
-                  <small>{activityLabel(activity)}</small>
-                  <small>
-                    {session.label} · {host.label}
-                  </small>
-                </span>
-                <i className={`activity-status ${activity.state}`} />
-              </button>
-            ))
-          ) : (
-            <div className="activity-empty">
-              Programs that report their status appear here while they work,
-              finish or need your attention.
-            </div>
-          )}
-        </aside>
+        <ActivityPanel
+          items={allActivities}
+          group={activityGroup}
+          filterSidebar={activityOnly}
+          onGroupChange={setActivityGroup}
+          onFilterChange={setActivityOnly}
+          onSelect={ws.select}
+          onClose={() => setActivityOpen(false)}
+        />
       )}
-      <div className={`notice-stack ${settings.notifications.position}`}>
-        {ws.notices.map((notice) => (
-          <div className={`program-notice ${notice.kind}`} key={notice.id}>
-            <button
-              className="notice-content"
-              onClick={() => {
-                if (notice.sessionId)
-                  ws.select(
-                    notice.hostId,
-                    notice.sessionId,
-                    notice.windowId,
-                    notice.blockId,
-                  );
-                ws.setNotices((previous) =>
-                  previous.filter((item) => item.id !== notice.id),
-                );
-              }}
-            >
-              <strong>{notice.title}</strong>
-              <span>{notice.body}</span>
-            </button>
-            <button
-              className="icon-button"
-              aria-label="Dismiss notification"
-              onClick={() =>
-                ws.setNotices((previous) =>
-                  previous.filter((item) => item.id !== notice.id),
-                )
-              }
-            >
-              <X size={13} />
-            </button>
-          </div>
-        ))}
-      </div>
+      <NoticeStack
+        notices={ws.notices}
+        position={settings.notifications.position}
+        onSelect={ws.select}
+        onDismiss={(id) =>
+          ws.setNotices((previous) =>
+            previous.filter((notice) => notice.id !== id),
+          )
+        }
+      />
       {palette && (
         <CommandPalette
           commands={paletteCommands}
