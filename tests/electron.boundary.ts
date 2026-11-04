@@ -53,6 +53,21 @@ async function rejectedBridge(page: Page) {
       /Untrusted renderer/,
     );
   }
+  const failure = await page.evaluate(async () => {
+    try {
+      await window.rex.request("setContext", { uiBusy: true });
+      throw new Error("Unauthorized request succeeded");
+    } catch (error) {
+      return error instanceof Error
+        ? { name: error.name, message: error.message }
+        : null;
+    }
+  });
+  assert.deepEqual(
+    failure,
+    { name: "Error", message: "Untrusted renderer" },
+    "Sender admission uses the same renderer-world error contract",
+  );
 }
 
 try {
@@ -96,9 +111,93 @@ try {
     await page.evaluate(() => window.rex.readClipboard()),
     "trusted clipboard",
   );
+  assert.equal(
+    await page.evaluate(() =>
+      window.rex.request("setContext", { uiBusy: false }),
+    ),
+    undefined,
+  );
+  const malformed = await page.evaluate(async () => {
+    try {
+      await window.rex.request("status", null as unknown as { hostId: string });
+      throw new Error("Malformed request unexpectedly succeeded");
+    } catch (error) {
+      return error instanceof Error
+        ? { name: error.name, message: error.message }
+        : null;
+    }
+  });
+  assert.deepEqual(malformed, { name: "Error", message: "Expected an object" });
+  const remoteError = await page.evaluate(async () => {
+    try {
+      await window.rex.request("inspectSession", {
+        hostId: "local",
+        sessionId: "missing-boundary-session",
+      });
+      throw new Error("Missing session unexpectedly succeeded");
+    } catch (failure) {
+      if (!(failure instanceof Error))
+        throw new Error(
+          "Bridge rejection was not an Error in the renderer world",
+        );
+      return {
+        message: failure.message,
+        code: "code" in failure ? failure.code : undefined,
+        method: "method" in failure ? failure.method : undefined,
+      };
+    }
+  });
+  assert.equal(
+    typeof remoteError.code,
+    "string",
+    "Rex rejection identity survives IPC and context isolation",
+  );
+  assert.ok(
+    ["session.attach", "session.view"].includes(String(remoteError.method)),
+  );
   const windowId = await app.evaluate(
     ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].id,
   );
+
+  // The shared settings listener must revoke host authority in every window.
+  const clientCount = async () => {
+    const response = await service.callMethod<
+      RemoteClient[] | { clients: RemoteClient[] }
+    >(DEFAULT_SETTINGS.hosts[0], "client.list", {});
+    return (Array.isArray(response) ? response : response.clients).filter(
+      (client) =>
+        client.info?.label === label && client.connection_state === "connected",
+    ).length;
+  };
+  const secondOpening = app.waitForEvent("window");
+  await page.evaluate(() => window.rex.windowControl("new"));
+  const second = await secondOpening;
+  await second.waitForFunction(() => Boolean(window.rex));
+  await expect.poll(clientCount).toBe(2);
+  const endpoint = (await service.control(DEFAULT_SETTINGS.hosts[0])).endpoint;
+  const revokedHost = {
+    id: "boundary-revoked",
+    label: "Revoked test host",
+    endpoint,
+  };
+  await page.evaluate(async (host) => {
+    const settings = await window.rex.getSettings();
+    await window.rex.setSettings({
+      ...settings,
+      hosts: [...settings.hosts, host],
+    });
+  }, revokedHost);
+  await expect.poll(clientCount).toBe(4);
+  await page.evaluate(async () => {
+    const settings = await window.rex.getSettings();
+    await window.rex.setSettings({
+      ...settings,
+      hosts: settings.hosts.filter((host) => host.id !== "boundary-revoked"),
+    });
+  });
+  await expect.poll(clientCount).toBe(2);
+  await second.close();
+  await expect.poll(clientCount).toBe(1);
 
   const opened = app.waitForEvent("window");
   const unregisteredId = await app.evaluate(

@@ -5,7 +5,6 @@ import {
   dialog,
   ipcMain,
   Notification,
-  safeStorage,
   screen,
   shell,
   type IpcMainEvent,
@@ -14,8 +13,8 @@ import {
 import { readFile } from "node:fs/promises";
 import { realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
 import { CHANNELS } from "./channels.js";
+import { captureRequest } from "../src/shared/requestResult.js";
 import { trustedRenderer } from "./renderer-boundary.js";
 import {
   parseLayoutAction,
@@ -35,7 +34,7 @@ import type {
 import { SettingsStore } from "./settings.js";
 import { record, string, identifier, integer } from "./validation.js";
 import { ClientFeatures } from "./client/client.js";
-import { CredentialsStoreCache } from "./features/credentials.js";
+import { hostCredentials } from "./features/host-credentials.js";
 import {
   IntegrationManager,
   type IntegrationChange,
@@ -45,12 +44,13 @@ import { parseTheme } from "./features/themes.js";
 import { isLocalEndpoint } from "./features/config.js";
 import { ConfigurationEditor } from "./features/configuration-editor.js";
 import { UpdateCoordinator } from "./updates/update-coordinator.js";
-import { desktopAllowed, noticeSound } from "./client/notifications.js";
+import { DesktopNotifications } from "./client/desktop-notifications.js";
 import { LinuxServerManager } from "./server-management/lifecycle.js";
 import { validateOrigins } from "./server-management/server-origins.js";
 import { resolveCurrentAppImage } from "./updates/update-target.js";
 import { LinuxUpdateManager } from "./updates/updates.js";
-import { linkDecision } from "./features/links.js";
+import { ExternalLinks } from "./features/external-links.js";
+import { terminalThemeRequest } from "./features/terminal-theme.js";
 
 type SenderEvent = IpcMainInvokeEvent | IpcMainEvent;
 type Options = {
@@ -59,8 +59,6 @@ type Options = {
   onSettings?: (settings: Settings) => void;
 };
 const contexts = new Map<number, WindowContext>();
-const credentialStores = new CredentialsStoreCache();
-const notificationTimes = new Map<string, number>();
 const handleChannels = [
   CHANNELS.request,
   CHANNELS.getSettings,
@@ -124,32 +122,13 @@ function fraction(value: unknown, name: string, min = 0, max = 1) {
     throw new Error(`Invalid ${name}`);
   return value;
 }
-const credentialKey = (host: Host) =>
-  `${host.id}:${createHash("sha256")
-    .update(host.endpoint || process.env.REX_SERVER || "local")
-    .digest("hex")}`;
-function credentials() {
-  return credentialStores.get(
-    join(app.getPath("userData"), "host-credentials.json"),
-    {
-      available: async () =>
-        (await safeStorage.isAsyncEncryptionAvailable()) &&
-        safeStorage.getSelectedStorageBackend() !== "basic_text",
-      encrypt: (value) => safeStorage.encryptStringAsync(value),
-      decrypt: async (value) =>
-        (await safeStorage.decryptStringAsync(value)).result,
-    },
-  );
-}
-/** Use the same endpoint-bound encrypted credentials for startup and GUI connections. */
-export async function getHostCredentials(host: Host) {
-  return (await credentials()).get(credentialKey(host));
-}
 function ensureRegistered() {
   if (registered) return;
   registered = true;
   ipcMain.handle(CHANNELS.request, (event, method: unknown, args: unknown) =>
-    resolve(event).request(identifier(method, "operation"), record(args)),
+    captureRequest(() =>
+      resolve(event).request(identifier(method, "operation"), record(args)),
+    ),
   );
   ipcMain.handle(CHANNELS.getSettings, (event) => resolve(event).getSettings());
   ipcMain.handle(CHANNELS.setSettings, (event, value: unknown) =>
@@ -206,7 +185,8 @@ class WindowContext {
   private subscriptions = new Map<string, { host: Host; stop: () => void }>();
   private context: RendererContext = {};
   private disposed = false;
-  private notices = new Set<Notification>();
+  private notices: DesktopNotifications;
+  private links: ExternalLinks;
   private stopSettings?: () => void;
   constructor(
     readonly window: BrowserWindow,
@@ -215,7 +195,7 @@ class WindowContext {
     private options: Options,
   ) {
     this.rex = new RexService({
-      credentials: getHostCredentials,
+      credentials: hostCredentials.get,
       onControl: (host, control) => this.features.bindControl(host, control),
       onMetadata: (host, sessionId, blockId, value) =>
         this.features.metadata(host.id, sessionId, blockId, value),
@@ -225,10 +205,35 @@ class WindowContext {
       call: (host, method, payload) =>
         this.rex.callMethod(host, method, payload),
     });
+    this.notices = new DesktopNotifications(
+      window,
+      () => store.get(),
+      {
+        select: (value) => this.emit({ type: "select", ...value }),
+        openServerSettings: (host) =>
+          this.features.invoke(host, "client.settings", { tab: "server" }),
+      },
+      {
+        supported: () => Notification.isSupported(),
+        create: (options) =>
+          new Notification({
+            ...options,
+            icon: join(app.getAppPath(), "resources/icon.png"),
+          }),
+      },
+    );
+    this.links = new ExternalLinks(
+      () => store.get(),
+      (value) => this.saveSettings(value),
+      {
+        confirm: (options) => dialog.showMessageBox(window, options),
+        open: (url) => shell.openExternal(url),
+      },
+    );
     this.features = new ClientFeatures(this.rex, {
       settings: () => store.get(),
       emit: (event) => this.emit(event),
-      notify: (event) => this.notify(event),
+      notify: (event) => this.notices.show(event),
       badge: (count) => {
         if (!this.window.isDestroyed()) {
           this.window.setTitle(
@@ -241,6 +246,14 @@ class WindowContext {
     });
     let previousSettings = store.get();
     this.stopSettings = store.onChange((settings) => {
+      for (const oldHost of previousSettings.hosts) {
+        const current = settings.hosts.find((host) => host.id === oldHost.id);
+        if (!current || current.endpoint !== oldHost.endpoint) {
+          this.features.forgetHost(oldHost);
+          this.rex.disconnect(oldHost);
+          this.notices.clearHost(oldHost.id);
+        }
+      }
       this.emit({ type: "settings", settings });
       this.visibility();
       for (const [id, subscription] of this.subscriptions) {
@@ -292,8 +305,7 @@ class WindowContext {
     for (const oldHost of previous.hosts) {
       const nextHost = settings.hosts.find((host) => host.id === oldHost.id);
       if (!nextHost || nextHost.endpoint !== oldHost.endpoint) {
-        await (await credentials()).remove(credentialKey(oldHost));
-        this.rex.reconnect(oldHost);
+        await hostCredentials.remove(oldHost);
       }
     }
     for (const [id, subscription] of this.subscriptions) {
@@ -379,36 +391,8 @@ class WindowContext {
       return this.integrations.apply(
         identifier(args.previewId, "integration preview"),
       );
-    if (method === "openExternal") {
-      const settings = this.store.get();
-      const decision = linkDecision(
-        string(args.url, "URL", 8192),
-        settings.appLinks,
-        settings.trustedLinks,
-      );
-      if (decision.confirmation) {
-        const response = await dialog.showMessageBox(this.window, {
-          type: "question",
-          title: "Open application link?",
-          message: `Open this link with ${new URL(decision.url).protocol.slice(0, -1)}?`,
-          detail: `Target: ${decision.target}\n\nOnly allow targets you recognize.`,
-          buttons: ["Open once", "Always allow this app target", "Cancel"],
-          defaultId: 0,
-          cancelId: 2,
-          noLink: true,
-        });
-        if (response.response === 2) return;
-        if (response.response === 1)
-          await this.saveSettings({
-            ...this.store.get(),
-            trustedLinks: [
-              ...new Set([...this.store.get().trustedLinks, decision.target]),
-            ],
-          });
-      }
-      await shell.openExternal(decision.url);
-      return;
-    }
+    if (method === "openExternal")
+      return this.links.open(string(args.url, "URL", 8192));
     if (method === "pickPath") return this.pickPath(parsePathPicker(args));
     if (method === "importTheme") {
       const result = await dialog.showOpenDialog(this.window, {
@@ -431,23 +415,13 @@ class WindowContext {
       );
     const host = this.host(args.hostId);
     if (method === "setCredentials") {
-      if (
-        !/^https?:\/\/|^wss?:\/\//i.test(
-          host.endpoint || process.env.REX_SERVER || "",
-        )
-      )
-        throw new Error(
-          "Use an explicit HTTP(S) endpoint before saving gateway credentials.",
-        );
-      const secrets = await credentials();
-      await secrets.set(credentialKey(host), args);
+      await hostCredentials.set(host, args);
       this.rex.reconnect(host);
       return;
     }
-    if (method === "credentialStatus")
-      return (await credentials()).status(credentialKey(host));
+    if (method === "credentialStatus") return hostCredentials.status(host);
     if (method === "removeCredentials") {
-      await (await credentials()).remove(credentialKey(host));
+      await hostCredentials.remove(host);
       this.rex.reconnect(host);
       return;
     }
@@ -467,38 +441,7 @@ class WindowContext {
         args.operation as "start" | "stop" | "restart",
       );
     }
-    if (method === "createTutorial") {
-      const created = (await this.rex.callMethod(host, "session.create", {
-        label: "Rex tutorial",
-        initial_windows: [
-          {
-            window_label: "Getting started",
-            layout: {
-              block: {
-                flavor: "com.superlogical.onboarding.onboarding",
-                options: {},
-              },
-            },
-          },
-        ],
-      })) as { session_id: string };
-      try {
-        const view = await this.rex.inspect(host, created.session_id);
-        const first = view.windows[0];
-        return {
-          sessionId: created.session_id,
-          windowId: first.id,
-          blockId: first.panes[0].id,
-        };
-      } catch (error) {
-        await this.rex
-          .callMethod(host, "session.destroy", {
-            session_id: created.session_id,
-          })
-          .catch(() => {});
-        throw error;
-      }
-    }
+    if (method === "createTutorial") return this.rex.createTutorial(host);
     if (method === "status") return this.rex.status(host);
     if (method === "listSessions") return this.rex.sessions(host);
     if (method === "keymap") return this.features.keymap(host);
@@ -645,32 +588,15 @@ class WindowContext {
         layer_id: identifier(args.layerId, "floating pane ID"),
         bounds: validateBounds(args.bounds),
       });
-    if (method === "createBlock") {
-      const flavor = identifier(args.flavor, "block type");
-      const options =
-        args.options === undefined ? undefined : record(args.options);
-      if (args.windowId) {
-        const view = await this.rex.inspect(host, sessionId);
-        const window = view.windows.find(
-          (window) => window.id === args.windowId,
-        );
-        const anchor = window?.focusedBlockId || window?.panes[0]?.id;
-        if (!anchor) throw new Error("The destination tab has no pane.");
-        return this.rex.callMethod(host, "session.new_split", {
-          session_id: sessionId,
-          anchor_id: anchor,
-          direction: "horizontal",
-          side: "after",
-          layout: { block: { flavor, options } },
-          focus: true,
-        });
-      }
-      return this.rex.callMethod(host, "session.new_window", {
-        session_id: sessionId,
-        layout: { block: { flavor, options } },
-        focus: true,
+    if (method === "createBlock")
+      return this.rex.createBlock(host, sessionId, {
+        flavor: identifier(args.flavor, "block type"),
+        options: args.options === undefined ? undefined : record(args.options),
+        windowId:
+          args.windowId === undefined
+            ? undefined
+            : identifier(args.windowId, "destination tab ID"),
       });
-    }
     const blockId = identifier(args.blockId, "pane ID");
     if (method === "releaseViewport")
       return this.rex.releaseViewport(host, sessionId, blockId);
@@ -714,33 +640,12 @@ class WindowContext {
         );
       return result ?? null;
     }
-    if (method === "terminalTheme") {
-      const theme: Record<string, unknown> = {};
-      for (const key of ["foreground", "background", "cursor"] as const) {
-        const color = string(args[key], `${key} color`, 32);
-        if (!/^#?[0-9a-f]{6}$/i.test(color))
-          throw new Error(
-            "Terminal colors must be six-digit hexadecimal values.",
-          );
-        theme[key] = color;
-      }
-      if (args.scheme !== "dark" && args.scheme !== "light")
-        throw new Error("Invalid terminal color scheme");
-      theme.scheme = args.scheme;
-      if (!Array.isArray(args.palette) || args.palette.length > 256)
-        throw new Error("Invalid terminal palette");
-      theme.palette = args.palette.map((value, index) => {
-        const color = string(value, "palette color", 32);
-        if (/^\d{1,3}=#?[0-9a-f]{6}$/i.test(color)) return color;
-        if (/^#?[0-9a-f]{6}$/i.test(color)) return `${index}=${color}`;
-        throw new Error("Invalid terminal palette color");
-      });
+    if (method === "terminalTheme")
       return this.rex.callMethod(host, "com.superlogical.terminal.set_theme", {
         session_id: sessionId,
         block_id: blockId,
-        args: theme,
+        args: terminalThemeRequest(args),
       });
-    }
     if (method === "closePane")
       return this.rex.closeBlock(host, sessionId, blockId);
     if (method === "focus")
@@ -899,8 +804,7 @@ class WindowContext {
     this.features.dispose();
     this.rex.dispose();
     this.integrations.dispose();
-    for (const notice of this.notices) notice.close();
-    this.notices.clear();
+    this.notices.dispose();
     this.window.webContents.removeListener(
       "before-input-event",
       this.interaction,
@@ -937,59 +841,6 @@ class WindowContext {
         this.window.isFocused(),
     });
   };
-  private notify(event: Extract<ClientEvent, { type: "notification" }>) {
-    if (
-      process.env.LINUSAURUS_TEST_NOTIFICATIONS === "1" ||
-      !Notification.isSupported()
-    )
-      return;
-    const settings = this.store.get().notifications;
-    const source = "source" in event ? String(event.source) : undefined;
-    if (!desktopAllowed(settings, event.kind, source)) return;
-    const signature = JSON.stringify([
-      event.hostId,
-      event.sessionId,
-      event.blockId,
-      event.kind,
-      event.title,
-      event.body,
-    ]);
-    const now = Date.now();
-    for (const [key, time] of notificationTimes)
-      if (now - time > 10_000) notificationTimes.delete(key);
-    if (now - (notificationTimes.get(signature) ?? 0) < 3000) return;
-    notificationTimes.set(signature, now);
-    const notice = new Notification({
-      title: event.title,
-      body: event.body,
-      silent: !noticeSound(settings, event.kind),
-      icon: join(app.getAppPath(), "resources/icon.png"),
-    });
-    this.notices.add(notice);
-    notice.on("click", () => {
-      this.window.show();
-      if (this.window.isMinimized()) this.window.restore();
-      this.window.focus();
-      if (source === "tailscale") {
-        const host = this.store
-          .get()
-          .hosts.find((host) => host.id === event.hostId);
-        if (host)
-          void this.features
-            .invoke(host, "client.settings", { tab: "server" })
-            .catch(() => {});
-      } else if (event.sessionId)
-        this.emit({
-          type: "select",
-          hostId: event.hostId,
-          sessionId: event.sessionId,
-          windowId: event.windowId,
-          blockId: event.blockId,
-        });
-    });
-    notice.on("close", () => this.notices.delete(notice));
-    notice.show();
-  }
   private async native(
     name: string,
     args: Record<string, unknown>,

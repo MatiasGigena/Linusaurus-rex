@@ -38,6 +38,8 @@ const MAX_QUEUED_KEYS = 1024;
 const CLIENT_ACTION_TIMEOUT_MS = 25_000;
 
 type PendingAction = {
+  hostId: string;
+  endpoint: string;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -56,6 +58,7 @@ export class ClientFeatures {
   private pending = new Map<string, PendingAction>();
   private configured = new Map<string, ClientConfiguration>();
   private controls = new Map<string, RexControl>();
+  private boundHosts = new Map<string, Host>();
   private queried = new Set<string>();
   private keymaps = new Map<string, KeymapResult>();
   private routers = new Map<string, KeymapRouter>();
@@ -80,40 +83,81 @@ export class ClientFeatures {
       () => hooks.settings().notifications,
     );
   }
-  bindControl(host: Host, control: RexControl) {
+  bindControl(source: Host, control: RexControl) {
+    const host = { ...source };
+    if (!this.acceptsHost(host))
+      throw new Error("The host connection is no longer authorized.");
+    this.boundHosts.set(host.id, host);
     if (this.controls.has(host.id)) this.resetKeys(host.id);
     this.controls.set(host.id, control);
     for (const key of this.queried)
       if (key.startsWith(`${host.id}/`)) this.queried.delete(key);
     control.onEvent((event) => {
-      void this.event(host, control, event).catch((error) =>
-        this.status(host, false, error),
-      );
+      void this.event(host, control, event).catch((error) => {
+        if (this.controls.get(host.id) === control)
+          this.status(host, false, error);
+      });
     });
     void control
       .readyPublic()
       .then(async () => {
+        if (!this.acceptsHost(host) || this.controls.get(host.id) !== control)
+          return;
         await control.call("client.set_label", {
           label: this.hooks.settings().clientLabel,
         });
+        if (!this.acceptsHost(host) || this.controls.get(host.id) !== control)
+          return;
         await control.call("session.attach_all", { event_scope: "all" });
+        if (!this.acceptsHost(host) || this.controls.get(host.id) !== control)
+          return;
         const config =
           this.configured.get(host.id) ?? this.defaultConfiguration();
         const result = await control.call("client.keymap", config);
+        if (!this.acceptsHost(host) || this.controls.get(host.id) !== control)
+          return;
         const keymap = normalizeKeymap(result, config.actions);
         this.keymaps.set(host.id, keymap);
         this.router(host.id).setMap(keymap);
         this.hooks.emit({ type: "keymap", hostId: host.id, keymap });
         void control
           .call("server.status", {})
-          .then((status) =>
-            this.tailscale.apply(host.id, host.label, status, false),
-          )
+          .then((status) => {
+            if (
+              this.acceptsHost(host) &&
+              this.controls.get(host.id) === control
+            )
+              this.tailscale.apply(host.id, host.label, status, false);
+          })
           .catch(() => {});
         this.status(host, true);
       })
-      .catch((error) => this.status(host, false, error));
+      .catch((error) => {
+        if (this.controls.get(host.id) === control)
+          this.status(host, false, error);
+      });
   }
+  forgetHost(host: Host) {
+    for (const [id, pending] of this.pending) {
+      if (pending.hostId !== host.id || pending.endpoint !== host.endpoint)
+        continue;
+      clearTimeout(pending.timer);
+      this.pending.delete(id);
+      pending.reject(new Error("The host connection is no longer authorized."));
+    }
+    if (this.boundHosts.get(host.id)?.endpoint !== host.endpoint) return;
+    this.resetKeys(host.id);
+    this.controls.delete(host.id);
+    this.boundHosts.delete(host.id);
+    this.configured.delete(host.id);
+    this.keymaps.delete(host.id);
+    this.routers.get(host.id)?.dispose();
+    this.routers.delete(host.id);
+    for (const key of this.queried)
+      if (key.startsWith(`${host.id}/`)) this.queried.delete(key);
+    this.activity.clearHost(host.id);
+  }
+
   async configure(
     host: Host,
     actions?: ActionDefinition[],
@@ -371,7 +415,11 @@ export class ClientFeatures {
           ),
         )
           .then((results) => {
-            if (this.disposed || this.controls.get(host.id) !== control) return;
+            if (
+              !this.acceptsHost(host) ||
+              this.controls.get(host.id) !== control
+            )
+              return;
             this.activity.seed(
               host.id,
               view.id,
@@ -448,6 +496,7 @@ export class ClientFeatures {
     }
     this.pending.clear();
     this.controls.clear();
+    this.boundHosts.clear();
     this.keymaps.clear();
     this.queried.clear();
     for (const router of this.routers.values()) router.dispose();
@@ -455,18 +504,24 @@ export class ClientFeatures {
     this.inputQueues.clear();
   }
   private async dispatch(
-    host: Host,
+    source: Host,
     name: string,
     args: Record<string, unknown>,
     sessionId?: string,
     blockId?: string,
   ): Promise<unknown> {
+    const host = { ...source };
     if (this.disposed) throw new Error("The client window was closed.");
+    if (!this.acceptsHost(host))
+      throw new Error("The host connection is no longer authorized.");
+    const control = this.controls.get(host.id);
     const native = await this.hooks.native?.(name, args, {
       host,
       sessionId,
       blockId,
     });
+    if (!this.acceptsHost(host) || this.controls.get(host.id) !== control)
+      throw new Error("The host connection is no longer authorized.");
     if (native?.handled) return native.result ?? null;
     const requestId = randomUUID();
     return new Promise((resolve, reject) => {
@@ -474,7 +529,13 @@ export class ClientFeatures {
         this.pending.delete(requestId);
         reject(new Error("The client action did not receive a response."));
       }, CLIENT_ACTION_TIMEOUT_MS);
-      this.pending.set(requestId, { resolve, reject, timer });
+      this.pending.set(requestId, {
+        hostId: host.id,
+        endpoint: host.endpoint,
+        resolve,
+        reject,
+        timer,
+      });
       this.hooks.emit({
         type: "action",
         requestId,
@@ -487,7 +548,8 @@ export class ClientFeatures {
     });
   }
   private async event(host: Host, control: RexControl, wire: RexEvent) {
-    if (this.disposed || this.controls.get(host.id) !== control) return;
+    if (!this.acceptsHost(host) || this.controls.get(host.id) !== control)
+      return;
     if (wire.type === "disconnected") {
       this.resetKeys(host.id);
       this.status(host, false, wire.error);
@@ -618,7 +680,19 @@ export class ClientFeatures {
       ],
     };
   }
+  private acceptsHost(host: Host): boolean {
+    return (
+      !this.disposed &&
+      this.hooks
+        .settings()
+        .hosts.some(
+          (current) =>
+            current.id === host.id && current.endpoint === host.endpoint,
+        )
+    );
+  }
   private status(host: Host, connected: boolean, error?: unknown) {
+    if (!this.acceptsHost(host)) return;
     this.hooks.emit({
       type: "status",
       hostId: host.id,

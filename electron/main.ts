@@ -2,7 +2,8 @@ import { app, BrowserWindow, globalShortcut, Menu, nativeTheme, Tray, type MenuI
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CHANNELS } from './channels.js';
-import { getHostCredentials,registerIpc } from './ipc.js';
+import { registerIpc } from './ipc.js';
+import { hostCredentials } from './features/host-credentials.js';
 import { SettingsStore } from './settings.js';
 import type { Selection, Settings } from '../src/shared/types.js';
 import {RexService} from './rex/service.js';
@@ -109,7 +110,7 @@ async function launch(options:LaunchOptions){
   if(prepared.changed)await store.set(prepared.settings);
   let initialSelection:Selection|undefined;
   if(options.endpoint||options.session||options.newSession||options.block){
-    const rex=new RexService({credentials:getHostCredentials});
+    const rex=new RexService({credentials:hostCredentials.get});
     try{initialSelection=await resolveLaunchSelection(rex,prepared.host,store.get(),options);}
     finally{rex.dispose();}
     if(initialSelection)await store.set({...store.get(),lastSelection:initialSelection});

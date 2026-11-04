@@ -71,7 +71,10 @@ test("malformed remote keymap entries are filtered before keyboard routing", () 
   ]);
 });
 
-function fixture(allowServerCall?: FeatureHooks["allowServerCall"]) {
+function fixture(
+  allowServerCall?: FeatureHooks["allowServerCall"],
+  native?: FeatureHooks["native"],
+) {
   const settings = structuredClone(DEFAULT_SETTINGS);
   const source = {
     id: "source",
@@ -116,6 +119,7 @@ function fixture(allowServerCall?: FeatureHooks["allowServerCall"]) {
         features.reply(event.requestId, { ok: true });
     },
     allowServerCall,
+    native,
   });
   features.bindControl(source, control);
   return {
@@ -125,6 +129,13 @@ function fixture(allowServerCall?: FeatureHooks["allowServerCall"]) {
     target,
     forwarded,
     emitted,
+    control,
+    emit(type: string, payload: Record<string, unknown>) {
+      listener?.({
+        type,
+        payload: { type, payload: { call_id: "stale-call", ...payload } },
+      });
+    },
     request(type: string, payload: Record<string, unknown>) {
       return new Promise<Record<string, unknown>>((resolve) => {
         nextReply = resolve;
@@ -414,5 +425,242 @@ test("disconnected hosts retry the latest saved shortcuts when their next contro
     );
   } finally {
     fixtureValue.features.dispose();
+  }
+});
+
+test("removed and endpoint-changed hosts lose authority even before disconnect completes", async () => {
+  for (const change of ["remove", "endpoint"] as const) {
+    const current = fixture(() => true);
+    current.settings.remoteControl = true;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const before = current.emitted.length;
+    if (change === "remove")
+      current.settings.hosts = current.settings.hosts.filter(
+        (host) => host.id !== current.source.id,
+      );
+    else
+      current.settings.hosts = current.settings.hosts.map((host) =>
+        host.id === current.source.id
+          ? { ...host, endpoint: "unix:///replacement.sock" }
+          : host,
+      );
+    current.emit("client_perform_requested", {
+      action: "client.sidebar.toggle",
+    });
+    current.emit("client_call_requested", {
+      server_id: "target",
+      method: "server.status",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(current.forwarded, []);
+    assert.ok(
+      !current.emitted.slice(before).some((event) => event.type === "action"),
+    );
+    current.features.forgetHost(current.source);
+    await assert.rejects(
+      current.features.invoke(current.source, "client.sidebar.toggle"),
+      /no longer authorized/,
+    );
+    current.features.dispose();
+  }
+});
+
+test("revocation during a native action cannot accept its result or dispatch a renderer fallback", async () => {
+  for (const change of ["remove", "endpoint", "control"] as const) {
+    const entered = deferred<void>();
+    const release = deferred<{ handled: boolean; result?: unknown }>();
+    const current = fixture(undefined, () => {
+      entered.resolve();
+      return release.promise;
+    });
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const operation = current.features.invoke(
+        current.source,
+        "client.sidebar.toggle",
+      );
+      await entered.promise;
+      const before = current.emitted.length;
+      if (change === "remove") current.settings.hosts = [current.target];
+      else if (change === "endpoint")
+        current.settings.hosts = [
+          { ...current.source, endpoint: "unix:///replaced-native.sock" },
+          current.target,
+        ];
+      else
+        current.features.bindControl(current.source, {
+          ...current.control,
+        } as RexControl);
+      release.resolve({
+        handled: change === "remove",
+        result: "stale native result",
+      });
+      await assert.rejects(operation, /no longer authorized/);
+      assert.ok(
+        !current.emitted.slice(before).some((event) => event.type === "action"),
+      );
+    } finally {
+      current.features.dispose();
+    }
+  }
+});
+
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {
+    throw new Error("Deferred is not initialized");
+  };
+  let reject: (error: Error) => void = () => {
+    throw new Error("Deferred is not initialized");
+  };
+  const promise = new Promise<T>((accept, decline) => {
+    resolve = accept;
+    reject = decline;
+  });
+  return { promise, resolve, reject };
+}
+
+test("late ready, attachment and keymap completions cannot resurrect a replaced host binding", async () => {
+  for (const phase of [
+    "ready",
+    "client.set_label",
+    "session.attach_all",
+    "client.keymap",
+  ] as const) {
+    const source = { id: "host", label: "Host", endpoint: "unix:///old.sock" };
+    const replacement = { ...source, endpoint: "unix:///new.sock" };
+    const settings = { ...structuredClone(DEFAULT_SETTINGS), hosts: [source] };
+    const entered = deferred<void>();
+    const release = deferred<unknown>();
+    const connected = deferred<void>();
+    const calls: string[] = [];
+    const emitted: ClientEvent[] = [];
+    const old = {
+      onEvent: () => () => {},
+      readyPublic: () => {
+        if (phase === "ready") {
+          entered.resolve();
+          return release.promise;
+        }
+        return Promise.resolve({
+          protocol: "rex.control.v1",
+          api_revision: 10,
+        });
+      },
+      call: (method: string) => {
+        calls.push(method);
+        if (method === phase) {
+          entered.resolve();
+          return release.promise;
+        }
+        return Promise.resolve({});
+      },
+    } as unknown as RexControl;
+    const next = {
+      onEvent: () => () => {},
+      readyPublic: async () => ({
+        protocol: "rex.control.v1",
+        api_revision: 10,
+      }),
+      call: async (method: string) =>
+        method === "client.keymap"
+          ? {
+              actions: [{ name: "new.action" }],
+              bindings: [],
+              modes: [],
+              warnings: [],
+            }
+          : {},
+    } as unknown as RexControl;
+    const features = new ClientFeatures({} as RexService, {
+      settings: () => settings,
+      notify: () => {},
+      emit: (event) => {
+        emitted.push(event);
+        if (event.type === "status" && event.connected) connected.resolve();
+      },
+    });
+    try {
+      features.bindControl(source, old);
+      await entered.promise;
+      settings.hosts = [replacement];
+      features.forgetHost(source);
+      features.bindControl(replacement, next);
+      await connected.promise;
+      release.resolve(
+        phase === "ready"
+          ? { protocol: "rex.control.v1", api_revision: 10 }
+          : {
+              actions: [{ name: "stale.action" }],
+              bindings: [],
+              modes: [],
+              warnings: [],
+            },
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.ok(
+        !emitted.some(
+          (event) =>
+            event.type === "keymap" &&
+            event.keymap.actions.some(
+              (action) => action.name === "stale.action",
+            ),
+        ),
+      );
+      assert.deepEqual(
+        calls,
+        phase === "ready"
+          ? []
+          : ["client.set_label", "session.attach_all", "client.keymap"].slice(
+              0,
+              [
+                "client.set_label",
+                "session.attach_all",
+                "client.keymap",
+              ].indexOf(phase) + 1,
+            ),
+      );
+    } finally {
+      features.dispose();
+    }
+  }
+});
+
+test("a superseded connection failure cannot mark the current same-endpoint binding disconnected", async () => {
+  const source = { id: "host", label: "Host", endpoint: "unix:///same.sock" };
+  const settings = { ...structuredClone(DEFAULT_SETTINGS), hosts: [source] };
+  const ready = deferred<unknown>();
+  const connected = deferred<void>();
+  const emitted: ClientEvent[] = [];
+  const next = {
+    onEvent: () => () => {},
+    readyPublic: async () => ({ protocol: "rex.control.v1", api_revision: 10 }),
+    call: async () => ({}),
+  } as unknown as RexControl;
+  const previous = {
+    ...next,
+    readyPublic: () => ready.promise,
+  } as unknown as RexControl;
+  const features = new ClientFeatures({} as RexService, {
+    settings: () => settings,
+    notify: () => {},
+    emit: (event) => {
+      emitted.push(event);
+      if (event.type === "status" && event.connected) connected.resolve();
+    },
+  });
+  try {
+    features.bindControl(source, previous);
+    features.bindControl(source, next);
+    await connected.promise;
+    ready.reject(new Error("Old connection failed late"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(
+      emitted
+        .filter((event) => event.type === "status")
+        .map((event) => event.connected),
+      [true],
+    );
+  } finally {
+    features.dispose();
   }
 });
