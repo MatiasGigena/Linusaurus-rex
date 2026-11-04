@@ -168,6 +168,62 @@ function registerTerminalLinks(
   };
 }
 
+function registerTerminalPresentation(
+  runtime: TerminalRuntime,
+  visuals: TerminalVisuals,
+  ref: TerminalRef,
+  props: () => Pick<TerminalPaneProps, "settings" | "visible" | "onBell">,
+  replayingSnapshot: () => boolean,
+  onThemeError: (message: string) => void,
+) {
+  const term = runtime.terminal;
+  const cursorStyle = term.parser.registerCsiHandler(
+    { intermediates: " ", final: "q" },
+    (params) => {
+      // DECSCUSR 0 restores the selected cursor after a program override.
+      // Other cursor visibility/mode sequences remain intact.
+      return props().settings.forceCursorStyle && params[0] !== 0;
+    },
+  );
+  const bell = term.onBell(() => {
+    if (replayingSnapshot()) return;
+    props().onBell?.();
+    const current = props();
+    if (!current.settings.terminalBell || current.visible === false) return;
+    try {
+      const audio = new AudioContext();
+      const oscillator = audio.createOscillator();
+      const gain = audio.createGain();
+      oscillator.frequency.value = 880;
+      gain.gain.value = 0.05;
+      oscillator.connect(gain);
+      gain.connect(audio.destination);
+      oscillator.start();
+      oscillator.stop(audio.currentTime + 0.08);
+      oscillator.onended = () => {
+        void audio.close();
+      };
+    } catch {
+      /* A desktop may have no audio output. */
+    }
+  });
+  const colorScheme = matchMedia("(prefers-color-scheme: light)");
+  const updateColorScheme = () => {
+    const current = props();
+    if (current.settings.theme !== "system") return;
+    term.options = terminalOptions(current.settings);
+    visuals.apply(current.settings);
+    if (current.visible !== false)
+      synchronizeTheme(runtime, ref, current.settings, onThemeError);
+  };
+  colorScheme.addEventListener("change", updateColorScheme);
+  return () => {
+    cursorStyle.dispose();
+    bell.dispose();
+    colorScheme.removeEventListener("change", updateColorScheme);
+  };
+}
+
 interface TerminalCommandBindings {
   runtime: TerminalRuntime;
   ref: TerminalRef;
@@ -487,40 +543,19 @@ export function TerminalPane(props: TerminalPaneProps) {
       // Execution owns error reporting; the broker only settles its caller.
       onError: () => {},
     });
-    const cursorStyleListener = term.parser.registerCsiHandler(
-      { intermediates: " ", final: "q" },
-      (params) => {
-        const style = params[0];
-        // DECSCUSR 0 clears any preceding program override and returns to the
-        // selected cursor. Other cursor visibility/mode sequences remain intact.
-        return settingsRef.current.forceCursorStyle && style !== 0;
+    const disposePresentation = registerTerminalPresentation(
+      runtime,
+      visuals,
+      ref,
+      () => callbacks.current,
+      () => writer.replayingSnapshot,
+      (message) => {
+        if (!session.isDisposed) setError(message);
       },
     );
     const titleListener = term.onTitleChange((title) =>
       callbacks.current.onTitle?.(title),
     );
-    const bellListener = term.onBell(() => {
-      if (writer.replayingSnapshot) return;
-      callbacks.current.onBell?.();
-      if (settingsRef.current.terminalBell && isVisible()) {
-        try {
-          const audio = new AudioContext(),
-            oscillator = audio.createOscillator(),
-            gain = audio.createGain();
-          oscillator.frequency.value = 880;
-          gain.gain.value = 0.05;
-          oscillator.connect(gain);
-          gain.connect(audio.destination);
-          oscillator.start();
-          oscillator.stop(audio.currentTime + 0.08);
-          oscillator.onended = () => {
-            void audio.close();
-          };
-        } catch {
-          /* A desktop may have no audio output. */
-        }
-      }
-    });
     const disposeLinks = registerTerminalLinks(
       runtime,
       () => settingsRef.current,
@@ -529,18 +564,6 @@ export function TerminalPane(props: TerminalPaneProps) {
     const resultsListener = runtime.search.onDidChangeResults((results) => {
       if (!session.isDisposed) setSearchResults(results);
     });
-    const colorScheme = matchMedia("(prefers-color-scheme: light)");
-    const updateColorScheme = () => {
-      if (settingsRef.current.theme !== "system") return;
-      const options = terminalOptions(settingsRef.current);
-      term.options = options;
-      hostElement.style.backgroundColor = options.theme?.background || "";
-      if (isVisible())
-        synchronizeTheme(runtime, ref, settingsRef.current, (message) => {
-          if (!session.isDisposed) setError(message);
-        });
-    };
-    colorScheme.addEventListener("change", updateColorScheme);
     const visibilityChanged = (show: boolean) => {
       if (!show) {
         session.hide();
@@ -557,15 +580,13 @@ export function TerminalPane(props: TerminalPaneProps) {
       clearTimeout(retryTimer);
       viewport.dispose();
       unsubscribe();
-      cursorStyleListener.dispose();
+      disposePresentation();
       input.dispose();
       titleListener.dispose();
-      bellListener.dispose();
       disposeLinks();
       resultsListener.dispose();
       commandRegistration.dispose();
       writer.dispose();
-      colorScheme.removeEventListener("change", updateColorScheme);
       void window.rex
         .request("unsubscribe", { subscriptionId })
         .catch(() => {});
