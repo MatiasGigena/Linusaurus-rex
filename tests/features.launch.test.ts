@@ -36,7 +36,7 @@ function backend(){
     sessions:async()=>{calls.push({method:'sessions'});return[{id:'a',label:'project'},{id:'b',label:'project'}];},
     inspect:async(_host,id)=>{calls.push({method:'inspect',payload:{id}});return views[id];},
     createSession:async(_host,label,cwd,command)=>{calls.push({method:'create',payload:{label,cwd,command}});return'created';},
-    callMethod:async(_host,method,payload:any)=>{calls.push({method,payload});if(method==='session.view')return{windows:[{window_id:payload.session_id==='b'?'wb':'wa',layers:[{layer_id:'floating',state:'minimized',blocks:payload.session_id==='b'?[{block_id:'hidden-exact-id'}]:[{block_id:'ba'}]}]}]};return{};},
+    callMethod:async(_host,method,payload:any)=>{calls.push({method,payload});if(method==='session.view')return{session_id:payload.session_id,windows:[{window_id:payload.session_id==='b'?'wb':'wa',layers:[{layer_id:'floating',state:'minimized',blocks:payload.session_id==='b'?[{block_id:'hidden-exact-id'}]:[{block_id:'ba'}]}]}]};return{};},
     control:async()=>({endpoint:'/run/user/1000/rex/server.sock'}),
   };
   return{rex,calls,views};
@@ -65,6 +65,42 @@ test('explicit launch block selection locates exact hidden panes and restores th
   calls.length=0;
   await assert.rejects(resolveLaunchSelection(rex,local,DEFAULT_SETTINGS,parseLaunchArgs(['--session','a','--block','hidden-exact-id'])),/No pane/);
   assert.deepEqual(calls.filter(call=>call.method.startsWith('session.')&&call.method!=='session.view'),[]);
+});
+
+test('launch block selection rejects malformed server views before restoring or focusing a pane',async(t)=>{
+  const target={window_id:'wa',layers:[{layer_id:'floating',state:'minimized',blocks:[{block_id:'target'}]}]};
+  const malformed:[string,unknown][]=[
+    ['missing session identity',{windows:[target]}],
+    ['invalid target window identity',{session_id:'a',windows:[{...target,window_id:42}]}],
+    ['invalid target layer identity',{session_id:'a',windows:[{...target,layers:[{...target.layers[0],layer_id:42}]}]}],
+    ['malformed record after matching target',{session_id:'a',windows:[target,null]}],
+    ['minimized target without a layer identity',{session_id:'a',windows:[{...target,layers:[{state:'minimized',blocks:[{block_id:'target'}]}]}]}],
+    ['minimized target with an empty layer identity',{session_id:'a',windows:[{...target,layers:[{...target.layers[0],layer_id:''}]}]}],
+  ];
+  for(const[label,response]of malformed)await t.test(label,async()=>{
+    const{rex,calls}=backend();
+    rex.callMethod=async(_host,method,payload)=>{calls.push({method,payload});return response;};
+    await assert.rejects(resolveLaunchSelection(rex,local,DEFAULT_SETTINGS,parseLaunchArgs(['--session','a','--block','target'])),/invalid session view/);
+    assert.deepEqual(calls.map(call=>call.method),['sessions','session.view']);
+  });
+});
+
+test('launch focuses a zoom-hidden pane in a normal layer without restoring the layer',async()=>{
+  const{rex,calls}=backend();
+  rex.callMethod=async(_host,method,payload)=>{
+    calls.push({method,payload});
+    return method==='session.view'?{
+      session_id:'a',windows:[{window_id:'wa',zoomed_block_id:'visible',layers:[{
+        blocks:[{block_id:'visible'},{block_id:'target'}],
+        layout:{split:{direction:'horizontal',before:{block_id:'visible',rect:[0,0,.5,1]},after:{block_id:'target',rect:[.5,0,.5,1]}}},
+      }]}],
+    }:{};
+  };
+  assert.deepEqual(await resolveLaunchSelection(rex,local,DEFAULT_SETTINGS,parseLaunchArgs(['--session','a','--block','target'])),{hostId:'local',sessionId:'a',windowId:'wa',blockId:'target'});
+  assert.deepEqual(calls.filter(call=>call.method.startsWith('session.')), [
+    {method:'session.view',payload:{session_id:'a'}},
+    {method:'session.focus_block',payload:{session_id:'a',block_id:'target'}},
+  ]);
 });
 
 test('only explicit new-session launch creates, and startup commands follow effective host locality',async()=>{

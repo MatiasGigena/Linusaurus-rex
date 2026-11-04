@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {resolve} from 'node:path';
 import type {Host,Selection,SessionSummary,SessionView,Settings} from '../../src/shared/types.js';
+import {parseSessionView} from '../rex/session-view.js';
 import {isLocalEndpoint} from './config.js';
 
 export interface LaunchOptions {endpoint?:string;session?:string;newSession?:string;block?:string;font?:string;fontSize?:number;config?:string;windowSize?:{width:number;height:number};help:boolean}
@@ -99,9 +100,12 @@ export async function resolveLaunchSelection(rex:LaunchBackend,host:Host,setting
     for(const candidate of session?[session]:sessions){
       // Read the complete server view: the renderer's normalized view omits
       // zoom-hidden panes and minimized layers, which are valid launch targets.
-      const view=await rex.callMethod(host,'session.view',{session_id:candidate.id})as{windows?:{window_id:string;layers?:{layer_id:string;state?:string;blocks?:{block_id:string}[]}[]}[]};
-      for(const window of view.windows??[])for(const layer of window.layers??[])if(layer.blocks?.some(block=>block.block_id===options.block)){
-        if(layer.state==='minimized')await rex.callMethod(host,'session.set_layer_state',{session_id:candidate.id,layer_id:layer.layer_id,state:'normal',focus:true});
+      const view=parseSessionView(await rex.callMethod(host,'session.view',{session_id:candidate.id}));
+      for(const window of view.windows)for(const layer of window.layers)if(layer.blocks.some(block=>block.block_id===options.block)){
+        if(layer.state==='minimized'){
+          if(!layer.layer_id)throw new Error('Rex returned an invalid session view: minimized target has no layer ID.');
+          await rex.callMethod(host,'session.set_layer_state',{session_id:candidate.id,layer_id:layer.layer_id,state:'normal',focus:true});
+        }
         await rex.callMethod(host,'session.focus_block',{session_id:candidate.id,block_id:options.block});
         return{hostId:host.id,sessionId:candidate.id,windowId:window.window_id,blockId:options.block};
       }
