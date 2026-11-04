@@ -274,6 +274,7 @@ function fixture(t: TestContext) {
     form,
     confirmation,
     views,
+    hosts,
     keymaps,
     requests,
     selections,
@@ -286,6 +287,61 @@ function fixture(t: TestContext) {
     execute: executeCurrent,
   };
 }
+
+test("open-on-web maps WebSocket endpoints and retains exact session escaping", async (t) => {
+  for (const [scheme, webScheme] of [
+    ["ws", "http"],
+    ["wss", "https"],
+    ["http", "http"],
+    ["https", "https"],
+  ]) {
+    await t.test(scheme, async (t) => {
+      const current = fixture(t);
+      const host = current.hosts.find((host) => host.id === "remote");
+      assert.ok(host);
+      host.status = {
+        connected: true,
+        endpoint: `${scheme}://remote.test:7297/base?old=1#fragment`,
+      };
+      current.responders.openExternal = async () => {};
+      await current.execute("session.open_on_web", {
+        host_id: "remote",
+        session_id: "a &/?#%",
+      });
+      assert.deepEqual(current.requests, [
+        {
+          method: "openExternal",
+          args: {
+            url: `${webScheme}://remote.test:7297/?session=a%20%26%2F%3F%23%25`,
+          },
+        },
+      ]);
+    });
+  }
+});
+
+test("open-on-web rejects endpoints without a supported web address", async (t) => {
+  for (const endpoint of [
+    "unix:///tmp/rex.sock",
+    "tcp://remote.test:7297",
+    undefined,
+  ]) {
+    await t.test(endpoint ?? "missing", async (t) => {
+      const current = fixture(t);
+      const host = current.hosts.find((host) => host.id === "remote");
+      assert.ok(host);
+      if (endpoint) host.status = { connected: true, endpoint };
+      await assert.rejects(
+        current.execute("session.open_on_web", {
+          host_id: "remote",
+          session_id: "remote-session",
+        }),
+        /This host has no web address\. Configure remote serving first\./,
+      );
+      assert.deepEqual(current.requests, []);
+    });
+  }
+});
 
 test("remote host-only mutations cannot borrow the displayed local session or pane", async (t) => {
   const current = fixture(t);

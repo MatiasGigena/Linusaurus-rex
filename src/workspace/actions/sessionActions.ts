@@ -179,7 +179,7 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
           hosts.find((host) => host.id === hostId)?.status?.endpoint || ""
         )
           .replace(/^wss:/, "https:")
-          .replace(/^workspace:/, "http:");
+          .replace(/^ws:/, "http:");
         if (!/^https?:\/\//.test(endpoint))
           throw new Error(
             "This host has no web address. Configure remote serving first.",
