@@ -5,16 +5,20 @@ import {
   type PaneGeometryOperations,
 } from "../../hooks/usePaneGeometry";
 import { errorMessage, viewKey } from "../../core/workspace";
-import type { HostState, PaneMetadata } from "../../core/workspaceSnapshot";
+import type {
+  HostState,
+  PaneMetadata,
+  SessionViews,
+} from "../../core/workspaceSnapshot";
 import type { WorkspaceOperations } from "../../core/workspaceOperations";
-import type { Selection, SessionView, Settings } from "../../shared/types";
+import type { Selection, Settings } from "../../shared/types";
 import { enrichWindow } from "../../workspace/presentation";
 import { WorkspaceWindow } from "./WorkspaceWindow";
 
 interface WorkspaceLayoutProps {
   workspaceElement: RefObject<HTMLDivElement | null>;
   selection?: Selection;
-  views: Record<string, SessionView>;
+  views: SessionViews;
   hosts: Pick<HostState, "id" | "connected" | "error">[];
   metadata: Record<string, PaneMetadata>;
   settings: Settings;

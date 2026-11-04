@@ -21,6 +21,7 @@ import {
   type HostState,
   type HostSnapshot,
   type PaneMetadata,
+  type SessionViews,
   collectHostSnapshot,
   reconcileSelection,
 } from "../core/workspaceSnapshot";
@@ -28,7 +29,7 @@ import {
 export function useWorkspace() {
   const [settings, setSettings] = useState<Settings>();
   const [hosts, setHosts] = useState<HostState[]>([]);
-  const [views, setViews] = useState<Record<string, SessionView>>({});
+  const [views, setViews] = useState<SessionViews>({});
   const [selection, setSelection] = useState<Selection>();
   const [focusedPane, setFocusedPane] = useState<string>();
   const [metadata, setMetadata] = useState<Record<string, PaneMetadata>>({});
@@ -166,10 +167,8 @@ export function useWorkspace() {
         config.hosts.map((host) => collectHostSnapshot(host, request)),
       );
       const nextHosts = snapshots.map((snapshot) => snapshot.host);
-      const allViews = Object.assign(
-        {},
-        ...snapshots.map((snapshot) => snapshot.views),
-      ) as Record<string, SessionView>;
+      const allViews: SessionViews = {};
+      for (const snapshot of snapshots) Object.assign(allViews, snapshot.views);
       if (!mounted.current) return;
       if (startingEpoch !== viewEpoch.current) {
         refreshQueued.current = true;
@@ -210,7 +209,7 @@ export function useWorkspace() {
         for (const host of nextHosts)
           if (!host.connected)
             for (const [key, view] of Object.entries(previous))
-              if (key.startsWith(`${host.id}/`)) next[key] = view;
+              if (view && key.startsWith(`${host.id}/`)) next[key] = view;
         return next;
       });
       const reconciled = reconcileSelection(

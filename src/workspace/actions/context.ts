@@ -1,6 +1,6 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { SettingsTab } from "../../components/preferences/types";
-import type { HostState } from "../../core/workspaceSnapshot";
+import type { HostState, SessionViews } from "../../core/workspaceSnapshot";
 import type { WorkspaceOperations } from "../../core/workspaceOperations";
 import type {
   ClientEvent,
@@ -39,7 +39,7 @@ export interface WorkspaceActionOptions {
   workspace: WorkspaceOperations;
   settings: Settings | undefined;
   hosts: HostState[];
-  views: Record<string, SessionView>;
+  views: SessionViews;
   selection: Selection | undefined;
   keymaps: Record<string, KeymapResult>;
   focusedPane: string | undefined;

@@ -1,7 +1,7 @@
 import type { NavigationHost } from "../components/sidebar/Sidebar";
-import type { HostState } from "../core/workspaceSnapshot";
+import type { HostState, SessionViews } from "../core/workspaceSnapshot";
 import type { PaneMetadata } from "../core/workspaceSnapshot";
-import type { RexWindow, SessionView, Settings } from "../shared/types";
+import type { RexWindow, Settings } from "../shared/types";
 import {
   paneKey,
   viewKey,
@@ -26,7 +26,7 @@ export function enrichWindow(
 }
 export function buildNavigationHosts(
   hosts: HostState[],
-  views: Record<string, SessionView>,
+  views: SessionViews,
   metadata: Metadata,
   settings: Settings | undefined,
 ): NavigationHost[] {
@@ -73,7 +73,7 @@ export function buildNavigationHosts(
 
 export function buildActivityFeed(
   hosts: HostState[],
-  views: Record<string, SessionView>,
+  views: SessionViews,
   metadata: Metadata,
   settings: Settings | undefined,
   activityGroup: "session" | "priority",

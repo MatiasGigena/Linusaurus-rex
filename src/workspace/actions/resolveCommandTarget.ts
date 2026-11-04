@@ -1,6 +1,10 @@
 import type { ClientEvent } from "../../shared/types";
 import { viewKey } from "../../core/workspace";
-import type { WorkspaceActionOptions } from "./context";
+import type { WorkspaceActionOptions, ResolvedCommand } from "./context";
+type ResolvedCommandTarget = Omit<
+  ResolvedCommand,
+  "localCommand" | "requirePane" | "execute"
+> & { displayedContext: boolean };
 export function resolveCommandTarget(
   name: string,
   args: Record<string, unknown>,
@@ -9,7 +13,7 @@ export function resolveCommandTarget(
     WorkspaceActionOptions,
     "hosts" | "views" | "selection" | "focusedPane"
   >,
-) {
+): ResolvedCommandTarget {
   const { hosts, views, selection, focusedPane } = state;
   const activeHost =
     hosts.find((host) => host.id === selection?.hostId) || hosts[0];

@@ -21,9 +21,11 @@ export interface PaneMetadata {
   program?: string;
   cwd?: string;
 }
+/** Sessions may be absent before inspection or after another client closes them. */
+export type SessionViews = Partial<Record<string, SessionView>>;
 export interface HostSnapshot {
   host: HostState;
-  views: Record<string, SessionView>;
+  views: SessionViews;
   /** Preserve the rejection for awaited mutations without losing per-host UI feedback. */
   failure?: unknown;
 }
@@ -72,7 +74,7 @@ export async function collectHostSnapshot(
         }
       }),
     );
-    const views: Record<string, SessionView> = {};
+    const views: SessionViews = {};
     for (const view of inspected)
       if (view) views[viewKey(host.id, view.id)] = view;
     return {
@@ -104,7 +106,7 @@ export async function collectHostSnapshot(
 export function reconcileSelection(
   current: Selection | undefined,
   hosts: HostState[],
-  views: Record<string, SessionView>,
+  views: SessionViews,
 ): {
   selection: Selection | undefined;
   updateFocus: boolean;
