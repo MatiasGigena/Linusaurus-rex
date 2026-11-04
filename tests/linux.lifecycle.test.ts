@@ -65,7 +65,7 @@ test("lifecycle never force-stops a server with existing sessions and preserves 
   try {
     const manager = new LinuxServerManager({
       directory,
-      call: async (_host, method, _payload) => {
+      call: async (_host, method) => {
         calls.push(method);
         if (method === "server.status") return { pid: 100, session_count: 4 };
         throw new Error("Should never stop");

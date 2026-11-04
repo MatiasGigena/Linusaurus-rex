@@ -100,12 +100,13 @@ async function processProfile(pid: number, endpoint: string): Promise<Profile> {
       "This is an additional listener; manage the server through its primary Unix socket.",
     );
   if (
-    args.some(
-      (_argument, index) =>
-        index > 0 &&
-        /auth.*key(?!.*file)|password|secret|token/i.test(args[index - 1]) &&
-        !args[index - 1].includes("file"),
-    )
+    args
+      .slice(0, -1)
+      .some(
+        (flag) =>
+          /auth.*key(?!.*file)|password|secret|token/i.test(flag) &&
+          !flag.includes("file"),
+      )
   )
     throw new Error(
       "A secret appears in the server command line. Manage this service with its existing service manager.",
@@ -284,7 +285,8 @@ export class LinuxServerManager {
       );
       info.origins = originPatterns(profile.args);
       info.configPath =
-        commandLineOptionValue(profile.args, "--config") || profile.env.REX_CONFIG;
+        commandLineOptionValue(profile.args, "--config") ||
+        profile.env.REX_CONFIG;
       info.stateDirectory = commandLineOptionValue(profile.args, "--state-dir");
       try {
         info.binarySha256 = createHash("sha256")
