@@ -1,6 +1,10 @@
 import type { IBufferCell, IMarker, Terminal } from "@xterm/xterm";
 import { KITTY_DIACRITICS } from "./kitty-diacritics";
 import { KittyCompositor, type KittyDrawOperation } from "./kitty-compositor";
+import {
+  decodeKittyPlaceholder,
+  type KittyPlaceholder,
+} from "./kitty-placeholder";
 
 export type GraphicsPart =
   { kind: "text"; data: string } | { kind: "kitty"; data: string };
@@ -278,9 +282,6 @@ interface VirtualPlacement {
 }
 const MAX_FRAMES = 64,
   MAX_PLACEMENTS = 2048;
-const diacriticIndex = new Map(
-  KITTY_DIACRITICS.map((code, index) => [code, index]),
-);
 const placementKey = (imageId: number, id: number) => `${imageId}/${id}`;
 /** Direct-payload Kitty graphics. Filesystem/shared-memory transfers stay on the server. */
 export class KittyGraphics {
@@ -949,110 +950,97 @@ export class KittyGraphics {
     context.clearRect(0, 0, width, height);
     this.virtualOrigins.clear();
     if (!this.virtual.size) return operations;
+    for (const cell of this.virtualCells(cw)) {
+      const { x, y, row, col, high, foreground, placementId: pid } = cell;
+      const id = (foreground & 0xffffff) + high * 0x1000000;
+      const prototype = pid
+        ? this.virtual.get(placementKey(id, pid))
+        : [...this.virtual.values()].reverse().find((p) => p.imageId === id);
+      const image = this.images.get(id);
+      if (
+        !prototype ||
+        !image ||
+        row >= prototype.rows ||
+        col >= prototype.cols
+      )
+        continue;
+      const key = placementKey(id, prototype.id),
+        origin = this.virtualOrigins.get(key);
+      this.virtualOrigins.set(key, {
+        x: Math.min(origin?.x ?? x, x),
+        y: Math.min(origin?.y ?? y, y),
+      });
+      const source = prototype.source,
+        scale = Math.min(
+          (prototype.cols * cw) / source[2],
+          (prototype.rows * ch) / source[3],
+        ),
+        w = source[2] * scale,
+        h = source[3] * scale;
+      const draw = (target: CanvasRenderingContext2D) => {
+        target.save();
+        target.beginPath();
+        target.rect(x * cw, y * ch, cw, ch);
+        target.clip();
+        target.drawImage(
+          image.frames[image.current].canvas,
+          ...source,
+          x * cw + (prototype.cols * cw - w) / 2 - col * cw,
+          y * ch + (prototype.rows * ch - h) / 2 - row * ch,
+          w,
+          h,
+        );
+        target.restore();
+      };
+      draw(context);
+      operations.push({
+        imageId: id,
+        placementId: prototype.id,
+        z: prototype.z,
+        draw,
+      });
+    }
+    this.maskPlaceholderGlyphs();
+    return operations;
+  }
+  private virtualCells(
+    cw: number,
+  ): (KittyPlaceholder & { x: number; y: number })[] {
+    const cells: (KittyPlaceholder & { x: number; y: number })[] = [];
     const buffer = this.term.buffer.active;
     for (let y = 0; y < this.term.rows; y++) {
       const line = buffer.getLine(buffer.viewportY + y);
-      let previous:
-        | { fg: number; row: number; col: number; high: number; pid: number }
-        | undefined;
+      let previous: KittyPlaceholder | undefined;
       for (let x = 0; x < this.term.cols; x++) {
-        const cell = line?.getCell(x),
-          chars = cell?.getChars();
-        if (!cell || !chars || !chars.startsWith("\u{10eeee}")) {
+        const cell = line?.getCell(x);
+        const characters = cell?.getChars();
+        if (!cell || !characters?.startsWith("\u{10eeee}")) {
           previous = undefined;
           continue;
         }
-        const glyph = Array.from(chars),
-          encodedPid =
-            glyph[1] === "\u034f" && glyph.length >= 5
-              ? [2, 3, 4].map((index) =>
-                  diacriticIndex.get(glyph[index].codePointAt(0)!),
-                )
-              : undefined;
-        const [pidHigh, pidMiddle, pidLow] = encodedPid || [];
-        const pidMetadata =
-          pidHigh !== undefined &&
-          pidMiddle !== undefined &&
-          pidLow !== undefined &&
-          Math.max(pidHigh, pidMiddle, pidLow) < 256
-            ? pidHigh * 65536 + pidMiddle * 256 + pidLow
-            : undefined;
-        const marks = glyph
-          .slice(pidMetadata === undefined ? 1 : 5)
-          .map((ch) => diacriticIndex.get(ch.codePointAt(0)!))
-          .filter((value): value is number => value !== undefined);
-        const fg = cell.isFgDefault() ? 0 : cell.getFgColor(),
-          pid = pidMetadata ?? this.underlinePlacementId(cell, x, y, cw);
-        const continuation =
-          previous && previous.fg === fg && previous.pid === pid
-            ? previous
-            : undefined;
-        const row = marks[0] ?? continuation?.row ?? 0;
-        const sameRow = continuation?.row === row ? continuation : undefined;
-        const col = marks[1] ?? (sameRow ? sameRow.col + 1 : 0);
-        const high =
-          marks[2] ?? (sameRow && col === sameRow.col + 1 ? sameRow.high : 0);
-        previous = { fg, row, col, high, pid };
-        if (high > 255) continue;
-        const id = (fg & 0xffffff) + (high & 255) * 0x1000000;
-        const prototype = pid
-          ? this.virtual.get(placementKey(id, pid))
-          : [...this.virtual.values()].reverse().find((p) => p.imageId === id);
-        const image = this.images.get(id);
-        if (
-          !prototype ||
-          !image ||
-          row >= prototype.rows ||
-          col >= prototype.cols
-        )
-          continue;
-        const key = placementKey(id, prototype.id),
-          origin = this.virtualOrigins.get(key);
-        this.virtualOrigins.set(key, {
-          x: Math.min(origin?.x ?? x, x),
-          y: Math.min(origin?.y ?? y, y),
-        });
-        const source = prototype.source,
-          scale = Math.min(
-            (prototype.cols * cw) / source[2],
-            (prototype.rows * ch) / source[3],
-          ),
-          w = source[2] * scale,
-          h = source[3] * scale;
-        const draw = (target: CanvasRenderingContext2D) => {
-          target.save();
-          target.beginPath();
-          target.rect(x * cw, y * ch, cw, ch);
-          target.clip();
-          target.drawImage(
-            image.frames[image.current].canvas,
-            ...source,
-            x * cw + (prototype.cols * cw - w) / 2 - col * cw,
-            y * ch + (prototype.rows * ch - h) / 2 - row * ch,
-            w,
-            h,
-          );
-          target.restore();
-        };
-        draw(context);
-        operations.push({
-          imageId: id,
-          placementId: prototype.id,
-          z: prototype.z,
-          draw,
-        });
+        previous = decodeKittyPlaceholder(
+          characters,
+          cell.isFgDefault() ? 0 : cell.getFgColor(),
+          this.underlinePlacementId(cell, x, y, cw),
+          previous,
+        );
+        if (previous && previous.high <= 255) cells.push({ ...previous, x, y });
       }
     }
-    // Hide protocol glyphs in the DOM only. Buffer/search/copy contents remain authoritative.
+    return cells;
+  }
+  private maskPlaceholderGlyphs() {
+    // Hide protocol glyphs in the DOM only. Buffer/search/copy remain authoritative.
     for (const span of this.element.querySelectorAll<HTMLElement>(
       ".xterm-rows span",
-    ))
-      if (span.textContent?.includes("\u{10eeee}"))
+    )) {
+      if (span.textContent?.includes("\u{10eeee}")) {
         span.textContent = span.textContent.replace(
           /\u{10eeee}\p{Mark}*/gu,
           "\u00a0",
         );
-    return operations;
+      }
+    }
   }
   private underlinePlacementId(
     cell: IBufferCell,
