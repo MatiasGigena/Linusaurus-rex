@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Copy, RefreshCw } from "lucide-react";
-import { Dialog } from "./Dialog";
-import { errorMessage } from "../core/workspace";
+import { Dialog } from "../Dialog";
+import { errorMessage } from "../../core/workspace";
 export function ConfigurationDialog({
   hostId,
   onClose,

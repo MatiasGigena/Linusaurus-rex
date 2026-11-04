@@ -6,7 +6,7 @@ import { withBrowserFixture } from "./browser-fixture.js";
 const source = (panel: "directory" | "diagnostics" | "block") => `
 import React from 'react';import {createRoot} from 'react-dom/client';
 import {DirectoryDialog} from '/src/components/DirectoryDialog.tsx';
-import {DiagnosticsDialog} from '/src/components/DiagnosticsDialog.tsx';
+import {DiagnosticsDialog} from '/src/components/services/DiagnosticsDialog.tsx';
 import {BlockInspector} from '/src/terminal/BlockInspector.tsx';
 import {DEFAULT_SETTINGS} from '/src/shared/types.ts';
 import '/src/styles.css';import '/src/advanced.css';import '/src/dialogs.css';

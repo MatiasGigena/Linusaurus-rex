@@ -1,6 +1,6 @@
 import { ChevronDown, Columns2, Command, Maximize2, PanelLeft, Plus, Rows2, Settings2, Terminal, X } from 'lucide-react';
-import { IconButton } from './IconButton';
-import { WindowControls, type WindowControlAction } from './WindowControls';
+import { IconButton } from '../IconButton';
+import { WindowControls, type WindowControlAction } from '../WindowControls';
 
 export interface ToolbarProps {
   title: string;

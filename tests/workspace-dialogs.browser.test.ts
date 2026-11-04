@@ -5,7 +5,7 @@ import { withBrowserFixture } from "./browser-fixture";
 
 const source = `
 import React from 'react';import{createRoot}from'react-dom/client';
-import{FormDialog,ConfirmDialog}from'/src/components/WorkspaceDialogs.tsx';
+import{FormDialog,ConfirmDialog}from'/src/components/workspace/WorkspaceDialogs.tsx';
 import{WorkspaceReconciliationError}from'/src/core/workspaceOperations.ts';
 import'/src/styles.css';import'/src/dialogs.css';
 const fixture=window.fixture={writes:0,reads:0,closed:0,kind:'form',committed:true,readFailure:false};

@@ -6,8 +6,8 @@ import { withBrowserFixture } from "./browser-fixture.js";
 const source = `
 import React from 'react';
 import {createRoot} from 'react-dom/client';
-import {PairDeviceDialog} from '/src/components/PairDeviceDialog.tsx';
-import {ConfigurationDialog} from '/src/components/ConfigurationDialog.tsx';
+import {PairDeviceDialog} from '/src/components/services/PairDeviceDialog.tsx';
+import {ConfigurationDialog} from '/src/components/services/ConfigurationDialog.tsx';
 import {BlockInspector} from '/src/terminal/BlockInspector.tsx';
 import {DEFAULT_SETTINGS} from '/src/shared/types.ts';
 import '/src/styles.css';import '/src/advanced.css';import '/src/dialogs.css';

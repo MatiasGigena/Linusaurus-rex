@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { Copy, ExternalLink, RefreshCw } from "lucide-react";
-import { Dialog } from "./Dialog";
-import { errorMessage } from "../core/workspace";
-import { decodeServerDetails } from "../core/serverDetails";
+import { Dialog } from "../Dialog";
+import { errorMessage } from "../../core/workspace";
+import { decodeServerDetails } from "../../core/serverDetails";
 export function PairDeviceDialog({
   hostId,
   endpoint,

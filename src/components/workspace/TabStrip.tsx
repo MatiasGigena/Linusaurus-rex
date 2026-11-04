@@ -1,7 +1,7 @@
 import { Plus, X } from "lucide-react";
-import type { RexWindow, Settings } from "../shared/types";
-import { activityLabel, primaryActivity } from "../core/workspace";
-import { ProgramIcon } from "./ProgramIcon";
+import type { RexWindow, Settings } from "../../shared/types";
+import { activityLabel, primaryActivity } from "../../core/workspace";
+import { ProgramIcon } from "../ProgramIcon";
 export function TabStrip({
   windows,
   activeId,

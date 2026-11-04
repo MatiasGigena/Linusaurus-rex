@@ -5,7 +5,7 @@ import { withBrowserFixture } from "./browser-fixture.js";
 
 const source = `
 import React from 'react';import {createRoot} from 'react-dom/client';
-import {TabStrip} from '/src/components/TabStrip.tsx';
+import {TabStrip} from '/src/components/workspace/TabStrip.tsx';
 import {ContextMenu} from '/src/components/ContextMenu.tsx';
 import {WindowControls} from '/src/components/WindowControls.tsx';
 import {DEFAULT_SETTINGS} from '/src/shared/types.ts';

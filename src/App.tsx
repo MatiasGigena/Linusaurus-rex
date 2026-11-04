@@ -13,7 +13,7 @@ import {
   enrichWindow,
 } from "./workspace/presentation";
 import { WorkspaceLayout } from "./components/workspace/WorkspaceLayout";
-import { FormDialog, ConfirmDialog } from "./components/WorkspaceDialogs";
+import { FormDialog, ConfirmDialog } from "./components/workspace/WorkspaceDialogs";
 import { useInterfaceAppearance } from "./hooks/useInterfaceAppearance";
 import { createWorkspaceActions } from "./workspace/actions/createWorkspaceActions";
 import type { Form, Confirmation } from "./workspace/actions/context";
@@ -29,18 +29,18 @@ import {
   TerminalSquare,
 } from "lucide-react";
 import { Sidebar } from "./components/sidebar/Sidebar";
-import { Toolbar } from "./components/Toolbar";
+import { Toolbar } from "./components/workspace/Toolbar";
 import { Dialog } from "./components/Dialog";
 import { CommandPalette } from "./components/CommandPalette";
 import { ContextMenu, type ContextItem } from "./components/ContextMenu";
 import { SettingsDialog } from "./components/preferences/SettingsDialog";
 import type { SettingsTab } from "./components/preferences/types";
 import { HostDialog } from "./components/HostDialog";
-import { ConfigurationDialog } from "./components/ConfigurationDialog";
-import { DiagnosticsDialog } from "./components/DiagnosticsDialog";
-import { PairDeviceDialog } from "./components/PairDeviceDialog";
+import { ConfigurationDialog } from "./components/services/ConfigurationDialog";
+import { DiagnosticsDialog } from "./components/services/DiagnosticsDialog";
+import { PairDeviceDialog } from "./components/services/PairDeviceDialog";
 import { DirectoryDialog } from "./components/DirectoryDialog";
-import { TabStrip } from "./components/TabStrip";
+import { TabStrip } from "./components/workspace/TabStrip";
 import { NativeServicesDialog } from "./components/services/NativeServicesDialog";
 import type { UpdateState } from "./shared/types";
 import "./linux.css";

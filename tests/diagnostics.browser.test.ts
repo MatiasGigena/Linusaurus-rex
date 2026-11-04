@@ -22,7 +22,7 @@ const validStatus = {
 const source = `
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { DiagnosticsDialog } from '/src/components/DiagnosticsDialog.tsx';
+import { DiagnosticsDialog } from '/src/components/services/DiagnosticsDialog.tsx';
 import '/src/styles.css';import '/src/advanced.css';import '/src/dialogs.css';
 let status=${JSON.stringify(validStatus)}, report=0;
 window.fixture={setStatus(value){status=value;},failures:{},copied:[],actions:[]};

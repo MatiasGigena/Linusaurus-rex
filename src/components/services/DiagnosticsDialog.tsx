@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Copy, ExternalLink, RefreshCw } from "lucide-react";
-import { Dialog } from "./Dialog";
-import { errorMessage } from "../core/workspace";
-import { decodeServerDetails, type ServerDetails } from "../core/serverDetails";
-import type { ServerActionCommand } from "../shared/types";
+import { Dialog } from "../Dialog";
+import { errorMessage } from "../../core/workspace";
+import { decodeServerDetails, type ServerDetails } from "../../core/serverDetails";
+import type { ServerActionCommand } from "../../shared/types";
 interface DiagnosticsDialogProps {
   hostId?: string;
   endpoint?: string;
