@@ -6,6 +6,7 @@ import {
   type WorkspaceOperations,
 } from "../core/workspaceOperations";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useWorkspaceContext } from "./useWorkspaceContext";
 import type {
   ClientEvent,
   Host,
@@ -46,11 +47,6 @@ export function useWorkspace() {
   settingsRef.current = settings;
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
-  const focusedPaneRef = useRef(focusedPane);
-  focusedPaneRef.current = focusedPane;
-  const uiBusyRef = useRef(false);
-  const contextRevision = useRef(0);
-  const contextNeedsRetry = useRef(false);
   const actionHandler = useRef<
     (
       name: string,
@@ -69,47 +65,12 @@ export function useWorkspace() {
     undefined,
   );
 
-  const publishContext = useCallback(() => {
-    if (!window.rex || !mounted.current) return;
-    const revision = ++contextRevision.current;
-    const configuredEndpoints = () =>
-      JSON.stringify(
-        settingsRef.current?.hosts.map(({ id, endpoint }) => [id, endpoint]),
-      );
-    const configuration = configuredEndpoints();
-    const currentSelection = selectionRef.current;
-    const currentPane = focusedPaneRef.current;
-    const uiBusy = uiBusyRef.current;
-    const ownsPublication = () =>
-      mounted.current &&
-      contextRevision.current === revision &&
-      configuration === configuredEndpoints() &&
-      selectionRef.current === currentSelection &&
-      focusedPaneRef.current === currentPane &&
-      uiBusyRef.current === uiBusy;
-    contextNeedsRetry.current = false;
-    void window.rex
-      .request("setContext", {
-        selection: currentSelection
-          ? { ...currentSelection, blockId: currentPane }
-          : null,
-        visible: !document.hidden,
-        uiBusy,
-      })
-      .catch((failure) => {
-        if (!ownsPublication()) return;
-        contextNeedsRetry.current = true;
-        setError(`Workspace context: ${errorMessage(failure)}`);
-      });
-  }, []);
-  const publishUiBusy = useCallback(
-    (uiBusy: boolean) => {
-      if (uiBusyRef.current === uiBusy && !contextNeedsRetry.current) return;
-      uiBusyRef.current = uiBusy;
-      publishContext();
-    },
-    [publishContext],
-  );
+  const { publishUiBusy, retryContext } = useWorkspaceContext({
+    selection: () => selectionRef.current,
+    focusedPane: () => focusedPane,
+    hosts: () => settingsRef.current?.hosts,
+    onError: setError,
+  });
 
   const reloadSession = useCallback(
     async (hostId: string, sessionId: string) => {
@@ -282,7 +243,7 @@ export function useWorkspace() {
   }, [synchronizeHostKeymap]);
   const refreshHosts = useCallback((): Promise<HostSnapshot[]> => {
     if (!mounted.current || !settingsRef.current) return Promise.resolve([]);
-    if (contextNeedsRetry.current) publishContext();
+    retryContext();
     if (inFlight.current) {
       refreshQueued.current = true;
       return inFlight.current;
@@ -303,7 +264,7 @@ export function useWorkspace() {
     };
     void work.then(finish, finish);
     return work;
-  }, [publishContext, refreshSnapshot]);
+  }, [retryContext, refreshSnapshot]);
   const refresh = useCallback(async (): Promise<void> => {
     await refreshHosts();
   }, [refreshHosts]);
@@ -609,13 +570,6 @@ export function useWorkspace() {
     }, 400);
     return () => clearTimeout(timer);
   }, [selection, saveSettings]);
-  useEffect(() => {
-    if (!window.rex) return;
-    publishContext();
-    const visibility = () => publishContext();
-    document.addEventListener("visibilitychange", visibility);
-    return () => document.removeEventListener("visibilitychange", visibility);
-  }, [selection, focusedPane, settings?.hosts, publishContext]);
   useEffect(() => {
     if (!notices.length) return;
     const timer = setTimeout(
