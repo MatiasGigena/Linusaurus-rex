@@ -19,7 +19,7 @@ window.rex={request:async(method,args)=>{requests.push({method,args,contentAtSen
 function emit(frame){for(const fn of listeners)fn({subscriptionId:currentSubscription,...frame})}
 let update,show,mount; function Fixture(){const [settings,setSettings]=React.useState(DEFAULT_SETTINGS),[visible,setVisible]=React.useState(true),[mounted,setMounted]=React.useState(!location.search.includes('deferMount'));update=patch=>setSettings(s=>({...s,...patch}));show=setVisible;mount=setMounted;return mounted&&React.createElement(TerminalPane,{pane:{id:'test',label:'Test terminal',rect:[0,0,1,1]},terminalRef:ref,settings,visible,focused:true,showHeader:false,onFocus(){},onClose(){},onZoom(){}})}
 createRoot(document.getElementById('root')).render(React.createElement(Fixture));
-window.fixture={requests,emit,update:patch=>update(patch),show:value=>show(value),mount:value=>mount(value),subscribers:()=>listeners.size,term:()=>getCachedTerminal(ref)?.terminal,command:dispatchTerminalCommand,commandAsync:dispatchTerminalCommandAsync};
+window.fixture={requests,emit,update:patch=>update(patch),show:value=>show(value),mount:value=>mount(value),subscribers:()=>listeners.size,runtime:()=>getCachedTerminal(ref),term:()=>getCachedTerminal(ref)?.terminal,command:dispatchTerminalCommand,commandAsync:dispatchTerminalCommandAsync,async flush(){const term=getCachedTerminal(ref).terminal;await new Promise(resolve=>term.write('',resolve));await document.fonts.ready;await new Promise(resolve=>{const listener=term.onRender(()=>{listener.dispose();resolve()});term.refresh(0,term.rows-1)})}};
 </script></body></html>`;
 
 test('terminal appends streams, retains selection/settings, routes mouse/keys, and searches output', { skip: process.env.TERMINAL_UI_TEST !== '1', timeout: 40_000 }, async () => {
@@ -86,7 +86,7 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     await page.waitForFunction(() => (window as any).fixture.term().options.fontSize === 17);
     assert.equal(await page.evaluate(() => (window as any).fixture.savedTerminal === (window as any).fixture.term()), true);
     await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[6n\x1b[c' }));
-    await page.waitForTimeout(150);
+    await page.evaluate(() => (window as any).fixture.flush());
     assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'input').length), 0, 'parser replies must not enter the server input stream');
     await page.locator('.xterm-helper-textarea').focus();
     await page.keyboard.type('a');
@@ -153,7 +153,7 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     await page.waitForFunction((count) => (window as any).fixture.requests.filter((r: any) => r.method === 'paste' && r.args.text === 'PASTE_FROM_CLIPBOARD').length === count + 1, pasteBeforeCommand);
     const pasted = await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'paste').length);
     await page.evaluate(() => (window as any).fixture.command('paste', {hostId:'test',sessionId:'test',blockId:'other-pane'}));
-    await page.waitForTimeout(50);
+    await page.evaluate(() => (window as any).fixture.commandAsync('select-all'));
     assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'paste').length), pasted, 'a scoped command must not run in the wrong pane');
     await page.evaluate(() => (window as any).fixture.command('paste', {hostId:'test',sessionId:'test',blockId:'test'}));
     await page.waitForFunction((count) => (window as any).fixture.requests.filter((r: any) => r.method === 'paste').length === count+1, pasted);
@@ -201,12 +201,13 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     await page.locator('.xterm-cursor-underline').waitFor();
     assert.equal(await page.locator('.xterm-cursor-blink').evaluate((cursor) => getComputedStyle(cursor).animationDuration), '0.5s');
     await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[6 q' }));
-    await page.waitForTimeout(60);
+    await page.evaluate(() => (window as any).fixture.flush());
     assert.equal(await page.locator('.xterm-cursor-underline').count(), 1);
     await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[' }));
-    await page.waitForTimeout(30);
+    await page.evaluate(() => (window as any).fixture.flush());
+    await page.waitForFunction(() => !(window as any).fixture.runtime().boundary.ground);
     await page.evaluate(() => (window as any).fixture.update({ forceCursorStyle: true, cursorStyle: 'bar' }));
-    await page.waitForTimeout(30);
+    await page.waitForFunction(() => (window as any).fixture.term().options.cursorStyle === 'bar' && (window as any).fixture.runtime().cursorResetPending);
     await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '6 qZ' }));
     await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(0)?.translateToString(true).includes('Z'));
     assert.equal(await page.evaluate(() => (window as any).fixture.term().buffer.active.getLine(0)?.translateToString(true).includes('6 q')), false, 'cursor preference must not split a server escape sequence');
@@ -218,11 +219,11 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     await page.evaluate(() => (window as any).fixture.update({ fontFamily: '"FiraCode Nerd Font Mono", monospace', fontSize: 22, fontStyle: 'normal', ligatures: false }));
     await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[?1000l\x1b[?25l\x1b[2J\x1b[H!= -> ===' }));
     await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(0)?.translateToString(true) === '!= -> ===');
-    await page.waitForTimeout(100);
+    await page.evaluate(() => (window as any).fixture.flush());
     const plain = await page.locator('.xterm-screen').screenshot({ animations: 'disabled' });
     await page.evaluate(() => (window as any).fixture.update({ ligatures: true }));
     await page.waitForFunction(() => (document.querySelector('.terminal-emulator') as HTMLElement)?.style.fontVariantLigatures === 'normal');
-    await page.waitForTimeout(150);
+    await page.evaluate(() => (window as any).fixture.flush());
     const ligatured = await page.locator('.xterm-screen').screenshot({ animations: 'disabled' });
     let fontAvailable = false;
     try { fontAvailable = /FiraCode/i.test(execFileSync('fc-match', ['-f', '%{family}', 'FiraCode Nerd Font Mono'], { encoding: 'utf8' })); } catch {}
@@ -235,22 +236,22 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     const dimensions = await page.evaluate(() => ({ cols: (window as any).fixture.term().cols, rows: (window as any).fixture.term().rows }));
     for (let row = 0; row < 3; row++) {
       await page.mouse.move(linkGrid.x + linkGrid.width / dimensions.cols * 4, linkGrid.y + linkGrid.height / dimensions.rows * (row + .5));
-      await page.waitForTimeout(70);
+      await page.locator('.xterm-cursor-pointer').waitFor();
       await page.mouse.click(linkGrid.x + linkGrid.width / dimensions.cols * 4, linkGrid.y + linkGrid.height / dimensions.rows * (row + .5));
     }
     await page.waitForFunction(() => (window as any).fixture.requests.filter((r: any) => r.method === 'openExternal').length === 3);
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'openExternal').map((r: any) => r.args.url)), ['vscode://file/tmp/client.ts:7', 'mailto:hello@example.com', 'vscode://file/tmp/osc8.ts']);
     await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[2J\x1b[HA🦕B' }));
-    await page.waitForTimeout(60);
+    await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(0)?.translateToString(true) === 'A🦕B' && (window as any).fixture.term().buffer.active.cursorX === 4);
     assert.equal(await page.evaluate(() => (window as any).fixture.term().buffer.active.cursorX), 4, 'dinosaur emoji width must match the installed Rex DSR');
     await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[2J\x1b[HA🫠B' }));
-    await page.waitForTimeout(60);
+    await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(0)?.translateToString(true) === 'A🫠B' && (window as any).fixture.term().buffer.active.cursorX === 4);
     assert.equal(await page.evaluate(() => (window as any).fixture.term().buffer.active.cursorX), 4, 'Unicode14 emoji width must match the installed Rex DSR');
     await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[2J\x1b[HA👩‍💻B' }));
-    await page.waitForTimeout(60);
+    await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(0)?.translateToString(true) === 'A👩‍💻B' && (window as any).fixture.term().buffer.active.cursorX === 6);
     assert.equal(await page.evaluate(() => (window as any).fixture.term().buffer.active.cursorX), 6, 'ZWJ emoji width must match the installed Rex DSR');
     await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b[2J\x1b[HAéB' }));
-    await page.waitForTimeout(60);
+    await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(0)?.translateToString(true) === 'AéB' && (window as any).fixture.term().buffer.active.cursorX === 3);
     assert.equal(await page.evaluate(() => (window as any).fixture.term().buffer.active.cursorX), 3, 'combining accents must not add a terminal column');
     await page.evaluate(() => {
       const f = (window as any).fixture, rows = f.term().rows;
@@ -287,6 +288,17 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
       void f.commandAsync('paste', { hostId: 'test', sessionId: 'test', blockId: 'test' }).then(() => { f.closedCommand = 'accepted'; }, (failure: Error) => { f.closedCommand = failure.message; });
     });
     await page.waitForFunction(() => typeof (window as any).fixture.releaseClipboard === 'function');
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const kitty = f.runtime().kitty;
+      const original = kitty.command;
+      kitty.command = () => {
+        kitty.command = original;
+        return f.pendingImage = new Promise(resolve => { f.releaseImage = resolve; });
+      };
+      f.emit({ kind: 'output', data: '\x1b_Gdeferred\x1b\\' });
+    });
+    await page.waitForFunction(() => typeof (window as any).fixture.releaseImage === 'function');
     await page.evaluate(() => (window as any).fixture.mount(false));
     await page.locator('.terminal-container').waitFor({ state: 'detached' });
     await page.waitForFunction(() => /closed/.test((window as any).fixture.closedCommand));
@@ -295,6 +307,13 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     await page.locator('.terminal-container .xterm').waitFor();
     await page.evaluate(() => (window as any).fixture.emit({ kind: 'snapshot', data: 'remounted> \x1b[?1000h\x1b[?1006h', cols: 80, rows: 24 }));
     await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(0)?.translateToString(true).trimEnd() === 'remounted>');
+    await page.evaluate(async () => {
+      const f = (window as any).fixture;
+      f.releaseImage('STALE_IMAGE_MOVE');
+      await f.pendingImage;
+      await f.flush();
+    });
+    assert.equal(await page.evaluate(() => (window as any).fixture.term().buffer.active.getLine(0)?.translateToString(true).trimEnd()), 'remounted>', 'an image command from a disposed writer must not write into a remounted emulator');
     await page.evaluate(() => (window as any).fixture.releaseClipboard());
     await page.mouse.up();
     assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'mouse').length), beforeUnmount, 'a remounted pane must not release a pointer held by its previous input lifecycle');
