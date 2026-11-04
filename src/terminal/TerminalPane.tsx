@@ -11,6 +11,7 @@ import { applicationLinks, linkProtocol } from './links';
 import { TerminalVisuals } from './visuals';
 import { terminalCommands, type TerminalCommandCompletion } from './commands';
 import { TerminalFrameWriter } from './frame-writer';
+import { TerminalCommandSession, terminalErrorMessage as displayError } from './command-session';
 import '@xterm/xterm/css/xterm.css';
 import './terminal.css';
 
@@ -23,7 +24,6 @@ export interface TerminalPaneProps {
 }
 
 export { dispatchTerminalCommand, dispatchTerminalCommandAsync } from './commands';
-const displayError = (failure: unknown) => failure instanceof Error ? failure.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : String(failure);
 function synchronizeTheme(runtime: TerminalRuntime, ref: TerminalRef, settings: Settings, onError: (message: string) => void) {
   const theme = terminalServerTheme(settings);
   const signature = JSON.stringify(theme);
@@ -118,6 +118,146 @@ function registerTerminalLinks(
   };
 }
 
+interface TerminalCommandBindings {
+  runtime: TerminalRuntime;
+  ref: TerminalRef;
+  session: TerminalCommandSession;
+  copy(): Promise<void>;
+  openSearch(): void;
+  find(previous: boolean): void;
+  actionHandler(): TerminalPaneProps["onAction"];
+}
+
+function createTerminalCommandExecutor(bindings: TerminalCommandBindings) {
+  const { runtime, ref, session } = bindings;
+  const term = runtime.terminal;
+  const pasteCommand = async (
+    text?: string,
+    commandGeneration?: number,
+    signal?: AbortSignal,
+    completion: TerminalCommandCompletion = "settled",
+  ) => {
+    const readyGeneration =
+      commandGeneration ?? (await session.waitUntilReady(signal));
+    const value = text ?? (await window.rex.readClipboard());
+    signal?.throwIfAborted();
+    if (new TextEncoder().encode(value).length > MAX_PASTE_BYTES)
+      throw new Error("Paste is larger than the 1 MiB input limit.");
+    if (!session.isCommandReady(readyGeneration))
+      throw new Error(
+        "The terminal connection changed before paste could be accepted.",
+      );
+    await session.sendCommand(
+      () => window.rex.request("paste", { ...ref, text: value }),
+      readyGeneration,
+      completion,
+    );
+  };
+  const promptNavigation = createPromptNavigator(runtime);
+  const handleCommand = (
+    command: string,
+    commandGeneration: number,
+    signal: AbortSignal | undefined,
+    completion: TerminalCommandCompletion,
+  ) => {
+    switch (command) {
+      case "copy":
+        return bindings.copy();
+      case "paste":
+        return pasteCommand(undefined, commandGeneration, signal, completion);
+      case "select-all":
+        term.selectAll();
+        break;
+      case "find":
+        bindings.openSearch();
+        break;
+      case "find-next":
+        bindings.openSearch();
+        bindings.find(false);
+        break;
+      case "find-previous":
+        bindings.openSearch();
+        bindings.find(true);
+        break;
+      case "scroll-top":
+        term.scrollToTop();
+        break;
+      case "scroll-bottom":
+        term.scrollToBottom();
+        break;
+      case "previous-prompt":
+      case "prompt-previous":
+        promptNavigation("previous");
+        break;
+      case "next-prompt":
+      case "prompt-next":
+        promptNavigation("next");
+        break;
+      case "scroll-line-up":
+        term.scrollLines(-1);
+        break;
+      case "scroll-line-down":
+        term.scrollLines(1);
+        break;
+      case "scroll-page-up":
+        term.scrollPages(-1);
+        break;
+      case "scroll-page-down":
+        term.scrollPages(1);
+        break;
+      case "clear-content":
+      case "clear-scrollback":
+      case "clear-terminal": {
+        // The server emits the precise VT operation retaining the current
+        // line. Applying a second local clear would corrupt its coordinates.
+        const action = bindings.actionHandler();
+        if (action) return action("pane.clear_content");
+        return session.sendCommand(
+          () =>
+            window.rex.request("invokeAction", {
+              ...ref,
+              action: "com.superlogical.terminal.clear",
+            }),
+          commandGeneration,
+        );
+      }
+      case "copy-last-output": {
+        const { start, end } = runtime.outputMarkers;
+        if (start && !start.isDisposed) {
+          const lines: string[] = [];
+          for (
+            let line = start.line;
+            line <=
+            (end && !end.isDisposed
+              ? end.line
+              : term.buffer.active.baseY + term.buffer.active.cursorY);
+            line++
+          )
+            lines.push(
+              term.buffer.active.getLine(line)?.translateToString(true) || "",
+            );
+          return window.rex.writeClipboard(lines.join("\n").trimEnd());
+        }
+        break;
+      }
+      default:
+        return bindings.actionHandler()?.(canonicalActionName(command));
+    }
+  };
+  const execute = (
+    command: string,
+    signal?: AbortSignal,
+    completion: TerminalCommandCompletion = "settled",
+  ) => session.executeCommand(
+    generation => handleCommand(command, generation, signal, completion),
+    signal,
+  );
+  const paste = (text?: string) => session.executeCommand(
+    generation => pasteCommand(text, generation),
+  );
+  return { paste, execute };
+}
+
 export function TerminalPane(props: TerminalPaneProps) {
   const { pane, terminalRef, settings, focused, showHeader, onZoom, onClose, visible = true } = props;
   const { hostId, sessionId, blockId } = terminalRef;
@@ -151,119 +291,38 @@ export function TerminalPane(props: TerminalPaneProps) {
     runtimeRef.current = runtime;
     const visuals = new TerminalVisuals(term, runtime.element, hostElement, settingsRef.current);
     visualsRef.current = visuals;
-    let disposed = false;
-    let online = false;
-    let commandReady = false;
-    let disconnected = false;
-    let generation = 0;
+    const session = new TerminalCommandSession({ visible: isVisible, connected: setConnected, error: setError });
     let sawFrame = false;
-    let inputQueue = Promise.resolve();
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let resizeAnimation = 0;
     let lastSize = '';
-    const commandWaiters = new Set<{ resolve(generation: number): void; reject(failure: Error): void; timer: ReturnType<typeof setTimeout> }>();
     const ref = { hostId, sessionId, blockId };
     const subscriptionId = crypto.randomUUID();
-    const rejectPendingCommands = (message: string) => {
-      for (const waiter of commandWaiters) {
-        clearTimeout(waiter.timer);
-        waiter.reject(new Error(message));
-      }
-      commandWaiters.clear();
-    };
-    const waitForCommands = (signal?: AbortSignal): Promise<number> => {
-      if (signal?.aborted) return Promise.reject(signal.reason);
-      if (disposed || !isVisible()) return Promise.reject(new Error('The terminal pane is no longer visible.'));
-      if (online && commandReady) return Promise.resolve(generation);
-      if (disconnected) return Promise.reject(new Error('The terminal is disconnected; wait for it to reconnect.'));
-      return new Promise((resolve, reject) => {
-        const cleanup = () => {
-          clearTimeout(waiter.timer);
-          commandWaiters.delete(waiter);
-          signal?.removeEventListener('abort', abort);
-        };
-        const waiter = {
-          resolve(value: number) {
-            cleanup();
-            resolve(value);
-          },
-          reject(failure: Error) {
-            cleanup();
-            reject(failure);
-          },
-          timer: setTimeout(() => waiter.reject(new Error('The terminal did not become ready within 10 seconds.')), 10_000),
-        };
-        const abort = () => waiter.reject(signal?.reason);
-        commandWaiters.add(waiter);
-        signal?.addEventListener('abort', abort, { once: true });
-      });
-    };
-    const reportCommandError = (failure: unknown) => {
-      if (!disposed) setError(displayError(failure));
-    };
-    const fail = (failure: unknown) => {
-      generation++;
-      online = false;
-      commandReady = false;
-      disconnected = true;
-      rejectPendingCommands(displayError(failure));
-      if (!disposed) {
-        setConnected(false);
-        setError(displayError(failure));
-      }
-    };
-    // A failed send invalidates later queued input; none is retried after reconnect.
-    const enqueueCompletion = (send: () => Promise<unknown>): Promise<void> | undefined => {
-      if (!online || !isVisible() || disposed) return;
-      const inputGeneration = generation;
-      const completion = inputQueue.then(async () => {
-        if (disposed || !online || generation !== inputGeneration) {
-          throw new Error('The terminal connection changed before queued input could be sent.');
-        }
-        try {
-          await send();
-        } catch (failure) {
-          const text = displayError(failure);
-          if (/connection|socket|network|disconnected|closed|timed out|ECONN|EPIPE|transport|handshake|\bEOF\b/i.test(text)) fail(failure);
-          else {
-            // An invalid user action or Lua exception is not a lost transport.
-            // Drop already-queued keys, then allow the next explicit input.
-            generation++;
-            if (!disposed) setError(text);
-          }
-          throw failure;
-        }
-      });
-      // Recover the queue tail without swallowing the explicit caller's result.
-      // Browser input and acknowledged server paste still report send errors above.
-      inputQueue = completion.catch(() => {});
-      return completion;
-    };
-    const enqueue = (send: () => Promise<unknown>) => !!enqueueCompletion(send);
+    const enqueue = (send: () => Promise<unknown>) => session.enqueue(send);
     const sendSize = () => {
-      if (disposed || !isVisible() || !document.hasFocus() || !hostElement.isConnected || hostElement.clientWidth === 0 || hostElement.clientHeight === 0) return;
+      if (session.isDisposed || !isVisible() || !document.hasFocus() || !hostElement.isConnected || hostElement.clientWidth === 0 || hostElement.clientHeight === 0) return;
       if (settingsRef.current.smoothResize) runtime.fit.fit();
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
-        if (disposed || !isVisible() || !document.hasFocus()) return;
+        if (session.isDisposed || !isVisible() || !document.hasFocus()) return;
         if (!settingsRef.current.smoothResize) runtime.fit.fit();
         const size = `${term.cols}/${term.rows}`;
         if (size === lastSize) return;
         lastSize = size;
         void window.rex.request('resize', { ...ref, cols: term.cols, rows: term.rows }).catch((failure: unknown) => {
           lastSize = '';
-          if (!disposed) setError(`Resize failed: ${displayError(failure)}`);
+          if (!session.isDisposed) setError(`Resize failed: ${displayError(failure)}`);
         });
       }, 100);
     };
     const startSubscription = () => {
-      if (!disposed) void window.rex.request('subscribe', { ...ref, subscriptionId }).catch(fail);
+      if (!session.isDisposed) void window.rex.request('subscribe', { ...ref, subscriptionId }).catch(session.fail);
     };
     const writer = new TerminalFrameWriter(runtime, {
       scrollOnOutput: () => settingsRef.current.scrollOnOutput,
       error: (failure, source) => {
-        if (!disposed) setError(`${source === 'image' ? 'Image: ' : ''}${displayError(failure)}`);
+        if (!session.isDisposed) setError(`${source === 'image' ? 'Image: ' : ''}${displayError(failure)}`);
       },
       complete: (frame, frameGeneration) => {
         const snapshot = !frame.kind || frame.kind === 'snapshot';
@@ -271,65 +330,49 @@ export function TerminalPane(props: TerminalPaneProps) {
           if (snapshot) lastSize = '';
           resizeAnimation = requestAnimationFrame(sendSize);
         }
-        if (frame.kind !== 'resize' && online && generation === frameGeneration && !commandReady && !writer.hasPendingSnapshot) {
-          commandReady = true;
-          for (const waiter of commandWaiters) {
-            clearTimeout(waiter.timer);
-            waiter.resolve(generation);
-          }
-          commandWaiters.clear();
-        }
+        if (frame.kind !== 'resize') session.frameRendered(frameGeneration, writer.hasPendingSnapshot);
       },
     });
-    const paste = async (text?: string, commandGeneration?: number, signal?: AbortSignal, completion: TerminalCommandCompletion = 'settled') => {
-      const readyGeneration = commandGeneration ?? await waitForCommands(signal);
-      const value = text ?? await window.rex.readClipboard();
-      signal?.throwIfAborted();
-      if (new TextEncoder().encode(value).length > MAX_PASTE_BYTES) throw new Error('Paste is larger than the 1 MiB input limit.');
-      if (generation !== readyGeneration || !commandReady) {
-        throw new Error('The terminal connection changed before paste could be accepted.');
-      }
-      const sent = enqueueCompletion(() => window.rex.request('paste', { ...ref, text: value }));
-      if (!sent) throw new Error('The terminal connection changed before paste could be accepted.');
-      if (completion === 'settled') await sent;
-    };
+    const commands = createTerminalCommandExecutor({
+      runtime, ref, session,
+      copy: () => input.copy(),
+      openSearch: () => setSearchOpen(true),
+      find: previous => searchOperation.current(previous),
+      actionHandler: () => callbacks.current.onAction,
+    });
     const input = registerTerminalInput({
       runtime, hostElement, ref,
       settings: () => settingsRef.current,
-      isVisible, isOnline: () => online,
+      isVisible, isOnline: () => session.isOnline,
       isFocused: () => callbacks.current.focused,
       isReplayingSnapshot: () => writer.replayingSnapshot,
-      enqueue, paste,
+      enqueue,
+      // DOM paste has no awaiting caller. Its executor already reports failures
+      // against the connection that accepted it, including clipboard reads.
+      paste: text => commands.paste(text).catch(() => {}),
       onFocus: () => callbacks.current.onFocus(),
       onCopied: () => visuals.copied(),
-      onError: reportCommandError,
+      onError: session.reportError,
       onMenu: setMenu,
     });
     const unsubscribe = window.rex.onTerminal((frame) => {
-      if (disposed || frame.subscriptionId !== subscriptionId) return;
+      if (session.isDisposed || frame.subscriptionId !== subscriptionId) return;
       if (frame.error) {
-        fail(frame.error);
+        session.fail(frame.error);
         return;
       }
       if (frame.data === undefined && frame.kind !== 'resize') return;
-      const recovered = !online;
-      if (recovered) {
-        generation++;
-        disconnected = false;
-        input.reset();
-      }
-      online = true;
-      setConnected(true);
-      setError(undefined);
+      const recovered = session.receiveFrame();
+      if (recovered) input.reset();
       if (recovered && callbacks.current.focused) enqueue(() => window.rex.request('focusEvent', { ...ref, focused: true }));
       if (recovered && isVisible()) {
         if (sawFrame) runtime.serverThemeSignature = undefined;
-        synchronizeTheme(runtime, ref, settingsRef.current, (message) => { if (!disposed) setError(message); });
+        synchronizeTheme(runtime, ref, settingsRef.current, (message) => { if (!session.isDisposed) setError(message); });
       }
       sawFrame = true;
-      if (!frame.kind || frame.kind === 'snapshot') commandReady = false;
-      if (!writer.enqueue(frame, generation)) {
-        fail('Output exceeded the rendering buffer; resynchronizing with Rex.');
+      if (!frame.kind || frame.kind === 'snapshot') session.beginSnapshot();
+      if (!writer.enqueue(frame, session.frameGeneration)) {
+        session.fail('Output exceeded the rendering buffer; resynchronizing with Rex.');
         void window.rex.request('unsubscribe', { subscriptionId }).catch(() => {}).finally(() => {
           retryTimer = setTimeout(startSubscription, 250);
         });
@@ -337,55 +380,13 @@ export function TerminalPane(props: TerminalPaneProps) {
       }
       if (callbacks.current.focused && isVisible() && document.activeElement === document.body) term.focus();
     });
-    const promptNavigation = createPromptNavigator(runtime);
-    const handleCommand = (command: string, commandGeneration: number, signal: AbortSignal | undefined, completion: TerminalCommandCompletion) => {
-      switch (command) {
-        case 'copy': return input.copy();
-        case 'paste': return paste(undefined, commandGeneration, signal, completion);
-        case 'select-all': term.selectAll(); break;
-        case 'find': setSearchOpen(true); break;
-        case 'find-next': setSearchOpen(true); searchOperation.current(false); break;
-        case 'find-previous': setSearchOpen(true); searchOperation.current(true); break;
-        case 'scroll-top': term.scrollToTop(); break;
-        case 'scroll-bottom': term.scrollToBottom(); break;
-        case 'previous-prompt': case 'prompt-previous': promptNavigation('previous'); break;
-        case 'next-prompt': case 'prompt-next': promptNavigation('next'); break;
-        case 'scroll-line-up': term.scrollLines(-1); break;
-        case 'scroll-line-down': term.scrollLines(1); break;
-        case 'scroll-page-up': term.scrollPages(-1); break;
-        case 'scroll-page-down': term.scrollPages(1); break;
-        case 'clear-content': case 'clear-scrollback': case 'clear-terminal': {
-          // The server emits the precise VT operation retaining the current
-          // line. Applying a second local clear would corrupt its coordinates.
-          if (callbacks.current.onAction) return callbacks.current.onAction('pane.clear_content');
-          const cleared = enqueueCompletion(() => window.rex.request('invokeAction', { ...ref, action: 'com.superlogical.terminal.clear' }));
-          if (!cleared) throw new Error('The terminal pane is no longer available for this command.');
-          return cleared;
-        }
-        case 'copy-last-output': {
-          const { start, end } = runtime.outputMarkers;
-          if (start && !start.isDisposed) {
-            const lines: string[] = [];
-            for (let line = start.line; line <= (end && !end.isDisposed ? end.line : term.buffer.active.baseY + term.buffer.active.cursorY); line++) lines.push(term.buffer.active.getLine(line)?.translateToString(true) || '');
-            return window.rex.writeClipboard(lines.join('\n').trimEnd());
-          }
-          break;
-        }
-        default: return callbacks.current.onAction?.(canonicalActionName(command));
-      }
-    };
-    const executeCommand = async (command: string, signal?: AbortSignal, completion: TerminalCommandCompletion = 'settled') => {
-      const commandGeneration = await waitForCommands(signal);
-      signal?.throwIfAborted();
-      if (disposed || !online || !commandReady || commandGeneration !== generation) throw new Error('The terminal connection changed before the command could be accepted.');
-      await handleCommand(command, commandGeneration, signal, completion);
-    };
-    commandRef.current = (command) => { void executeCommand(command).catch(reportCommandError); };
+    commandRef.current = (command) => { void commands.execute(command).catch(() => {}); };
     const commandRegistration = terminalCommands.register(ref, {
-      available: () => !disposed && isVisible() && hostElement.isConnected,
+      available: () => !session.isDisposed && isVisible() && hostElement.isConnected,
       focused: () => callbacks.current.focused,
-      execute: executeCommand,
-      onError: reportCommandError,
+      execute: commands.execute,
+      // Execution owns error reporting; the broker only settles its caller.
+      onError: () => {},
     });
     const cursorStyleListener = term.parser.registerCsiHandler({ intermediates: ' ', final: 'q' }, (params) => {
       const style = params[0];
@@ -405,8 +406,8 @@ export function TerminalPane(props: TerminalPaneProps) {
         } catch { /* A desktop may have no audio output. */ }
       }
     });
-    const disposeLinks = registerTerminalLinks(runtime, () => settingsRef.current, reportCommandError);
-    const resultsListener = runtime.search.onDidChangeResults((results) => { if (!disposed) setSearchResults(results); });
+    const disposeLinks = registerTerminalLinks(runtime, () => settingsRef.current, session.reportError);
+    const resultsListener = runtime.search.onDidChangeResults((results) => { if (!session.isDisposed) setSearchResults(results); });
     const observer = new ResizeObserver(sendSize); observer.observe(hostElement);
     const visibility = () => { if (!document.hidden && isVisible()) { lastSize = ''; sendSize(); } };
     document.addEventListener('visibilitychange', visibility);
@@ -418,14 +419,13 @@ export function TerminalPane(props: TerminalPaneProps) {
       const options = terminalOptions(settingsRef.current);
       term.options = options;
       hostElement.style.backgroundColor = options.theme?.background || '';
-      if (isVisible()) synchronizeTheme(runtime, ref, settingsRef.current, (message) => { if (!disposed) setError(message); });
+      if (isVisible()) synchronizeTheme(runtime, ref, settingsRef.current, (message) => { if (!session.isDisposed) setError(message); });
     };
     colorScheme.addEventListener('change', updateColorScheme);
     const visibilityChanged = (show: boolean) => {
       if (!show) {
-        generation++;
+        session.hide();
         input.reset();
-        rejectPendingCommands('The terminal pane was hidden before the command became ready.');
         clearTimeout(resizeTimer);
         void window.rex.request('releaseViewport', ref).catch(() => {});
       } else {
@@ -438,10 +438,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     sendSize();
     startSubscription();
     return () => {
-      disposed = true;
-      online = false;
-      generation++;
-      rejectPendingCommands('The terminal pane was hidden or closed before the command became ready.');
+      session.dispose();
       clearTimeout(resizeTimer);
       clearTimeout(retryTimer);
       cancelAnimationFrame(resizeAnimation);

@@ -39,6 +39,24 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
   try {
     const address = server.httpServer!.address() as { port: number };
     await page.addInitScript({ content: "Object.defineProperty(window, 'queryLocalFonts', { value: async function(){ return []; } });" });
+    const visibilityPage = await browser.newPage();
+    await visibilityPage.goto(`http://127.0.0.1:${address.port}/terminal-fixture?deferSnapshot`);
+    await visibilityPage.waitForFunction(() => (window as any).fixture?.requests.some((request: any) => request.method === 'subscribe'));
+    await visibilityPage.evaluate(() => {
+      const f = (window as any).fixture, term = f.term(), write = term.write.bind(term);
+      term.write = (data: string, complete?: () => void) => write(data, () => {
+        if (data === 'hidden-initial-snapshot') { term.write = write; f.completeInitialSnapshot = complete; }
+        else complete?.();
+      });
+      f.emit({ kind: 'snapshot', data: 'hidden-initial-snapshot' });
+    });
+    await visibilityPage.waitForFunction(() => typeof (window as any).fixture.completeInitialSnapshot === 'function');
+    await visibilityPage.evaluate(() => (window as any).fixture.show(false));
+    await visibilityPage.waitForFunction(() => (window as any).fixture.requests.some((request: any) => request.method === 'releaseViewport'));
+    await visibilityPage.evaluate(() => { const f = (window as any).fixture; f.completeInitialSnapshot(); f.show(true); });
+    const visiblePaste = await visibilityPage.evaluate(() => (window as any).fixture.commandAsync('paste', { hostId: 'test', sessionId: 'test', blockId: 'test' }).then(() => '', (failure: Error) => failure.message));
+    assert.equal(visiblePaste, '', 'showing a pane after its snapshot completed while hidden must retain readiness without waiting for more output');
+    await visibilityPage.close();
     await page.goto(`http://127.0.0.1:${address.port}/terminal-fixture?deferSnapshot&deferMount`);
     await page.waitForFunction(() => typeof (window as any).fixture?.mount === 'function');
     await page.evaluate(async () => {
