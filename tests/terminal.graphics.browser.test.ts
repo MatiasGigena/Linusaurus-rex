@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 import { deflateSync } from "node:zlib";
 const source = `import React from 'react';import{createRoot}from'react-dom/client';import{TerminalPane,dispatchTerminalCommandAsync}from'/src/terminal/TerminalPane.tsx';import{getCachedTerminal}from'/src/terminal/runtime.ts';import{DEFAULT_SETTINGS}from'/src/shared/types.ts';
 const ref={hostId:'graphics',sessionId:'test',blockId:'test'};let subscription,update,show;const listeners=new Set(),requests=[];window.rex={request:async(method,args)=>{requests.push({method,args});if(method==='subscribe'){subscription=args.subscriptionId;setTimeout(()=>emit({kind:'snapshot',data:'ready> ',cols:80,rows:24}),20)}},onTerminal:callback=>{listeners.add(callback);return()=>listeners.delete(callback)},writeClipboard:async()=>{},readClipboard:async()=>''};function emit(frame){for(const callback of listeners)callback({subscriptionId:subscription,...frame})}
@@ -295,10 +295,7 @@ test(
         );
         return span && getComputedStyle(span).color === "rgb(254, 1, 2)";
       });
-      assert.equal(
-        await rgb.evaluate((span) => getComputedStyle(span).color),
-        original,
-      );
+      await expect(rgb).toHaveCSS("color", original);
       await page.evaluate(() => {
         const media = window.matchMedia.bind(window);
         window.matchMedia = (query: string) =>
