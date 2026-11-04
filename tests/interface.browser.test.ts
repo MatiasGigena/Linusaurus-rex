@@ -11,12 +11,13 @@ import { SettingsDialog } from '/src/components/preferences/SettingsDialog.tsx';
 import { ProgramIcon } from '/src/components/ProgramIcon.tsx';
 import { ActivePaneHighlight } from '/src/components/ActivePaneHighlight.tsx';
 import { DEFAULT_SETTINGS } from '/src/shared/types.ts';
+import { migrateThemeLibrary } from '/src/core/themeLibrary.ts';
 import '/src/styles.css';import '/src/advanced.css';import '/src/dialogs.css';
 const palette={background:'#102030',foreground:'#e0e0e0',blue:'#4477bb',palette200:'#123456'};
 let saved, reopen, move, animation, icon;const integrationCalls=[];
 window.rex={request:async(method,args)=>{if(method==='importTheme')return window.fixture.nextImport;if(method.startsWith('integrations'))integrationCalls.push({method,args});if(method==='integrationsStatus')return {output:'Installed integrations'};if(method==='integrationsPreview')return {previewId:'preview',output:'Reviewed integration change',steps:[]};if(method==='integrationsApply')return {output:'Applied integration change',steps:[]};throw new Error('Unexpected request: '+method);}};
 function Fixture(){
- const [settings,setSettings]=React.useState({...structuredClone(DEFAULT_SETTINGS),customDarkTheme:palette});
+ const [settings,setSettings]=React.useState(migrateThemeLibrary({...structuredClone(DEFAULT_SETTINGS),customDarkTheme:palette}));
  const [open,setOpen]=React.useState(true),[rect,setRect]=React.useState([0,0,.5,1]),[mode,setMode]=React.useState('move'),[shell,setShell]=React.useState('theme');
  reopen=()=>setOpen(true);move=setRect;animation=setMode;icon=setShell;
  return React.createElement(React.Fragment,null,

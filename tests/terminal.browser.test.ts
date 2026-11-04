@@ -189,7 +189,7 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     const missingTarget = await page.evaluate(() => (window as any).fixture.commandAsync('paste', { hostId: 'test', sessionId: 'test', blockId: 'missing' }).then(() => '', (failure: Error) => failure.message));
     assert.match(missingTarget, /within 10 seconds/);
     assert.equal(await page.evaluate(() => (window as any).fixture.savedTerminal === (window as any).fixture.term()), true, 'tab visibility must preserve the emulator');
-    await page.evaluate(() => (window as any).fixture.update({ theme: 'system', appearance: 'dark', darkTheme: 'midnight', lightTheme: 'light', useExtendedPalette: true, customTheme: { palette16: '#123456', palette255: '#abcdef' } }));
+    await page.evaluate(() => (window as any).fixture.update({ theme: 'system', appearance: 'dark', darkTheme: 'midnight', lightTheme: 'light', useExtendedPalette: true, darkThemeId: 'custom', themeLibrary: [{ id: 'custom', name: 'Custom', colors: { palette16: '#123456', palette255: '#abcdef' } }] }));
     await page.waitForFunction(() => (window as any).fixture.term().options.theme.extendedAnsi?.[0] === '#123456');
     assert.equal(await page.evaluate(() => (window as any).fixture.term().options.theme.background), '#10151f');
     await page.waitForFunction(() => (window as any).fixture.requests.some((r: any) => r.method === 'invokeAction' && r.args.args.palette?.includes('255=#abcdef')));

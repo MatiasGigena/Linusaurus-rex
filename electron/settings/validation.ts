@@ -19,7 +19,7 @@ export function validateSettings(value: unknown): Settings {
   result.notifications = validateNotifications(input.notifications);
   if (input.shortcuts !== undefined)
     result.shortcuts = validateShortcuts(input.shortcuts);
-  applyThemes(input, result);
+  const legacyThemes = applyThemes(input, result);
   if (input.trustedLinks !== undefined)
     result.trustedLinks = validateTrustedLinks(input.trustedLinks);
   if (input.recentPaths !== undefined)
@@ -27,6 +27,7 @@ export function validateSettings(value: unknown): Settings {
   const lastSelection = validateLastSelection(input.lastSelection, hosts);
   return migrateThemeLibrary({
     ...result,
+    ...legacyThemes,
     hosts,
     ...(lastSelection ? { lastSelection } : {}),
   });

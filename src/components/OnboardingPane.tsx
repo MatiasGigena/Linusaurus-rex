@@ -172,9 +172,6 @@ export function OnboardingPane({
                           theme,
                           lightThemeId: "",
                           darkThemeId: "",
-                          customTheme: undefined,
-                          customLightTheme: undefined,
-                          customDarkTheme: undefined,
                         });
                       })
                     }

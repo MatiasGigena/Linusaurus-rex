@@ -31,9 +31,6 @@ export function AppearancePreferences({
                 : {
                     ...previous,
                     theme: value as Settings["theme"],
-                    customTheme: undefined,
-                    customLightTheme: undefined,
-                    customDarkTheme: undefined,
                     lightThemeId: "",
                     darkThemeId: "",
                   },
@@ -56,8 +53,6 @@ export function AppearancePreferences({
               theme: "system",
               lightTheme: value as Settings["lightTheme"],
               lightThemeId: "",
-              customLightTheme: undefined,
-              customTheme: undefined,
             }))
           }
         />
@@ -77,8 +72,6 @@ export function AppearancePreferences({
               theme: "system",
               darkTheme: value as Settings["darkTheme"],
               darkThemeId: "",
-              customDarkTheme: undefined,
-              customTheme: undefined,
             }))
           }
         />

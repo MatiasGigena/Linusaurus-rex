@@ -4,7 +4,6 @@ import type { Settings } from "../../shared/types";
 import { TERMINAL_THEMES } from "../../terminal/themes";
 import {
   deleteLibraryTheme,
-  migrateThemeLibrary,
   renameLibraryTheme,
   resolvedImportedTheme,
   saveLibraryTheme,
@@ -26,7 +25,7 @@ export function ThemeLibrary({
 }) {
   const [names, setNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
-  const draft = migrateThemeLibrary(settings);
+  const draft = settings;
   const apply = (operation: () => Settings) => {
     try {
       onChange(operation());

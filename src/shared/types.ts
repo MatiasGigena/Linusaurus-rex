@@ -116,9 +116,6 @@ export interface Settings {
   lastSelection?: Selection;
   interfaceZoom: number;
   theme: "macos" | "macos-light" | "graphite" | "midnight" | "light" | "system";
-  customTheme?: Record<string, string>;
-  customLightTheme?: Record<string, string>;
-  customDarkTheme?: Record<string, string>;
   appearance: "system" | "dark" | "light";
   cursorStyle: "block" | "underline" | "bar";
   cursorBlink: boolean;

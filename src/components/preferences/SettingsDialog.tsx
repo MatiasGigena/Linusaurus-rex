@@ -18,7 +18,6 @@ import {
   Bell,
 } from "lucide-react";
 import { Dialog } from "../Dialog";
-import { migrateThemeLibrary } from "../../core/themeLibrary";
 import type { Host, Settings } from "../../shared/types";
 import { DEFAULT_SETTINGS } from "../../shared/types";
 import { errorMessage } from "../../core/workspace";
@@ -56,7 +55,7 @@ export function SettingsDialog({
   onNativeServices,
 }: Props) {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
-  const [draft, setDraft] = useState(() => migrateThemeLibrary(settings));
+  const [draft, setDraft] = useState(() => structuredClone(settings));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
   const update = <K extends keyof Settings>(key: K, value: Settings[K]) =>

@@ -456,12 +456,14 @@ test("preference migration preserves legacy desktop choices and validates channe
   assert.equal(migrated.notifications.working, true);
   assert.equal(migrated.notifications.channels.working.desktop, false);
   assert.equal(migrated.notifications.channels.working.tabs, true);
+  const themed = validateSettings({
+    ...DEFAULT_SETTINGS,
+    customDarkTheme: { palette255: "#123456" },
+    recentPaths: { local: ["/tmp"] },
+  });
   assert.equal(
-    validateSettings({
-      ...DEFAULT_SETTINGS,
-      customDarkTheme: { palette255: "#123456" },
-      recentPaths: { local: ["/tmp"] },
-    }).customDarkTheme?.palette255,
+    themed.themeLibrary.find((theme) => theme.id === themed.darkThemeId)?.colors
+      .palette255,
     "#123456",
   );
   assert.throws(

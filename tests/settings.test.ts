@@ -6,6 +6,12 @@ import { tmpdir } from "node:os";
 import { SettingsStore } from "../electron/settings.js";
 import { validateSettings } from "../electron/settings/validation.js";
 import { DEFAULT_SETTINGS } from "../src/shared/types.js";
+import {
+  deleteLibraryTheme,
+  renameLibraryTheme,
+  resolvedImportedTheme,
+  saveLibraryTheme,
+} from "../src/core/themeLibrary.js";
 
 test("preferences survive restart and returned objects cannot mutate saved settings", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "linusaurus-settings-"));
@@ -25,6 +31,77 @@ test("preferences survive restart and returned objects cannot mutate saved setti
   await reopened.load();
   assert.deepEqual(reopened.get(), preference);
   assert.equal(store.get().hosts[0].label, DEFAULT_SETTINGS.hosts[0].label);
+});
+
+test("legacy themes at capacity survive normalization, editing, saving, and restart without resurrecting deleted palettes", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "linusaurus-theme-upgrade-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "settings.json");
+  const shared = Object.fromEntries(
+    Array.from({ length: 256 }, (_, index) => [
+      `palette${index}`,
+      `#${(0x234500 + index).toString(16)}`,
+    ]),
+  );
+  const light = { background: "#ffffff", foreground: "#112233" };
+  const dark = { background: "#112233", foreground: "#ffffff" };
+  await writeFile(
+    path,
+    JSON.stringify({
+      ...DEFAULT_SETTINGS,
+      themeLibrary: Array.from({ length: 64 }, (_, index) => ({
+        id: `theme-${index}`,
+        name: `Theme ${index}`,
+        colors: { background: `#${index.toString(16).padStart(6, "0")}` },
+      })),
+      customTheme: shared,
+      customLightTheme: light,
+      customDarkTheme: dark,
+    }),
+  );
+  const store = new SettingsStore(path);
+  await store.load();
+  const loaded = store.get();
+  assert.equal(loaded.themeLibrary.length, 67);
+  assert.deepEqual(resolvedImportedTheme(loaded, "light"), light);
+  assert.deepEqual(resolvedImportedTheme(loaded, "dark"), dark);
+  assert.throws(() => saveLibraryTheme(loaded, "Another", light), /64/);
+  const renamed = renameLibraryTheme(
+    loaded,
+    loaded.darkThemeId,
+    "Night palette",
+  );
+  await store.set(renamed);
+  const reopened = new SettingsStore(path);
+  await reopened.load();
+  assert.deepEqual(reopened.get(), renamed);
+  assert.equal(
+    Object.hasOwn(JSON.parse(await readFile(path, "utf8")), "customTheme"),
+    false,
+  );
+  let edited = deleteLibraryTheme(reopened.get(), loaded.darkThemeId);
+  assert.equal(edited.darkThemeId, "");
+  assert.deepEqual(resolvedImportedTheme(edited, "light"), light);
+  while (edited.themeLibrary.length >= 64) {
+    assert.throws(() => saveLibraryTheme(edited, "Still full", light), /64/);
+    edited = deleteLibraryTheme(edited, edited.themeLibrary[0].id);
+  }
+  const added = saveLibraryTheme(edited, "New palette", dark, "dark", "new");
+  await reopened.set(added);
+  const final = new SettingsStore(path);
+  await final.load();
+  assert.deepEqual(final.get(), added);
+  assert.equal(
+    final.get().themeLibrary.some((theme) => theme.id === loaded.darkThemeId),
+    false,
+  );
+  assert.deepEqual(
+    final
+      .get()
+      .themeLibrary.find((theme) => Object.keys(theme.colors).length === 256)
+      ?.colors,
+    shared,
+  );
 });
 
 test("concurrent preference updates leave the last requested value on disk", async (t) => {

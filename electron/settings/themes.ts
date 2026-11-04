@@ -1,4 +1,8 @@
 import type { Settings } from "../../src/shared/types.js";
+import {
+  MAX_PERSISTED_LIBRARY_THEMES,
+  type LegacyThemePalettes,
+} from "../../src/core/themeLibrary.js";
 import { hexColor, identifier, record, string } from "../validation.js";
 
 export function validateTheme(value: unknown): Record<string, string> {
@@ -15,16 +19,22 @@ export function validateTheme(value: unknown): Record<string, string> {
 }
 
 export function applyThemes(input: Record<string, unknown>, result: Settings) {
+  const legacy: LegacyThemePalettes = {};
   for (const name of [
     "customTheme",
     "customLightTheme",
     "customDarkTheme",
   ] as const) {
-    if (input[name] !== undefined) result[name] = validateTheme(input[name]);
+    if (input[name] !== undefined) legacy[name] = validateTheme(input[name]);
   }
-  if (input.themeLibrary === undefined) return;
-  if (!Array.isArray(input.themeLibrary) || input.themeLibrary.length > 64)
-    throw new Error("Keep at most 64 saved themes.");
+  if (input.themeLibrary === undefined) return legacy;
+  if (
+    !Array.isArray(input.themeLibrary) ||
+    input.themeLibrary.length > MAX_PERSISTED_LIBRARY_THEMES
+  )
+    throw new Error(
+      `Keep at most ${MAX_PERSISTED_LIBRARY_THEMES} saved themes, including migrated legacy palettes.`,
+    );
   result.themeLibrary = input.themeLibrary.map((value) => {
     const theme = record(value);
     const id = identifier(theme.id, "theme ID");
@@ -38,4 +48,5 @@ export function applyThemes(input: Record<string, unknown>, result: Settings) {
     result.themeLibrary.length
   )
     throw new Error("Theme IDs must be unique.");
+  return legacy;
 }
