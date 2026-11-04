@@ -620,6 +620,14 @@ export interface RexMethods {
   resizeWindow: { args: { deltaWidth: number }; result: void };
 }
 export interface RexBridge {
+  /**
+   * Rejects with an Error reconstructed in the renderer from
+   * {@link import("./requestResult").RequestFailure}, preserving its message/name
+   * and optional string code/method metadata (not cross-process object identity).
+   * A name of "RexRequestError" identifies an explicit server RPC rejection;
+   * transport, validation and bridge failures can use other Error names and omit
+   * code/method. Prefer supplied codes to legacy message matching.
+   */
   request<K extends keyof RexMethods>(
     method: K,
     args: RexMethods[K]["args"],
