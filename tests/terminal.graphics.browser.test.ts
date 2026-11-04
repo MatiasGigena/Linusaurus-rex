@@ -538,6 +538,60 @@ test(
       await emit("\x1b_Ga=d,d=f,i=301,r=2;\x1b\\");
       await emit("\x1b_Ga=d,d=I,i=301;\x1b\\");
       await animated.waitFor({ state: "detached" });
+      // Gapless frames share the same wrap/stop boundary as timed frames.
+      await emit(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=302,p=1,c=1,r=1,C=1;" +
+          Buffer.from([255, 0, 0, 255]).toString("base64") +
+          "\x1b\\\x1b_Ga=f,f=32,s=1,v=1,i=302,z=-1;" +
+          Buffer.from([0, 255, 0, 255]).toString("base64") +
+          "\x1b\\\x1b_Ga=f,f=32,s=1,v=1,i=302,z=25;" +
+          Buffer.from([0, 0, 255, 255]).toString("base64") +
+          "\x1b\\",
+      );
+      const gapless = page.locator('canvas[data-kitty-image="302"]');
+      await gapless.waitFor();
+      await emit("\x1b_Ga=a,i=302,c=1,s=3,v=3;\x1b\\");
+      await page.clock.runFor(8);
+      assert.equal(await gapless.getAttribute("data-kitty-frame"), "3");
+      assert.deepEqual(
+        await gapless.evaluate((canvas) =>
+          Array.from((canvas as HTMLCanvasElement).getContext("2d")!.getImageData(0, 0, 1, 1).data),
+        ),
+        [0, 0, 255, 255],
+      );
+      await page.clock.runFor(25);
+      assert.equal(await gapless.getAttribute("data-kitty-frame"), "3");
+      assert.equal(await gapless.getAttribute("data-kitty-animation"), "3");
+      await page.clock.runFor(25);
+      assert.equal(await gapless.getAttribute("data-kitty-animation"), "1");
+      await page.clock.runFor(200);
+      assert.equal(await gapless.getAttribute("data-kitty-frame"), "3");
+      await emit("\x1b_Ga=a,i=302,c=1,s=2;\x1b\\");
+      await page.clock.runFor(33);
+      assert.equal(await gapless.getAttribute("data-kitty-frame"), "3");
+      assert.equal(await gapless.getAttribute("data-kitty-animation"), "2");
+      await emit(
+        "\x1b_Ga=f,f=32,s=1,v=1,i=302,z=25;" +
+          Buffer.from([255, 255, 0, 255]).toString("base64") +
+          "\x1b\\",
+      );
+      await page.clock.runFor(25);
+      assert.equal(await gapless.getAttribute("data-kitty-frame"), "4");
+      assert.deepEqual(
+        await gapless.evaluate((canvas) =>
+          Array.from((canvas as HTMLCanvasElement).getContext("2d")!.getImageData(0, 0, 1, 1).data),
+        ),
+        [255, 255, 0, 255],
+      );
+      await page.clock.runFor(100);
+      assert.equal(await gapless.getAttribute("data-kitty-frame"), "4");
+      assert.equal(await gapless.getAttribute("data-kitty-animation"), "2");
+      await emit("\x1b_Ga=a,i=302,s=1,r=3,z=-1;\x1b\\\x1b_Ga=a,i=302,r=4,z=-1;\x1b\\\x1b_Ga=a,i=302,c=1,s=3;\x1b\\");
+      await page.clock.runFor(200);
+      assert.equal(await gapless.getAttribute("data-kitty-frame"), "1", "all-gapless images must not schedule playback");
+      assert.equal(await gapless.getAttribute("data-kitty-animation"), "3");
+      await emit("\x1b_Ga=d,d=I,i=302;\x1b\\");
+      await gapless.waitFor({ state: "detached" });
       await page.clock.resume();
       // Public buffer glyphs drive virtual placements, including omitted column diacritics.
       const quadrants = Buffer.from([

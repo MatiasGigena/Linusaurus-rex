@@ -714,22 +714,11 @@ export class KittyGraphics {
         )
           return;
         let next = image.current + 1;
-        if (next >= image.frames.length) {
-          if (image.state === 2) return;
-          if (++image.loops >= image.limit) {
-            image.state = 1;
-            image.loops = 0;
-            this.repaint(image);
-            return;
-          }
-          next = 0;
-        }
         for (
-          let skipped = 0;
-          image.frames[next].gap === 0 && skipped < image.frames.length;
-          skipped++
+          let visited = 0;
+          visited < image.frames.length;
+          visited++, next++
         ) {
-          next++;
           if (next >= image.frames.length) {
             if (image.state === 2) return;
             if (++image.loops >= image.limit) {
@@ -740,10 +729,12 @@ export class KittyGraphics {
             }
             next = 0;
           }
+          if (image.frames[next].gap === 0) continue;
+          image.current = next;
+          this.repaint(image);
+          this.schedule(image);
+          return;
         }
-        image.current = next;
-        this.repaint(image);
-        this.schedule(image);
       },
       Math.max(8, image.frames[image.current].gap),
     );
