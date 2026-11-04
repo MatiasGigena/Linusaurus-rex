@@ -13,6 +13,10 @@ import { terminalCommands } from './commands';
 import '@xterm/xterm/css/xterm.css';
 import './terminal.css';
 
+const MAX_PASTE_BYTES = 1024 * 1024;
+// Frames carry decoded strings: backlog accounting measures UTF-16 code units.
+const MAX_PENDING_OUTPUT_LENGTH = 16 * 1024 * 1024;
+
 export interface TerminalPaneProps {
   pane: RexPane; terminalRef: TerminalRef; settings: Settings; focused: boolean; visible?: boolean; showHeader: boolean;
   onFocus(): void; onZoom(): void; onClose(): void; onAction?(command: string): void; onTitle?(title: string): void; onBell?(): void;
@@ -80,7 +84,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     let inputQueue = Promise.resolve();
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    let resizeAnimation = 0, pendingBytes = 0;
+    let resizeAnimation = 0, pendingOutputLength = 0;
     let pendingFrames: TerminalFrame[] = [];
     let promptNavigationMarker: TerminalRuntime['prompts'][number] | undefined;
     let promptNavigationViewport = -1;
@@ -166,7 +170,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       if (!pendingFrames.length) return;
       const frame = pendingFrames.shift()!;
       const frameGeneration = generation;
-      pendingBytes -= frame.data?.length ?? 0;
+      pendingOutputLength -= frame.data?.length ?? 0;
       const before = term.buffer.active, atBottom = before.viewportY >= before.baseY, previousScroll = before.viewportY;
       const snapshot = !frame.kind || frame.kind === 'snapshot';
       const selection = snapshot ? currentSelection(term) : undefined;
@@ -203,7 +207,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       const readyGeneration = commandGeneration ?? await waitForCommands(signal);
       const value = text ?? await window.rex.readClipboard();
       signal?.throwIfAborted();
-      if (new TextEncoder().encode(value).length > 1024 * 1024) throw new Error('Paste is larger than the 1 MiB input limit.');
+      if (new TextEncoder().encode(value).length > MAX_PASTE_BYTES) throw new Error('Paste is larger than the 1 MiB input limit.');
       if (generation !== readyGeneration || !commandReady || !enqueue(() => window.rex.request('paste', { ...ref, text: value }))) {
         throw new Error('The terminal connection changed before paste could be accepted.');
       }
@@ -234,13 +238,13 @@ export function TerminalPane(props: TerminalPaneProps) {
         synchronizeTheme(runtime, ref, settingsRef.current, (message) => { if (!disposed) setError(message); });
       }
       sawFrame = true;
-      if (!frame.kind || frame.kind === 'snapshot') { commandReady = false; pendingFrames = []; pendingBytes = 0; }
-      pendingFrames.push(frame); pendingBytes += frame.data?.length ?? 0;
+      if (!frame.kind || frame.kind === 'snapshot') { commandReady = false; pendingFrames = []; pendingOutputLength = 0; }
+      pendingFrames.push(frame); pendingOutputLength += frame.data?.length ?? 0;
       // A validated initial snapshot may exceed the live-output backlog limit.
       // Rejecting it here would reconnect forever to the same large scrollback.
-      if (frame.kind === 'output' && pendingBytes > 16 * 1024 * 1024) {
+      if (frame.kind === 'output' && pendingOutputLength > MAX_PENDING_OUTPUT_LENGTH) {
         fail('Output exceeded the rendering buffer; resynchronizing with Rex.');
-        pendingFrames = []; pendingBytes = 0;
+        pendingFrames = []; pendingOutputLength = 0;
         void window.rex.request('unsubscribe', { subscriptionId }).catch(() => {}).finally(() => { retryTimer = setTimeout(startSubscription, 250); });
         return;
       }

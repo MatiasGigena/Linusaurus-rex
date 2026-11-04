@@ -545,7 +545,8 @@ export class KittyGraphics {
   }
   private enforceQuota(keep: number) {
     const image = this.images.get(keep);
-    if (!image) throw new Error(`Kitty image ${keep} has not been transmitted.`);
+    if (!image)
+      throw new Error(`Kitty image ${keep} has not been transmitted.`);
     if (image.bytes > MAX_STORAGE) {
       this.dropImage(keep);
       throw new Error(
@@ -957,7 +958,7 @@ export class KittyGraphics {
       for (let x = 0; x < this.term.cols; x++) {
         const cell = line?.getCell(x),
           chars = cell?.getChars();
-        if (!chars || !chars.startsWith("\u{10eeee}")) {
+        if (!cell || !chars || !chars.startsWith("\u{10eeee}")) {
           previous = undefined;
           continue;
         }
@@ -968,26 +969,29 @@ export class KittyGraphics {
                   diacriticIndex.get(glyph[index].codePointAt(0)!),
                 )
               : undefined;
+        const [pidHigh, pidMiddle, pidLow] = encodedPid || [];
         const pidMetadata =
-          encodedPid &&
-          encodedPid.every((value) => value !== undefined && value < 256)
-            ? encodedPid[0]! * 65536 + encodedPid[1]! * 256 + encodedPid[2]!
+          pidHigh !== undefined &&
+          pidMiddle !== undefined &&
+          pidLow !== undefined &&
+          Math.max(pidHigh, pidMiddle, pidLow) < 256
+            ? pidHigh * 65536 + pidMiddle * 256 + pidLow
             : undefined;
         const marks = glyph
           .slice(pidMetadata === undefined ? 1 : 5)
           .map((ch) => diacriticIndex.get(ch.codePointAt(0)!))
           .filter((value): value is number => value !== undefined);
-        const fg = cell!.isFgDefault() ? 0 : cell!.getFgColor(),
-          pid = pidMetadata ?? this.underlinePlacementId(cell!, x, y, cw);
-        const same = previous && previous.fg === fg && previous.pid === pid;
-        const row = marks[0] ?? (same ? previous!.row : 0),
-          col =
-            marks[1] ?? (same && row === previous!.row ? previous!.col + 1 : 0),
-          high =
-            marks[2] ??
-            (same && row === previous!.row && col === previous!.col + 1
-              ? previous!.high
-              : 0);
+        const fg = cell.isFgDefault() ? 0 : cell.getFgColor(),
+          pid = pidMetadata ?? this.underlinePlacementId(cell, x, y, cw);
+        const continuation =
+          previous && previous.fg === fg && previous.pid === pid
+            ? previous
+            : undefined;
+        const row = marks[0] ?? continuation?.row ?? 0;
+        const sameRow = continuation?.row === row ? continuation : undefined;
+        const col = marks[1] ?? (sameRow ? sameRow.col + 1 : 0);
+        const high =
+          marks[2] ?? (sameRow && col === sameRow.col + 1 ? sameRow.high : 0);
         previous = { fg, row, col, high, pid };
         if (high > 255) continue;
         const id = (fg & 0xffffff) + (high & 255) * 0x1000000;

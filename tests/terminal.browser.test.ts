@@ -116,6 +116,19 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     assert.deepEqual(mouse.slice(-2).map((e: any) => [e.action, e.button]), [['press', 'left'], ['release', 'left']]);
     await page.mouse.wheel(0, 65);
     await page.waitForFunction(() => (window as any).fixture.requests.some((r: any) => r.method === 'wheel' && r.args.event.delta_y === 1));
+    const wheelBeforeCollapsedGrid = await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'wheel').length);
+    await page.evaluate(async () => {
+      const grid = document.querySelector('.xterm-screen')!;
+      Object.defineProperty(grid, 'clientHeight', { configurable: true, value: 0 });
+      try {
+        grid.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 65 }));
+        await Promise.resolve();
+      } finally { Reflect.deleteProperty(grid, 'clientHeight'); }
+    });
+    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'wheel').length), wheelBeforeCollapsedGrid, 'an unmeasurable grid must not produce wheel input or poison its accumulator');
+    await page.mouse.wheel(0, 65);
+    await page.waitForFunction((before) => (window as any).fixture.requests.filter((r: any) => r.method === 'wheel').length > before, wheelBeforeCollapsedGrid);
+
     await page.keyboard.down('Shift');
     await page.mouse.click(screen.x + 35, screen.y + 35, { button: 'right' });
     await page.keyboard.up('Shift');
@@ -166,7 +179,8 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
       void f.commandAsync('paste', { hostId: 'test', sessionId: 'test', blockId: 'test' }).then(() => { f.interruptedCommand = 'accepted'; }, (failure: Error) => { f.interruptedCommand = failure.message; });
       f.emit({ error: 'socket disconnected during initial snapshot' });
     });
-    await page.waitForFunction(() => (window as any).fixture.interruptedCommand === 'socket disconnected during initial snapshot');
+    await page.waitForFunction(() => (window as any).fixture.interruptedCommand !== 'waiting');
+    assert.match(await page.evaluate(() => (window as any).fixture.interruptedCommand), /socket disconnected during initial snapshot|connection changed before the command could be accepted/);
     const rejectedWhileDisconnected = await page.evaluate(() => (window as any).fixture.commandAsync('paste', { hostId: 'test', sessionId: 'test', blockId: 'test' }).then(() => '', (failure: Error) => failure.message));
     assert.match(rejectedWhileDisconnected, /disconnected/);
     await page.evaluate(() => (window as any).fixture.emit({ kind: 'snapshot', data: 'alpha alpha\r\nready> ' }));

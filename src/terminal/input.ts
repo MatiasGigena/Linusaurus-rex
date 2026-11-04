@@ -8,6 +8,10 @@ import {
   pointerCell,
 } from "./keys";
 
+// Native composition text may arrive after its key/DOM composition events.
+const NATIVE_TEXT_GRACE_MS = 1_500;
+const COMPOSITION_COMMIT_GRACE_MS = 250;
+
 export interface TerminalMenu {
   x: number;
   y: number;
@@ -70,7 +74,7 @@ function registerKeyboard(options: TerminalInputOptions) {
   term.attachCustomKeyEventHandler((event) => {
     if (event.defaultPrevented || !isVisible() || !isOnline()) return false;
     if (isCompositionKey(event) || composing || deadKey) {
-      nativeTextUntil = performance.now() + 1500;
+      nativeTextUntil = performance.now() + NATIVE_TEXT_GRACE_MS;
       if (event.key === "Dead") deadKey = true;
       else if (event.type === "keyup") deadKey = false;
       return true;
@@ -89,15 +93,15 @@ function registerKeyboard(options: TerminalInputOptions) {
   });
   const compositionStart = () => {
     composing = true;
-    nativeTextUntil = performance.now() + 1500;
+    nativeTextUntil = performance.now() + NATIVE_TEXT_GRACE_MS;
   };
   const compositionEnd = () => {
     composing = false;
-    nativeTextUntil = performance.now() + 250;
+    nativeTextUntil = performance.now() + COMPOSITION_COMMIT_GRACE_MS;
   };
   const beforeInput = (event: InputEvent) => {
     if (event.isComposing || event.inputType.startsWith("insertComposition"))
-      nativeTextUntil = performance.now() + 1500;
+      nativeTextUntil = performance.now() + NATIVE_TEXT_GRACE_MS;
   };
   const focusIn = () =>
     enqueue(() => window.rex.request("focusEvent", { ...ref, focused: true }));
@@ -297,16 +301,14 @@ function registerPointer(options: TerminalInputOptions) {
     });
   };
   const wheel = (event: WheelEvent) => {
-    if (!isVisible()) return;
-    if (
-      settings().mouseReporting &&
-      tracking() &&
-      !event.shiftKey &&
-      isOnline()
-    ) {
+    if (!isVisible() || !tracking()) return;
+    const lineHeight = screen.clientHeight / Math.max(1, term.rows);
+    // A pane can lose measurable geometry during a layout transition. Dividing
+    // by zero would send spurious ticks and permanently poison the remainder.
+    if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
+    if (settings().mouseReporting && !event.shiftKey && isOnline()) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      const lineHeight = screen.clientHeight / Math.max(1, term.rows);
       wheelRemainder +=
         (event.deltaY *
           (event.deltaMode === WheelEvent.DOM_DELTA_LINE
@@ -325,13 +327,13 @@ function registerPointer(options: TerminalInputOptions) {
             event: { ...cell, delta_x: 0, delta_y: Math.sign(lines) },
           }),
         );
-    } else if (tracking()) {
+    } else {
       event.preventDefault();
       event.stopImmediatePropagation();
       const lines =
         event.deltaMode === WheelEvent.DOM_DELTA_LINE
           ? event.deltaY
-          : event.deltaY / (screen.clientHeight / Math.max(1, term.rows));
+          : event.deltaY / lineHeight;
       term.scrollLines(
         Math.sign(lines) * Math.max(1, Math.round(Math.abs(lines))),
       );
