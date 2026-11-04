@@ -218,6 +218,11 @@ export class LinuxUpdateManager {
       );
     return response;
   }
+  /**
+   * Release fetch/metadata failures resolve with a published phase="error" state.
+   * Rejects while another check/download is active; cancellation returns the
+   * current state. Callers must handle both rejection and the returned phase.
+   */
   async check() {
     if (this.controller)
       throw new Error("An update operation is already in progress.");
@@ -255,6 +260,11 @@ export class LinuxUpdateManager {
       this.controller = undefined;
     }
   }
+  /**
+   * Transfer/verification failures resolve with a published phase="error" state;
+   * cancellation returns the current state. Rejects while a check/download is
+   * active, without a selected release, or if partial-file cleanup itself fails.
+   */
   async download() {
     if (this.controller)
       throw new Error("An update operation is already in progress.");
@@ -320,6 +330,12 @@ export class LinuxUpdateManager {
       this.controller = undefined;
     }
   }
+  /**
+   * Rejects missing downloads, development installs, failed verification, and
+   * installation failures. With whenIdle, resolves phase="scheduled" after
+   * precondition checks. Later idle install failures publish phase="error";
+   * they cannot reject the already settled scheduling call.
+   */
   async apply(whenIdle = false) {
     if (!this.downloaded)
       throw new Error("Download and verify an update first.");

@@ -392,8 +392,11 @@ export interface RexMethods {
     result: { sessionId: string; windowId: string; blockId: string };
   };
   updateStatus: { args: Record<string, never>; result: UpdateState };
+  /** Check failures return phase="error"; busy check/download operations reject. Handle both channels. */
   checkUpdates: { args: Record<string, never>; result: UpdateState };
+  /** Transfer/verification failures return phase="error"; busy/missing-release and cleanup failures reject. */
   downloadUpdate: { args: Record<string, never>; result: UpdateState };
+  /** Missing-download/development/verification/install failures reject. Idle scheduling resolves now; later failures publish phase="error" events. */
   applyUpdate: { args: { whenIdle?: boolean }; result: UpdateState };
   cancelUpdate: { args: Record<string, never>; result: UpdateState };
   serverManagement: { args: { hostId: string }; result: ServerManagementInfo };
