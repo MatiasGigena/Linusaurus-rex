@@ -7,7 +7,7 @@ import {
   type ResolvedCommand,
   type RequestClose,
 } from "./context";
-import { aliases } from "./aliases";
+import { canonicalActionName } from "../../shared/actions";
 import { resolveCommandTarget } from "./resolveCommandTarget";
 import { createSessionActions } from "./sessionActions";
 import { createTabActions } from "./tabActions";
@@ -112,7 +112,7 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
     args: Record<string, unknown> = {},
     event?: ClientEvent,
   ): Promise<unknown> => {
-    const name = aliases[inputName] || inputName;
+    const name = canonicalActionName(inputName);
     const target = resolveCommandTarget(name, args, event, options);
     const {
       hostId,

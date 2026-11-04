@@ -13,7 +13,7 @@ import type { RexService } from "../rex/service.js";
 import type { RexControl, RexEvent } from "../rex/control.js";
 import {
   CLIENT_ACTIONS,
-  SHORTCUT_ACTIONS,
+  configuredShortcutEntries,
   serverShortcut,
 } from "../../src/shared/actions.js";
 import { ActivityRegistry } from "./activity.js";
@@ -670,11 +670,11 @@ export class ClientFeatures {
       defaults: [
         {
           name: "linux",
-          bindings: Object.entries(settings.shortcuts)
+          bindings: configuredShortcutEntries(settings.shortcuts)
             .filter(([, keys]) => keys)
             .map(([name, shortcut]) => ({
               keys: serverShortcut(shortcut).split(">"),
-              action: SHORTCUT_ACTIONS[name] || name,
+              action: name,
             })),
         },
       ],

@@ -2,8 +2,7 @@ import { TerminalSquare } from "lucide-react";
 import type { PaletteCommand } from "../components/CommandPalette";
 import type { NavigationHost } from "../components/Sidebar";
 import type { KeymapResult, Settings } from "../shared/types";
-import { CLIENT_ACTIONS } from "../shared/actions";
-import { aliases } from "./actions/aliases";
+import { CLIENT_ACTIONS, configuredShortcut } from "../shared/actions";
 import type { Form } from "./actions/context";
 interface PaletteOptions {
   palette: "all" | "sessions" | undefined;
@@ -44,15 +43,12 @@ export function buildPaletteCommands({
       : CLIENT_ACTIONS.filter(
           (action) => !["client.window.close"].includes(action.name),
         ).map((action) => {
-          const shortcutName = Object.entries(aliases).find(
-            ([, name]) => name === action.name,
-          )?.[0];
           return {
             id: action.name,
             label: action.title || action.name,
             description: action.name,
-            shortcut: shortcutName
-              ? settings?.shortcuts[shortcutName]
+            shortcut: settings
+              ? configuredShortcut(action.name, settings.shortcuts)
               : undefined,
             run: () => dispatch(action.name),
           };
