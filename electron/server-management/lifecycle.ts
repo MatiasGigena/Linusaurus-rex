@@ -259,6 +259,74 @@ export class LinuxServerManager {
     await this.systemd.apply(host, this.endpoint(host), previewId);
     return this.status(host);
   }
+  private async createLaunchProfile(endpoint: string): Promise<void> {
+    let executable: string | undefined;
+    for (const part of (process.env.PATH || "").split(":")) {
+      try {
+        const path = join(part, "rex");
+        const item = await stat(path);
+        if (item.isFile() && item.mode & 0o111) {
+          executable = await realpath(path);
+          break;
+        }
+      } catch {
+        /* Try the next installed executable path. */
+      }
+    }
+    if (!executable)
+      throw new Error(
+        "Install Rex or add its executable to PATH before starting a server.",
+      );
+    const stateDirectory = join(
+      this.options.directory,
+      `state-${createHash("sha256").update(endpoint).digest("hex").slice(0, 16)}`,
+    );
+    await mkdir(stateDirectory, { recursive: true });
+    const config = join(stateDirectory, "init.lua");
+    try {
+      await writeFile(config, "-- Managed local Rex server configuration.\n", {
+        flag: "wx",
+        mode: 0o600,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined,
+      ),
+    );
+    for (const key of ["REX_SESSION", "REX_BLOCK", "REX_CLIENT", "REX_SERVER"])
+      delete env[key];
+    await this.save({
+      endpoint,
+      executable,
+      args: [
+        "server",
+        "run",
+        "--listen",
+        endpoint,
+        "--state-dir",
+        stateDirectory,
+        "--config",
+        config,
+      ],
+      env,
+    });
+  }
+
+  private async waitUntilReady(
+    host: Host,
+    failure: string,
+  ): Promise<ServerManagementInfo> {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const after = await this.status(host);
+      if (after.running) return after;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error(failure);
+  }
+
   async perform(
     host: Host,
     operation: "start" | "stop" | "restart",
@@ -284,69 +352,8 @@ export class LinuxServerManager {
         !before.running &&
         operation === "start"
       ) {
-        let executable: string | undefined;
-        for (const part of (process.env.PATH || "").split(":")) {
-          try {
-            const path = join(part, "rex");
-            const item = await stat(path);
-            if (item.isFile() && item.mode & 0o111) {
-              executable = await realpath(path);
-              break;
-            }
-          } catch {
-            /* Try the next installed executable path. */
-          }
-        }
-        if (!executable)
-          throw new Error(
-            "Install Rex or add its executable to PATH before starting a server.",
-          );
-        const stateDirectory = join(
-          this.options.directory,
-          `state-${createHash("sha256").update(endpoint).digest("hex").slice(0, 16)}`,
-        );
-        await mkdir(stateDirectory, { recursive: true });
-        const config = join(stateDirectory, "init.lua");
-        try {
-          await writeFile(
-            config,
-            "-- Managed local Rex server configuration.\n",
-            { flag: "wx", mode: 0o600 },
-          );
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        }
-        const env = Object.fromEntries(
-          Object.entries(process.env).filter(
-            (entry): entry is [string, string] => entry[1] !== undefined,
-          ),
-        );
-        for (const key of [
-          "REX_SESSION",
-          "REX_BLOCK",
-          "REX_CLIENT",
-          "REX_SERVER",
-        ])
-          delete env[key];
-        await this.save({
-          endpoint,
-          executable,
-          args: [
-            "server",
-            "run",
-            "--listen",
-            endpoint,
-            "--state-dir",
-            stateDirectory,
-            "--config",
-            config,
-          ],
-          env,
-        });
-      } else if (!before.canManage)
-        throw new Error(
-          before.reason || "This local server cannot be managed.",
-        );
+        await this.createLaunchProfile(endpoint);
+      }
       if (operation === "start" && before.running) return before;
       if (before.running) {
         if (before.sessionCount > 0)
@@ -386,12 +393,10 @@ export class LinuxServerManager {
         if (!this.systemd || profile.serviceScope === "system")
           throw new Error("This service is read-only.");
         await this.systemd.start(profile.serviceUnit);
-        for (let attempt = 0; attempt < 100; attempt++) {
-          const after = await this.status(host);
-          if (after.running) return after;
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-        throw new Error("The service started but Rex did not become ready.");
+        return await this.waitUntilReady(
+          host,
+          "The service started but Rex did not become ready.",
+        );
       }
       const launch = {
         ...profile,
@@ -427,12 +432,9 @@ export class LinuxServerManager {
         }
       }
       await this.save(launch);
-      for (let attempt = 0; attempt < 100; attempt++) {
-        const after = await this.status(host);
-        if (after.running) return after;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      throw new Error(
+      // Await readiness before finally releases this endpoint's operation guard.
+      return await this.waitUntilReady(
+        host,
         "Rex did not become ready. Inspect the managed-server log in client configuration.",
       );
     } finally {
