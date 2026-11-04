@@ -33,11 +33,12 @@ export interface HostSnapshot {
 /** Missing sessions are expected when another client closes one during a refresh. */
 function isMissingSession(failure: unknown): boolean {
   if (
-    failure instanceof Error &&
+    failure !== null &&
+    typeof failure === "object" &&
     "code" in failure &&
-    failure.code === "session_not_found"
+    typeof failure.code === "string"
   )
-    return true;
+    return failure.code === "session_not_found";
   return /\b(?:unknown session|no such session|session(?:\s+["'\w:.-]+)?\s+(?:was\s+)?not found)\b/i.test(
     errorMessage(failure),
   );

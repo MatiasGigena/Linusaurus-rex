@@ -54,6 +54,43 @@ test("refresh tolerates only an explicitly missing session and removes its stale
   assert.deepEqual(result.views, { "local/session": view });
 });
 
+for (const code of ["permission_denied", "future_server_failure", ""]) {
+  test(`inspection code ${JSON.stringify(code)} takes precedence over a legacy missing-session message`, async () => {
+    const original = Object.assign(new Error('Session "closed" not found'), {
+      code,
+      method: "session.get",
+    });
+    const result = await collectHostSnapshot(
+      host,
+      requester(async (id) => {
+        if (id === "closed") throw original;
+        return view;
+      }),
+    );
+    assert.equal(result.host.connected, false);
+    assert.equal(result.failure, original);
+    assert.equal(result.host.error, original.message);
+    assert.deepEqual(result.views, {});
+  });
+}
+
+test("an explicit missing-session code permits concurrent deletion without matching message text", async () => {
+  const result = await collectHostSnapshot(
+    host,
+    requester(async (id) => {
+      if (id === "closed")
+        throw Object.assign(new Error("It was removed by another client"), {
+          code: "session_not_found",
+        });
+      return view;
+    }),
+  );
+  assert.equal(result.host.connected, true);
+  assert.equal(result.failure, undefined);
+  assert.deepEqual(result.host.sessions, [{ id: "session", label: "Session" }]);
+  assert.deepEqual(result.views, { "local/session": view });
+});
+
 test("inspection transport, permission, and decoding failures surface instead of silently removing sessions", async () => {
   for (const message of [
     "Connection closed",
