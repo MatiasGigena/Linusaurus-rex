@@ -4,12 +4,14 @@ import { expect } from "@playwright/test";
 import { withBrowserFixture } from "./browser-fixture";
 const source = `
 import React from 'react';import {createRoot} from 'react-dom/client';
+import {flushSync} from 'react-dom';
 import {Sidebar} from '/src/components/Sidebar.tsx';import {DEFAULT_SETTINGS} from '/src/shared/types.ts';
 import '/src/styles.css';import '/src/advanced.css';import '/src/macos.css';
 const fixture=window.fixture={calls:[]};const log=(...args)=>fixture.calls.push(args);
 const hosts=[{id:'h1',label:'Local',connected:true,sessions:[{id:'s1',label:'Work',windows:[{id:'w1',label:'Shell',program:'bash',activity:{id:'idle',state:'idle'}},{id:'w2',label:'Build',program:'codex',activity:{id:'build',state:'blocked',kind:'permission'}}]}]},{id:'h2',label:'Remote',connected:true,sessions:[{id:'s2',label:'Remote work',windows:[{id:'r1',label:'Remote shell',program:'fish',activity:{id:'work',state:'working'}}]}]}];
 function Fixture(){const[selection,setSelection]=React.useState(['h1','s1','w1']),[collapsed,setCollapsed]=React.useState(new Set()),[width,setWidth]=React.useState(278),[right,setRight]=React.useState(false),[activityOnly,setActivityOnly]=React.useState(false),[hidden,setHidden]=React.useState(false);
- fixture.right=setRight;fixture.activity=setActivityOnly;fixture.hidden=setHidden;
+ // The next keyboard event must see the committed side, as it would after a user selection.
+ fixture.right=value=>flushSync(()=>setRight(value));fixture.activity=setActivityOnly;fixture.hidden=setHidden;
  return React.createElement(Sidebar,{hosts,activeHostId:selection[0],activeSessionId:selection[1],activeWindowId:selection[2],collapsed:hidden,width,settings:{...DEFAULT_SETTINGS,tabStyle:right?'right':'left'},collapsedSessions:collapsed,compactFooter:true,activityCount:2,activityOnly,
  onResize:value=>{log('resize',value);setWidth(value);},onResizeEnd:value=>{log('commit-width',value);setWidth(value);},
  onSelect:(...args)=>{log('select',...args);setSelection(args);},onNewSession:id=>log('new-session',id),onNewWindow:(...args)=>log('new-window',...args),onRenameSession:(...args)=>log('rename-session',...args),onSettings:()=>log('settings'),onToggle:()=>setHidden(value=>!value),onPalette:()=>log('palette'),onAddHost:()=>log('add-host'),onActivity:()=>log('activity'),
