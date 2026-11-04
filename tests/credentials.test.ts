@@ -50,3 +50,32 @@ test("only missing credential files initialize as empty stores", async (t) => {
   );
   await assert.rejects(cache.get(directory, cipher), /could not be loaded/);
 });
+
+test("credential unlock failures preserve their diagnostic cause behind the stable display message", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "rex-credential-unlock-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const failure = new Error("Keyring decrypt failed");
+  let decoded: string | Error = failure;
+  const store = await new CredentialsStoreCache().get(
+    join(directory, "credentials.json"),
+    {
+      ...cipher,
+      decrypt: async () => {
+        if (decoded instanceof Error) throw decoded;
+        return decoded;
+      },
+    },
+  );
+  await store.set("host", { token: "fixture-secret" });
+  for (const value of [failure, "{broken json", '{"token":42}']) {
+    decoded = value;
+    await assert.rejects(store.get("host"), (error) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Saved credentials could not be unlocked/);
+      assert.ok(error.cause instanceof Error);
+      if (value === failure) assert.equal(error.cause, failure);
+      assert.ok(!error.message.includes("fixture-secret"));
+      return true;
+    });
+  }
+});

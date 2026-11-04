@@ -59,9 +59,10 @@ export class CredentialsStore {
           await this.cipher.decrypt(Buffer.from(this.values[hostId], "base64")),
         ),
       );
-    } catch {
+    } catch (cause) {
       throw new Error(
         "Saved credentials could not be unlocked. Re-enter them in host settings.",
+        { cause },
       );
     }
   }
