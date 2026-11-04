@@ -147,7 +147,7 @@ function fixture(t: TestContext) {
       return copy;
     },
     refresh: async () => {},
-    run: async (_hostId, operation) => operation(),
+    mutateHostAndRefresh: async (_hostId, operation) => operation(),
     mutateSession: async (plan, operation) => {
       const result = await operation();
       const sessionId =

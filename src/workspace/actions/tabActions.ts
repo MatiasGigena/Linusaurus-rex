@@ -7,11 +7,11 @@ import type { WorkspaceOperations } from "../../core/workspaceOperations";
 import type { RexMethods } from "../../shared/types";
 
 export function reorderWorkspaceTab(
-  workspace: Pick<WorkspaceOperations, "run">,
+  workspace: Pick<WorkspaceOperations, "mutateHostAndRefresh">,
   target: RexMethods["reorderWindow"]["args"],
 ): Promise<void> {
   const request = { ...target };
-  return workspace.run(request.hostId, () =>
+  return workspace.mutateHostAndRefresh(request.hostId, () =>
     window.rex.request("reorderWindow", request),
   );
 }
@@ -63,7 +63,7 @@ export function createTabActions(dependencies: TabActionsDependencies) {
       case "client.tab.rename": {
         if (!currentWindow) return;
         const rename = async (label: string) => {
-          await workspace.run(hostId, () =>
+          await workspace.mutateHostAndRefresh(hostId, () =>
             window.rex.request("renameWindow", {
               hostId,
               sessionId,

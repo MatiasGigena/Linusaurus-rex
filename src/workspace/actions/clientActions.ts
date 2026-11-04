@@ -88,7 +88,7 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
       case "client.update.accept_when_idle":
         return window.rex.request("applyUpdate", { whenIdle: true });
       case "client.server.restart":
-        return workspace.run(hostId, () =>
+        return workspace.mutateHostAndRefresh(hostId, () =>
           window.rex.request("serverLifecycle", {
             hostId,
             operation: "restart",

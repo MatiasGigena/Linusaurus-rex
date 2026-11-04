@@ -39,7 +39,7 @@ test("tab reordering retains its captured target and awaits the host mutation's 
     return undefined;
   });
   const hosts: string[] = [];
-  const run: WorkspaceOperations["run"] =
+  const mutateHostAndRefresh: WorkspaceOperations["mutateHostAndRefresh"] =
     async (hostId, action) => {
       hosts.push(hostId);
       await admitted.promise;
@@ -54,7 +54,7 @@ test("tab reordering retains its captured target and awaits the host mutation's 
     beforeWindowId: "anchor",
   };
   let complete = false;
-  const reorder = reorderWorkspaceTab({ run }, target).then(
+  const reorder = reorderWorkspaceTab({ mutateHostAndRefresh }, target).then(
     () => {
       complete = true;
     },
@@ -92,11 +92,11 @@ test("tab reordering preserves the original write failure without retrying", asy
     requests++;
     throw original;
   });
-  const run: WorkspaceOperations["run"] =
+  const mutateHostAndRefresh: WorkspaceOperations["mutateHostAndRefresh"] =
     async (_hostId, action) => action();
   await assert.rejects(
     reorderWorkspaceTab(
-      { run },
+      { mutateHostAndRefresh },
       { hostId: "remote", sessionId: "session", windowId: "moving" },
     ),
     (failure) => failure === original,

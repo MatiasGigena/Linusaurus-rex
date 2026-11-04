@@ -486,7 +486,7 @@ export default function App() {
           connectionRevisions={connectionRevisions}
           operations={{
             focusPane: ws.operations.focusPane,
-            run: ws.operations.run,
+            mutateHostAndRefresh: ws.operations.mutateHostAndRefresh,
             refresh: ws.operations.refresh,
             reloadSession: ws.reloadSession,
           }}

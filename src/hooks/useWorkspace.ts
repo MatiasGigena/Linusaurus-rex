@@ -335,7 +335,7 @@ export function useWorkspace() {
         "The host configuration changed before the change could be refreshed.",
       );
   }, []);
-  const run = useCallback(
+  const mutateHostAndRefresh = useCallback(
     async <T>(hostId: string, action: () => Promise<T>): Promise<T> => {
       const host = settingsRef.current?.hosts.find(
         (host) => host.id === hostId,
@@ -588,7 +588,7 @@ export function useWorkspace() {
     return () => clearTimeout(timer);
   }, [notices]);
   const operations: WorkspaceOperations = {
-    run,
+    mutateHostAndRefresh,
     mutateSession,
     refresh,
     getSettings: () => settingsRef.current,
@@ -620,7 +620,7 @@ export function useWorkspace() {
     saveSettings,
     refresh,
     reloadSession,
-    run,
+    mutateHostAndRefresh,
     select,
   };
 }

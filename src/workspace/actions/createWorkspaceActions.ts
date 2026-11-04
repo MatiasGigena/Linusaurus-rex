@@ -34,13 +34,13 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
           title,
           description,
           submit: async () => {
-            await workspace.run(hostId, action);
+            await workspace.mutateHostAndRefresh(hostId, action);
           },
         },
       });
     else
       void workspace
-        .run(hostId, action)
+        .mutateHostAndRefresh(hostId, action)
         .catch((failure) => options.onError(errorMessage(failure)));
   };
   const handlers = [
@@ -49,7 +49,7 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
       workspace: {
         mutateSession: workspace.mutateSession,
         select: workspace.select,
-        run: workspace.run,
+        mutateHostAndRefresh: workspace.mutateHostAndRefresh,
         refresh: workspace.refresh,
       },
       hosts: options.hosts,
@@ -60,14 +60,14 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
       dialogs: options.dialogs,
       workspace: {
         mutateSession: workspace.mutateSession,
-        run: workspace.run,
+        mutateHostAndRefresh: workspace.mutateHostAndRefresh,
         select: workspace.select,
       },
       requestClose,
     }),
     createPaneActions({
       dialogs: options.dialogs,
-      workspace: { run: workspace.run },
+      workspace: { mutateHostAndRefresh: workspace.mutateHostAndRefresh },
       settings,
       requestClose,
     }),
@@ -76,7 +76,7 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
       workspace: {
         mutateSession: workspace.mutateSession,
         focusPane: workspace.focusPane,
-        run: workspace.run,
+        mutateHostAndRefresh: workspace.mutateHostAndRefresh,
         refresh: workspace.refresh,
       },
       settings,
@@ -87,7 +87,7 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
       workspace: {
         mutateSession: workspace.mutateSession,
         select: workspace.select,
-        run: workspace.run,
+        mutateHostAndRefresh: workspace.mutateHostAndRefresh,
         dismissNotices: workspace.dismissNotices,
         saveSettings: workspace.saveSettings,
         refresh: workspace.refresh,

@@ -56,7 +56,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
         return;
       case "pane.zoom":
         requirePane();
-        return workspace.run(hostId, () =>
+        return workspace.mutateHostAndRefresh(hostId, () =>
           window.rex.request("zoom", terminalRef),
         );
       case "pane.copy_id":
@@ -88,7 +88,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
             throw new Error(`Choose a border from 1 to ${dividers.length}.`);
           if (!(ratio > 0 && ratio < 1))
             throw new Error("Enter a percentage between 1 and 99.");
-          await workspace.run(hostId, () =>
+          await workspace.mutateHostAndRefresh(hostId, () =>
             window.rex.request("resizeDivider", {
               hostId,
               sessionId,
@@ -151,7 +151,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
               },
             ],
             submit: async (values) => {
-              await workspace.run(hostId, () =>
+              await workspace.mutateHostAndRefresh(hostId, () =>
                 window.rex.request("renamePane", {
                   ...terminalRef,
                   label: values.label,
@@ -287,7 +287,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
               },
             ],
             submit: async (values) => {
-              await workspace.run(hostId, () =>
+              await workspace.mutateHostAndRefresh(hostId, () =>
                 window.rex.request("createBlock", {
                   hostId,
                   sessionId,

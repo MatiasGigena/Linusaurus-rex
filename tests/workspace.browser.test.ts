@@ -22,7 +22,7 @@ window.fixture={calls,
  reloadAfterResize(){const reload=workspace.reloadSession;window.fixture.reloadResult='pending';void window.rex.request('resizeDivider',{hostId:'one',sessionId:'s',beforeBlockId:'before',afterBlockId:'after',direction:'horizontal',ratio:0.5}).then(()=>reload('one','s')).then(()=>{window.fixture.reloadResult='complete';},error=>{window.fixture.reloadResult=error.message;});},
  mutate(){window.fixture.mutation='pending';void workspace.operations.mutateSession({hostId:'one',sessionId:'s',selectActive:true},()=>window.rex.request('renameWindow',{hostId:'one',sessionId:'s',windowId:'w',label:'Updated'})).then(value=>{window.fixture.mutation='complete';window.fixture.completed=value;},error=>{window.fixture.mutation=error.message;window.fixture.failureIdentity=error===window.fixture.lastFailure;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
  mutateTarget(sessionId,key){(window.fixture.mutations??={})[key]='pending';void workspace.operations.mutateSession({hostId:'one',sessionId},()=>window.rex.request('renameWindow',{hostId:'one',sessionId,windowId:'w',label:key})).then(()=>{window.fixture.mutations[key]='complete';},error=>{window.fixture.mutations[key]=error.message;});},
- run(){window.fixture.mutation='pending';void workspace.operations.run('one',()=>window.rex.request('renameWindow',{hostId:'one',sessionId:'s',windowId:'w',label:'Updated'})).then(()=>{window.fixture.mutation='complete';},error=>{window.fixture.mutation=error.message;window.fixture.failureIdentity=error===window.fixture.lastFailure;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
+ mutateHostAndRefresh(){window.fixture.mutation='pending';void workspace.operations.mutateHostAndRefresh('one',()=>window.rex.request('renameWindow',{hostId:'one',sessionId:'s',windowId:'w',label:'Updated'})).then(()=>{window.fixture.mutation='complete';},error=>{window.fixture.mutation=error.message;window.fixture.failureIdentity=error===window.fixture.lastFailure;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
  dispatch(name,args={}){const noop=()=>{};const execute=createWorkspaceActions({dialogs,workspace:workspace.operations,settings,hosts:workspace.hosts,views:workspace.views,selection:workspace.selection,keymaps:workspace.keymaps,focusedPane:workspace.focusedPane,workspaceElement:{current:null},setCollapsedSessions:noop,setActivityOnly:noop,setActivityOpen:noop,setActivityGroup:noop,onError:noop});window.fixture.mutation='pending';void execute(name,args).then(value=>{window.fixture.mutation='complete';window.fixture.completed=value;},error=>{window.fixture.mutation=error.message;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
  preferences(patch){settings={...settings,...patch};for(const listener of listeners)listener({type:'settings',settings});},
  changeHosts(hosts){settings={...settings,hosts};for(const listener of listeners)listener({type:'settings',settings});},
@@ -59,7 +59,7 @@ interface WorkspaceFixtureWindow {
     pending(): PendingRequest[];
     complete(id: number, value: unknown): void;
     refresh(): void;
-    run(): void;
+    mutateHostAndRefresh(): void;
     mutate(): void;
     mutateTarget(sessionId: string, key: string): void;
     mutations?: Record<string, string>;
@@ -428,7 +428,7 @@ test(
       async (page) => {
         await page.clock.install();
         const previous = await startInspection(page);
-        await page.evaluate("window.fixture.run()");
+        await page.evaluate("window.fixture.mutateHostAndRefresh()");
         await complete(
           page,
           await pending(page, "renameWindow", "one"),
@@ -646,7 +646,7 @@ for (const stage of ["listSessions", "inspectSession"] as const) {
         source,
         async (page) => {
           await initialWorkspace(page);
-          await page.evaluate("window.fixture.run()");
+          await page.evaluate("window.fixture.mutateHostAndRefresh()");
           await complete(
             page,
             await pending(page, "renameWindow", "one"),
@@ -732,7 +732,7 @@ test(
       source,
       async (page) => {
         await initialWorkspace(page);
-        await page.evaluate("window.fixture.run()");
+        await page.evaluate("window.fixture.mutateHostAndRefresh()");
         await fail(
           page,
           await pending(page, "renameWindow", "one"),
@@ -798,7 +798,7 @@ test(
         await expect
           .poll(async () => (await snapshot(page)).hostErrors.two)
           .toBe("Other host is offline");
-        await page.evaluate("window.fixture.run()");
+        await page.evaluate("window.fixture.mutateHostAndRefresh()");
         await complete(
           page,
           await pending(page, "renameWindow", "one"),
@@ -840,7 +840,7 @@ test(
   },
 );
 
-for (const kind of ["run", "mutate"] as const) {
+for (const kind of ["mutateHostAndRefresh", "mutate"] as const) {
   test(
     `${kind} rejects reconciliation after unmount without launching any further bridge work`,
     options,
@@ -859,7 +859,7 @@ for (const kind of ["run", "mutate"] as const) {
             undefined,
           );
           const inspected =
-            kind === "run"
+            kind === "mutateHostAndRefresh"
               ? await startInspection(page)
               : await pending(page, "inspectSession", "one");
           await page.evaluate(() =>

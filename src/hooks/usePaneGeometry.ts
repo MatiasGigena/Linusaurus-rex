@@ -12,7 +12,7 @@ import {
 
 export type PaneGeometryOperations = Pick<
   WorkspaceOperations,
-  "run"
+  "mutateHostAndRefresh"
 > & {
   reloadSession(hostId: string, sessionId: string): Promise<SessionView>;
 };
@@ -113,7 +113,7 @@ export function usePaneGeometry(
       ),
     );
     safely(() =>
-      ws.run(where.hostId, () =>
+      ws.mutateHostAndRefresh(where.hostId, () =>
         window.rex.request("resizeDivider", {
           hostId: where.hostId,
           sessionId: where.sessionId,
@@ -171,7 +171,7 @@ export function usePaneGeometry(
     const up = () => {
       window.removeEventListener("pointermove", move);
       safely(() =>
-        ws.run(where.hostId, () =>
+        ws.mutateHostAndRefresh(where.hostId, () =>
           window.rex.request("resizeLayer", {
             hostId: where.hostId,
             sessionId: where.sessionId,

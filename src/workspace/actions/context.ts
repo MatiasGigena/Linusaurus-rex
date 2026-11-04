@@ -63,7 +63,7 @@ export type SessionActionsDependencies = Pick<
 > & {
   workspace: Pick<
     WorkspaceOperations,
-    "mutateSession" | "select" | "run" | "refresh"
+    "mutateSession" | "select" | "mutateHostAndRefresh" | "refresh"
   >;
   requestClose: RequestClose;
 };
@@ -83,7 +83,7 @@ export type TabActionsTarget = Pick<
 export type TabActionsDependencies = Pick<WorkspaceActionOptions, "dialogs"> & {
   workspace: Pick<
     WorkspaceOperations,
-    "mutateSession" | "run" | "select"
+    "mutateSession" | "mutateHostAndRefresh" | "select"
   >;
   requestClose: RequestClose;
 };
@@ -105,7 +105,7 @@ export type PaneActionsDependencies = Pick<
   WorkspaceActionOptions,
   "dialogs"
 > & {
-  workspace: Pick<WorkspaceOperations, "run">;
+  workspace: Pick<WorkspaceOperations, "mutateHostAndRefresh">;
   settings: Settings;
   requestClose: RequestClose;
 };
@@ -130,7 +130,7 @@ export type PaneLayoutActionsDependencies = Pick<
 > & {
   workspace: Pick<
     WorkspaceOperations,
-    "mutateSession" | "focusPane" | "run" | "refresh"
+    "mutateSession" | "focusPane" | "mutateHostAndRefresh" | "refresh"
   >;
   settings: Settings;
 };
@@ -152,7 +152,7 @@ export type ClientActionsDependencies = Pick<
     WorkspaceOperations,
     | "mutateSession"
     | "select"
-    | "run"
+    | "mutateHostAndRefresh"
     | "dismissNotices"
     | "saveSettings"
     | "refresh"

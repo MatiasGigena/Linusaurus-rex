@@ -222,7 +222,7 @@ export function createPaneLayoutActions(
               ],
               submit: async (values) => {
                 const direction = moveDirection(values.direction);
-                await workspace.run(hostId, () =>
+                await workspace.mutateHostAndRefresh(hostId, () =>
                   window.rex.request("movePane", {
                     ...terminalRef,
                     anchorBlockId: values.anchor,
@@ -234,7 +234,7 @@ export function createPaneLayoutActions(
           });
           return;
         }
-        return workspace.run(hostId, () =>
+        return workspace.mutateHostAndRefresh(hostId, () =>
           window.rex.request("movePane", {
             ...terminalRef,
             anchorBlockId: target.id,
@@ -244,7 +244,7 @@ export function createPaneLayoutActions(
       }
       case "pane.swap":
         requirePane();
-        return workspace.run(hostId, () =>
+        return workspace.mutateHostAndRefresh(hostId, () =>
           window.rex.request("swapPanes", {
             ...terminalRef,
             otherBlockId: String(args.other_block_id),
@@ -252,7 +252,7 @@ export function createPaneLayoutActions(
         );
       case "pane.balance":
         requirePane();
-        return workspace.run(hostId, () =>
+        return workspace.mutateHostAndRefresh(hostId, () =>
           window.rex.request("layoutAction", {
             ...terminalRef,
             operation: "balance",
@@ -289,7 +289,7 @@ export function createPaneLayoutActions(
                 },
               ],
               submit: async (values) => {
-                await workspace.run(hostId, () =>
+                await workspace.mutateHostAndRefresh(hostId, () =>
                   window.rex.request("layoutAction", {
                     ...terminalRef,
                     operation,

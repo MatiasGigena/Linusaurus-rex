@@ -111,7 +111,7 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
       case "session.rename": {
         if (!sessionId) throw new Error("Choose a session first.");
         const rename = async (label: string) => {
-          await workspace.run(hostId, () =>
+          await workspace.mutateHostAndRefresh(hostId, () =>
             window.rex.request("renameSession", { hostId, sessionId, label }),
           );
         };

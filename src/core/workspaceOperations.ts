@@ -50,7 +50,7 @@ export interface WorkspaceOperations {
    * cause and code/method. Unrelated offline hosts stay visible and do not reject.
    * An action rejection is preserved even if later background recovery fails.
    */
-  run<T>(hostId: string, action: () => Promise<T>): Promise<T>;
+  mutateHostAndRefresh<T>(hostId: string, action: () => Promise<T>): Promise<T>;
   /**
    * Resolve once the action and one target-session inspection succeed and any
    * active selection/focus state updates are queued. Preserve action rejection

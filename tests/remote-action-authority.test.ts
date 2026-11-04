@@ -53,7 +53,7 @@ function fixture(t: TestContext) {
     getSettings: () => settings,
     saveSettings: async (value) => value,
     refresh: async () => {},
-    run: async (_host, operation) => operation(),
+    mutateHostAndRefresh: async (_host, operation) => operation(),
     mutateSession: async (plan, operation) => {
       const result = await operation();
       const id =
