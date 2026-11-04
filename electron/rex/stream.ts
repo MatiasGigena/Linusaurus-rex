@@ -105,7 +105,11 @@ function continuation(terminal: GhosttyTerminal): Buffer {
 }
 
 export async function snapshotToVt(snapshot: Buffer): Promise<{ data: string; size: FrameSize; continuation: Buffer }> {
-  wasm ??= loadGhosttyVt();
+  wasm ??= loadGhosttyVt().catch((error: unknown) => {
+    // A transient load failure must not poison every later reconnect.
+    wasm = undefined;
+    throw error;
+  });
   const module = await wasm;
   const abi = module.abi;
   const source = abi.writeBytes(snapshot);
@@ -158,7 +162,6 @@ export class RexTerminalStream {
   private restored = false;
   private retry?: ReturnType<typeof setTimeout>;
   private failureCount = 0;
-  private attempt?: Promise<void>;
   constructor(private control: () => Promise<RexControl>, readonly sessionId: string, readonly blockId: string, private callbacks: StreamCallbacks) {
     void this.connect();
   }
