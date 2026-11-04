@@ -417,6 +417,9 @@ export class KittyGraphics {
       this.enforceQuota(id);
       if (action === "t" && effective.a !== "T") return "";
     }
+    return this.placeImage(effective, id);
+  }
+  private placeImage(effective: Record<string, string>, id: number): string {
     const image = this.images.get(id);
     if (!image) throw new Error(`Kitty image ${id} has not been transmitted.`);
     const screen = this.element.querySelector<HTMLElement>(".xterm-screen"),
@@ -477,9 +480,10 @@ export class KittyGraphics {
         seen.add(targetKey);
         if (depth >= 32)
           throw new Error("Kitty relative placement chain exceeds 32 levels.");
-        const target = this.placements.find(
+        const { imageId, id: parentId }: { imageId: number; id: number } = next;
+        const target: Placement | undefined = this.placements.find(
           (placement) =>
-            placement.imageId === next!.imageId && placement.id === next!.id,
+            placement.imageId === imageId && placement.id === parentId,
         );
         if (!target && !this.virtual.has(targetKey))
           throw new Error("Kitty relative placement parent does not exist.");
@@ -540,7 +544,9 @@ export class KittyGraphics {
     image.timer = undefined;
   }
   private enforceQuota(keep: number) {
-    if (this.images.get(keep)!.bytes > MAX_STORAGE) {
+    const image = this.images.get(keep);
+    if (!image) throw new Error(`Kitty image ${keep} has not been transmitted.`);
+    if (image.bytes > MAX_STORAGE) {
       this.dropImage(keep);
       throw new Error(
         "Kitty image/animation exceeds the 64 MiB storage quota.",
