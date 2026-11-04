@@ -82,7 +82,7 @@ export function prepareLaunchSettings(settings:Settings,options:LaunchOptions):{
   return{settings:next,host,changed};
 }
 
-/** Resolution reads server state unless an explicit --new was supplied. */
+/** Resolve a launch target: --new creates a session; --block may restore and focus a pane. */
 export async function resolveLaunchSelection(rex:LaunchBackend,host:Host,settings:Settings,options:LaunchOptions):Promise<Selection|undefined> {
   if(!options.endpoint&&!options.session&&!options.newSession&&!options.block)return undefined;
   let session:SessionSummary|undefined;

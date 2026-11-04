@@ -5,11 +5,9 @@ import {
   chmod,
   copyFile,
   mkdir,
-  readFile,
   rename,
   rm,
   stat,
-  writeFile,
 } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { UpdateState } from "../../src/shared/types.js";

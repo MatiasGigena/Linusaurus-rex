@@ -1,12 +1,9 @@
 import {
-  Bot,
   ChevronDown,
   ChevronRight,
-  Code2,
   Command,
   Eye,
   FolderPlus,
-  GitBranch,
   Laptop,
   PanelLeftClose,
   Plus,

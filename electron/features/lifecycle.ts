@@ -67,7 +67,7 @@ const environmentKey = (key: string) =>
     "LANG",
     "TZ",
   ].includes(key) || key.startsWith("LC_");
-const value = (args: string[], name: string) => {
+const commandLineOptionValue = (args: string[], name: string) => {
   const index = args.indexOf(name);
   return index >= 0
     ? args[index + 1]
@@ -94,14 +94,14 @@ async function processProfile(pid: number, endpoint: string): Promise<Profile> {
     throw new Error(
       "The server was not launched as rex server run. Manage this service with its existing service manager.",
     );
-  const listened = value(args, "--listen");
+  const listened = commandLineOptionValue(args, "--listen");
   if (listened && listened !== endpoint)
     throw new Error(
       "This is an additional listener; manage the server through its primary Unix socket.",
     );
   if (
     args.some(
-      (argument, index) =>
+      (_argument, index) =>
         index > 0 &&
         /auth.*key(?!.*file)|password|secret|token/i.test(args[index - 1]) &&
         !args[index - 1].includes("file"),
@@ -284,8 +284,8 @@ export class LinuxServerManager {
       );
       info.origins = originPatterns(profile.args);
       info.configPath =
-        value(profile.args, "--config") || profile.env.REX_CONFIG;
-      info.stateDirectory = value(profile.args, "--state-dir");
+        commandLineOptionValue(profile.args, "--config") || profile.env.REX_CONFIG;
+      info.stateDirectory = commandLineOptionValue(profile.args, "--state-dir");
       try {
         info.binarySha256 = createHash("sha256")
           .update(await readFile(profile.executable))
