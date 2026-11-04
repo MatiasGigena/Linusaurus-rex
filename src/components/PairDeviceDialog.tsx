@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
-import QRCode from 'qrcode';
-import { Copy, ExternalLink, RefreshCw } from 'lucide-react';
-import { Dialog } from './Dialog';
-import { errorMessage } from '../core/workspace';
+import { useEffect, useRef, useState } from "react";
+import QRCode from "qrcode";
+import { Copy, ExternalLink, RefreshCw } from "lucide-react";
+import { Dialog } from "./Dialog";
+import { errorMessage } from "../core/workspace";
+import { decodeServerDetails } from "../core/serverDetails";
 export function PairDeviceDialog({
   hostId,
   endpoint,
@@ -14,48 +15,58 @@ export function PairDeviceDialog({
   onClose(): void;
   onManage(): void;
 }) {
-  const [address, setAddress] = useState('');
-  const [authUrl, setAuthUrl] = useState('');
-  const [image, setImage] = useState('');
-  const [state, setState] = useState('Checking remote address…');
+  const [address, setAddress] = useState("");
+  const [authUrl, setAuthUrl] = useState("");
+  const [image, setImage] = useState("");
+  const [state, setState] = useState("Checking remote address…");
+  const generation = useRef(0);
   const load = async () => {
-    setImage('');
-    setAddress('');
-    setAuthUrl('');
+    const current = ++generation.current;
+    setImage("");
+    setAddress("");
+    setAuthUrl("");
+    setState("Checking remote address…");
     try {
-      const status = (await window.rex.request('serverAction', { hostId, action: 'status' })) as {
-        tailscale?: {
-          https?: { url?: string; state?: string };
-          state?: string;
-          auth_url?: string;
-          dns_name?: string;
-        };
-      };
-      const url =
-        status.tailscale?.https?.url || (/^https:\/\//.test(endpoint || '') ? endpoint : '') || '';
-      setAddress(url);
-      setAuthUrl(status.tailscale?.auth_url || '');
-      setState(
-        url
-          ? 'Scan this server address on your other device. The device must have network access and permission to connect.'
-          : `Remote address is ${status.tailscale?.state || 'unavailable'}. Enable remote serving or finish sign-in first.`,
+      const status = decodeServerDetails(
+        await window.rex.request("serverAction", { hostId, action: "status" }),
       );
-      if (url)
-        setImage(
-          await QRCode.toDataURL(url, {
+      const url =
+        status.tailscale?.https?.url ||
+        (/^https:\/\//.test(endpoint || "") ? endpoint : "") ||
+        "";
+      const qr = url
+        ? await QRCode.toDataURL(url, {
             width: 240,
             margin: 2,
-            errorCorrectionLevel: 'M',
-            color: { dark: '#233228', light: '#eef5eb' },
-          }),
-        );
+            errorCorrectionLevel: "M",
+            color: { dark: "#233228", light: "#eef5eb" },
+          })
+        : "";
+      if (current !== generation.current) return;
+      setAddress(url);
+      setAuthUrl(status.tailscale?.auth_url || "");
+      setState(
+        url
+          ? "Scan this server address on your other device. The device must have network access and permission to connect."
+          : `Remote address is ${status.tailscale?.state || "unavailable"}. Enable remote serving or finish sign-in first.`,
+      );
+      setImage(qr);
     } catch (failure) {
-      setState(errorMessage(failure));
+      if (current === generation.current) setState(errorMessage(failure));
     }
   };
   useEffect(() => {
     void load();
+    return () => {
+      generation.current++;
+    };
   }, [hostId, endpoint]);
+  const reportFailure = (operation: Promise<unknown>) => {
+    const current = generation.current;
+    void operation.catch((failure) => {
+      if (current === generation.current) setState(errorMessage(failure));
+    });
+  };
   return (
     <Dialog
       title="Connect another device"
@@ -82,7 +93,11 @@ export function PairDeviceDialog({
         {authUrl && (
           <button
             className="button"
-            onClick={() => void window.rex.request('openExternal', { url: authUrl })}
+            onClick={() =>
+              reportFailure(
+                window.rex.request("openExternal", { url: authUrl }),
+              )
+            }
           >
             <ExternalLink size={13} />
             Sign in
@@ -91,7 +106,7 @@ export function PairDeviceDialog({
         {address ? (
           <button
             className="button button-primary"
-            onClick={() => void window.rex.writeClipboard(address)}
+            onClick={() => reportFailure(window.rex.writeClipboard(address))}
           >
             <Copy size={13} />
             Copy address
