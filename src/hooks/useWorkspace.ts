@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ClientEvent,
   KeymapResult,
+  RexBridge,
   Selection,
   SessionView,
   Settings,
@@ -45,7 +46,7 @@ export function useWorkspace() {
   const refreshQueued = useRef(false);
   const viewEpoch = useRef(0);
   const mounted = useRef(true);
-  const configured = useRef(new Set<string>());
+  const configured = useRef(new Map<string, string>());
   const delayedRefresh = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -74,6 +75,7 @@ export function useWorkspace() {
     [],
   );
   const refresh = useCallback(async () => {
+    if (!mounted.current) return;
     const config = settingsRef.current;
     if (!config) return;
     if (inFlight.current) {
@@ -82,36 +84,52 @@ export function useWorkspace() {
     }
     inFlight.current = true;
     const startingEpoch = viewEpoch.current;
+    const request: RexBridge["request"] = (method, args) => {
+      if (!mounted.current || startingEpoch !== viewEpoch.current)
+        return Promise.reject(new Error("Workspace refresh was superseded."));
+      return window.rex.request(method, args);
+    };
     try {
       const snapshots = await Promise.all(
-        config.hosts.map((host) =>
-          collectHostSnapshot(host, window.rex.request),
-        ),
+        config.hosts.map((host) => collectHostSnapshot(host, request)),
       );
       const nextHosts = snapshots.map((snapshot) => snapshot.host);
       const allViews = Object.assign(
         {},
         ...snapshots.map((snapshot) => snapshot.views),
       ) as Record<string, SessionView>;
+      if (!mounted.current) return;
+      if (startingEpoch !== viewEpoch.current) {
+        refreshQueued.current = true;
+        return;
+      }
       for (const host of nextHosts) {
         if (!host.connected) {
           configured.current.delete(host.id);
           continue;
         }
-        if (configured.current.has(host.id)) continue;
-        configured.current.add(host.id);
+        if (configured.current.get(host.id) === host.endpoint) continue;
+        configured.current.set(host.id, host.endpoint);
         void window.rex
           .request("keymap", { hostId: host.id })
           .then((keymap) => {
-            if (mounted.current)
-              setKeymaps((previous) => ({ ...previous, [host.id]: keymap }));
+            if (
+              !mounted.current ||
+              !settingsRef.current?.hosts.some(
+                (current) =>
+                  current.id === host.id && current.endpoint === host.endpoint,
+              )
+            ) {
+              if (configured.current.get(host.id) === host.endpoint)
+                configured.current.delete(host.id);
+              return;
+            }
+            setKeymaps((previous) => ({ ...previous, [host.id]: keymap }));
           })
-          .catch(() => configured.current.delete(host.id));
-      }
-      if (!mounted.current) return;
-      if (startingEpoch !== viewEpoch.current) {
-        refreshQueued.current = true;
-        return;
+          .catch(() => {
+            if (configured.current.get(host.id) === host.endpoint)
+              configured.current.delete(host.id);
+          });
       }
       setHosts(nextHosts);
       setViews((previous) => {
@@ -290,6 +308,7 @@ export function useWorkspace() {
     }, 5000);
     return () => {
       mounted.current = false;
+      viewEpoch.current++;
       clearInterval(timer);
       clearTimeout(delayedRefresh.current);
       unsubscribe();
