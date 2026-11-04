@@ -5,7 +5,15 @@ import { join } from 'node:path';
 export interface RexCredentials { username?: string; password?: string; token?: string; headers?: Record<string, string> }
 export interface RexWelcome { protocol: string; api_revision: number; api_server_revision?: number; limits?: { max_message_bytes?: number }; client?: { id: string; reconnect_token?: string; resumed?: boolean }; features?: string[] }
 export type RexEvent = { type: string; seq?: number; payload?: Record<string, unknown>; [key: string]: unknown };
-type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
+type Pending = { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
+
+/** Server rejection identity remains available without changing its displayed message. */
+export class RexRequestError extends Error {
+  constructor(message: string, readonly code: string | undefined, readonly method: string) {
+    super(message);
+    this.name = 'RexRequestError';
+  }
+}
 
 export function localEndpoint(): string {
   return `unix://${join(process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.() ?? 1000}`, 'rex/server.sock')}`;
@@ -93,7 +101,7 @@ export class RexControl {
             if (!pending) return;
             this.pending.delete(String(message.id)); clearTimeout(pending.timer);
             const error = message.error as { message?: string; code?: string } | undefined;
-            if (error) pending.reject(new Error(error.message || error.code || 'Rex rejected the request.'));
+            if (error) pending.reject(new RexRequestError(error.message || error.code || 'Rex rejected the request.', error.code, pending.method));
             else pending.resolve(message.payload);
           } else if (message.type === 'request' && typeof message.id === 'string' && typeof message.method === 'string') {
             void this.handleRequest(message);
@@ -133,7 +141,7 @@ export class RexControl {
     if (Buffer.byteLength(message) > this.maxMessageBytes) throw new Error('Rex request exceeds the negotiated message limit.');
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Rex control request timed out.')); }, 10_000);
-      this.pending.set(id, { resolve: value => resolve(value as T), reject, timer });
+      this.pending.set(id, { method, resolve: value => resolve(value as T), reject, timer });
       this.socket.send(message, error => { if (error) { clearTimeout(timer); this.pending.delete(id); reject(error); } });
     });
   }
