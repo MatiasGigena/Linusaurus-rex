@@ -150,7 +150,15 @@ export function OnboardingPane({
                 and name more themes for light and dark appearances.
               </p>
               <div className="onboarding-themes">
-                {(["graphite", "midnight", "light"] as const).map((theme) => (
+                {(
+                  [
+                    ["macos", "macOS Dark"],
+                    ["macos-light", "macOS Light"],
+                    ["graphite", "Graphite"],
+                    ["midnight", "Midnight"],
+                    ["light", "Light"],
+                  ] as const
+                ).map(([theme, label]) => (
                   <button
                     key={theme}
                     className={`onboarding-theme ${theme}`}
@@ -171,7 +179,7 @@ export function OnboardingPane({
                       })
                     }
                   >
-                    {theme}
+                    {label}
                   </button>
                 ))}
               </div>

@@ -21,6 +21,7 @@ import type { ProgramActivity, Settings } from "../shared/types";
 import { activityLabel } from "../core/workspace";
 import { IconButton } from "./IconButton";
 import { ProgramIcon } from "./ProgramIcon";
+import { WindowControls, type WindowControlAction } from "./WindowControls";
 
 export interface NavigationWindow {
   id: string;
@@ -84,6 +85,8 @@ export interface SidebarProps {
   onActivity?: () => void;
   onSwitcher?: () => void;
   activityOnly?: boolean;
+  /** When set, the sidebar titlebar leads with macOS-style traffic lights. */
+  onWindowControl?: (action: WindowControlAction) => void;
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -183,6 +186,12 @@ export function Sidebar(props: SidebarProps) {
         }}
       />
       <div className="sidebar-titlebar">
+        {props.onWindowControl && (
+          <WindowControls
+            variant="traffic"
+            onWindowControl={props.onWindowControl}
+          />
+        )}
         <div className="brand-mark" aria-hidden="true">
           <Terminal size={17} strokeWidth={2.2} />
         </div>

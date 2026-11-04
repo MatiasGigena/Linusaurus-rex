@@ -1,0 +1,1184 @@
+/*
+ * macOS interface theme ("macos" dark and "macos-light").
+ *
+ * App.tsx sets `data-theme` to the resolved palette and `data-chrome="macos"` for
+ * both variants. Tokens live on the data-theme selectors; every component rule
+ * is scoped to data-chrome so Graphite, Midnight and Paper are untouched.
+ * Loaded last (see main.tsx) so equal-specificity rules here win.
+ *
+ * Filled accent surfaces use Apple's "selected content" blues (#0058d0 / #0063e1)
+ * rather than system blue so white labels on them stay above 4.5:1 contrast.
+ */
+
+:root[data-theme="macos"] {
+  color-scheme: dark;
+  --mac-window: #1e1e1e;
+  --mac-sidebar: #2a2a2c;
+  --mac-sidebar-edge: #000000b3;
+  --mac-toolbar: #2a2a2c;
+  --mac-toolbar-edge: #000000cc;
+  --mac-bar: #252527;
+  --mac-raised: #2c2c2e;
+  --mac-menu: #2c2c2ef2;
+  --mac-control: #ffffff1a;
+  --mac-control-hover: #ffffff26;
+  --mac-control-edge: #ffffff1f;
+  --mac-field: #ffffff0d;
+  --mac-field-edge: #ffffff24;
+  --mac-hover: #ffffff12;
+  --mac-separator: #ffffff1a;
+  --mac-label: #ececec;
+  --mac-secondary: #b1b1b6;
+  --mac-tertiary: #a6a6ab;
+  --mac-accent: #0a84ff;
+  --mac-accent-text: #409cff;
+  --mac-accent-fill: #0058d0;
+  --mac-accent-fill-hover: #0a63dc;
+  --mac-focus: #0a84ff99;
+  --mac-selection: #3f638b;
+  --mac-red: #ff6961;
+  --mac-orange: #ffb340;
+  --mac-yellow: #ffd426;
+  --mac-green: #30d158;
+  --mac-shadow: 0 0 0 0.5px #000000e6, 0 22px 70px #00000099;
+  --mac-menu-shadow: 0 0 0 0.5px #000000cc, 0 10px 32px #00000080;
+  --mac-switch-off: #ffffff29;
+  --mac-backdrop: #0000004d;
+
+  --sidebar: var(--mac-sidebar);
+  --surface: var(--mac-window);
+  --surface-raised: var(--mac-raised);
+  --border: var(--mac-separator);
+  --text: var(--mac-label);
+  --muted: var(--mac-secondary);
+  --faint: var(--mac-tertiary);
+  --green: var(--mac-accent-text);
+  --green-bright: var(--mac-accent-text);
+  --danger: var(--mac-red);
+  color: var(--text);
+  background: var(--surface);
+}
+
+:root[data-theme="macos-light"] {
+  color-scheme: light;
+  --mac-window: #ffffff;
+  --mac-sidebar: #efeff1;
+  --mac-sidebar-edge: #0000001f;
+  --mac-toolbar: #f6f6f6;
+  --mac-toolbar-edge: #0000001f;
+  --mac-bar: #f6f6f6;
+  --mac-raised: #f6f6f6;
+  --mac-menu: #f6f6f6f5;
+  --mac-control: #ffffff;
+  --mac-control-hover: #fafafa;
+  --mac-control-edge: #00000026;
+  --mac-field: #ffffff;
+  --mac-field-edge: #00000033;
+  --mac-hover: #0000000d;
+  --mac-separator: #0000001a;
+  --mac-label: #1d1d1f;
+  --mac-secondary: #545458;
+  --mac-tertiary: #5f5f64;
+  --mac-accent: #007aff;
+  --mac-accent-text: #0062cc;
+  --mac-accent-fill: #0063e1;
+  --mac-accent-fill-hover: #0058d0;
+  --mac-focus: #007aff80;
+  --mac-selection: #b3d7ff;
+  --mac-red: #d70015;
+  --mac-orange: #a05a00;
+  --mac-yellow: #8f5300;
+  --mac-green: #1f7a35;
+  --mac-shadow: 0 0 0 0.5px #0000002e, 0 22px 70px #00000038;
+  --mac-menu-shadow: 0 0 0 0.5px #00000033, 0 10px 32px #0000002e;
+  --mac-switch-off: #00000024;
+  --mac-backdrop: #00000026;
+
+  --sidebar: var(--mac-sidebar);
+  --surface: var(--mac-window);
+  --surface-raised: var(--mac-raised);
+  --border: var(--mac-separator);
+  --text: var(--mac-label);
+  --muted: var(--mac-secondary);
+  --faint: var(--mac-tertiary);
+  --green: var(--mac-accent-text);
+  --green-bright: var(--mac-accent-text);
+  --danger: var(--mac-red);
+  color: var(--text);
+  background: var(--surface);
+}
+
+/* ---------- Foundations ---------- */
+
+:root[data-chrome="macos"] {
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", Inter,
+    "Ubuntu Sans", "Noto Sans", system-ui, sans-serif;
+  font-size: 13px;
+  letter-spacing: -0.08px;
+}
+:root[data-chrome="macos"] ::selection {
+  color: inherit;
+  background: var(--mac-selection);
+}
+:root[data-chrome="macos"]
+  :is(button, a, select, input, textarea, summary):focus-visible {
+  outline: 3px solid var(--mac-focus);
+  outline-offset: 0;
+}
+:root[data-chrome="macos"] :is(input, textarea):focus {
+  border-color: var(--mac-accent);
+  box-shadow: 0 0 0 3px var(--mac-focus);
+}
+:root[data-chrome="macos"] ::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--mac-label) 30%, transparent);
+  background-clip: padding-box;
+}
+:root[data-chrome="macos"] ::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--mac-label) 45%, transparent);
+}
+:root[data-chrome="macos"] kbd {
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--mac-tertiary);
+  letter-spacing: 0;
+}
+:root[data-chrome="macos"] .icon-button {
+  border-radius: 6px;
+  color: var(--mac-secondary);
+}
+:root[data-chrome="macos"] .icon-button:hover:not(:disabled) {
+  background: var(--mac-hover);
+  color: var(--mac-label);
+}
+:root[data-chrome="macos"] .icon-button.is-active {
+  background: var(--mac-hover);
+  color: var(--mac-accent-text);
+}
+:root[data-chrome="macos"] .icon-button.danger-button:hover:not(:disabled) {
+  color: var(--mac-red);
+  background: color-mix(in srgb, var(--mac-red) 14%, transparent);
+}
+:root[data-chrome="macos"] .status-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--mac-tertiary);
+}
+:root[data-chrome="macos"] .status-dot.online {
+  background: var(--mac-green);
+  box-shadow: none;
+}
+:root[data-chrome="macos"] .status-dot.offline {
+  background: var(--mac-orange);
+}
+
+/* ---------- Traffic lights ---------- */
+
+.traffic-lights {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 0 4px 0 0;
+  -webkit-app-region: no-drag;
+}
+.traffic-light {
+  --light: #ff5f57;
+  --light-edge: #e0443e;
+  --glyph: #4d0000;
+  position: relative;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--light);
+  box-shadow: inset 0 0 0 0.5px var(--light-edge);
+  display: grid;
+  place-items: center;
+}
+.traffic-light::before {
+  /* Comfortable hit area without changing the 12px visual. */
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+}
+.traffic-minimize {
+  --light: #febc2e;
+  --light-edge: #dea123;
+  --glyph: #995700;
+}
+.traffic-zoom {
+  --light: #28c840;
+  --light-edge: #1aab29;
+  --glyph: #006500;
+}
+.traffic-light svg {
+  width: 8px;
+  height: 8px;
+  fill: none;
+  stroke: var(--glyph);
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  opacity: 0;
+}
+.traffic-lights:hover .traffic-light svg,
+.traffic-lights:focus-within .traffic-light svg {
+  opacity: 1;
+}
+.traffic-light:active {
+  filter: brightness(0.82);
+}
+:root[data-chrome="macos"] .traffic-light:focus-visible {
+  outline: 2px solid var(--mac-focus);
+  outline-offset: 2px;
+}
+/* Unfocused windows grey out their lights, as on macOS. */
+.app-shell[data-native-focused="false"]
+  .traffic-lights:not(:hover)
+  .traffic-light {
+  --light: color-mix(in srgb, var(--mac-label, #888) 22%, transparent);
+  --light-edge: transparent;
+}
+
+/* ---------- Sidebar ---------- */
+
+:root[data-chrome="macos"] .sidebar {
+  background: var(--mac-sidebar);
+  border-right: 1px solid var(--mac-sidebar-edge);
+  box-shadow: none;
+}
+:root[data-chrome="macos"] .tabs-right .sidebar {
+  border-left: 1px solid var(--mac-sidebar-edge);
+  border-right: 0;
+}
+:root[data-chrome="macos"] .sidebar-titlebar {
+  height: 52px;
+  min-height: 52px;
+  padding: 0 10px 0 20px;
+  gap: 8px;
+}
+:root[data-chrome="macos"] .sidebar-titlebar .traffic-lights {
+  margin-right: 8px;
+}
+:root[data-chrome="macos"] .sidebar-titlebar:has(.traffic-lights) .brand-mark {
+  display: none;
+}
+:root[data-chrome="macos"] .brand-mark {
+  color: var(--mac-accent-text);
+  border-color: var(--mac-separator);
+  background: var(--mac-hover);
+  box-shadow: none;
+}
+:root[data-chrome="macos"] .brand-name {
+  color: var(--mac-label);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
+}
+:root[data-chrome="macos"] .brand-name span {
+  color: var(--mac-secondary);
+}
+:root[data-chrome="macos"] .beta-label {
+  color: var(--mac-secondary);
+  border: 0;
+  background: var(--mac-hover);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+:root[data-chrome="macos"] .quick-switcher {
+  height: 28px;
+  margin: 2px 12px 10px;
+  padding: 0 8px;
+  gap: 6px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--mac-hover);
+  color: var(--mac-secondary);
+  font-size: 13px;
+}
+:root[data-chrome="macos"] .quick-switcher:hover {
+  background: color-mix(in srgb, var(--mac-label) 11%, transparent);
+}
+:root[data-chrome="macos"] .quick-switcher kbd {
+  background: transparent;
+  font-size: 11px;
+}
+:root[data-chrome="macos"] .sidebar-filter {
+  margin: 0 20px 14px;
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .sidebar-filter input {
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .sidebar-section-label {
+  padding: 0 20px 6px;
+  color: var(--mac-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+/* macOS sidebar headers are title case, not tracked capitals. */
+:root[data-chrome="macos"] .sidebar-section-label > span:first-child {
+  display: inline-block;
+  text-transform: lowercase;
+}
+:root[data-chrome="macos"]
+  .sidebar-section-label
+  > span:first-child::first-letter {
+  text-transform: uppercase;
+}
+:root[data-chrome="macos"] .session-count {
+  color: var(--mac-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+:root[data-chrome="macos"] .workspace-navigation {
+  padding: 0 10px 16px;
+}
+:root[data-chrome="macos"] .host-group + .host-group {
+  margin-top: 16px;
+}
+:root[data-chrome="macos"] .host-heading {
+  margin: 0 0 2px;
+}
+:root[data-chrome="macos"] .host-toggle {
+  color: var(--mac-label);
+  gap: 8px;
+  padding: 4px 10px;
+}
+:root[data-chrome="macos"] .host-toggle:hover {
+  color: var(--mac-label);
+}
+:root[data-chrome="macos"] .host-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mac-label);
+}
+:root[data-chrome="macos"] .host-icon {
+  color: var(--mac-accent-text);
+}
+:root[data-chrome="macos"] .host-chevron {
+  color: var(--mac-tertiary);
+}
+:root[data-chrome="macos"] .host-sessions {
+  gap: 6px;
+}
+:root[data-chrome="macos"] .session-heading {
+  height: 24px;
+  margin: 4px 6px 1px 10px;
+}
+:root[data-chrome="macos"] .session-label {
+  color: var(--mac-tertiary);
+}
+:root[data-chrome="macos"] .session-label-text {
+  font-size: 11px;
+  font-weight: 600;
+}
+:root[data-chrome="macos"] .session-label:hover {
+  color: var(--mac-label);
+}
+:root[data-chrome="macos"] .session-active-indicator {
+  width: 5px;
+  height: 5px;
+  background: var(--mac-accent);
+}
+:root[data-chrome="macos"] .session-windows {
+  gap: 1px;
+}
+:root[data-chrome="macos"] .window-item {
+  height: 30px;
+  gap: 8px;
+  padding: 0 10px 0 8px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--mac-label);
+}
+:root[data-chrome="macos"] .window-item:not(.is-selected) {
+  color: var(--mac-label);
+}
+:root[data-chrome="macos"] .window-item:hover {
+  background: var(--mac-hover);
+  color: var(--mac-label);
+}
+:root[data-chrome="macos"] .window-item.is-selected {
+  background: var(--mac-accent-fill);
+  color: #ffffff;
+  border: 0;
+  box-shadow: none;
+}
+/* An unfocused window shows its selection in grey, like Finder. */
+:root[data-chrome="macos"]
+  .app-shell[data-native-focused="false"]
+  .window-item.is-selected {
+  background: color-mix(in srgb, var(--mac-label) 16%, transparent);
+  color: var(--mac-label);
+}
+:root[data-chrome="macos"] .window-label {
+  font-size: 13px;
+}
+:root[data-chrome="macos"] .terminal-glyph {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  color: var(--mac-accent-text);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+:root[data-chrome="macos"] .window-item:not(.is-selected) .terminal-glyph {
+  opacity: 1;
+}
+:root[data-chrome="macos"] .window-item.is-selected .terminal-glyph,
+:root[data-chrome="macos"] .window-item.is-selected .program-icon,
+:root[data-chrome="macos"] .window-item.is-selected .activity-caption {
+  color: inherit;
+}
+:root[data-chrome="macos"] .window-live-dot {
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+  opacity: 0.5;
+}
+:root[data-chrome="macos"] .host-disconnected {
+  color: var(--mac-orange);
+  font-size: 11px;
+  padding: 2px 10px 6px 12px;
+}
+:root[data-chrome="macos"] .no-sessions {
+  color: var(--mac-secondary);
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .no-sessions:hover {
+  color: var(--mac-label);
+}
+
+/* ---------- Toolbar, panes and status bar ---------- */
+
+:root[data-chrome="macos"] .workspace-toolbar {
+  height: 52px;
+  min-height: 52px;
+  padding: 0 12px 0 16px;
+  background: var(--mac-toolbar);
+  border-bottom: 1px solid var(--mac-toolbar-edge);
+}
+:root[data-chrome="macos"] .toolbar-leading {
+  gap: 8px;
+}
+:root[data-chrome="macos"] .toolbar-leading > .traffic-lights {
+  margin: 0 10px 0 4px;
+}
+:root[data-chrome="macos"] .toolbar-terminal-icon {
+  color: var(--mac-secondary);
+}
+:root[data-chrome="macos"] .toolbar-title {
+  color: var(--mac-label);
+  font-size: 13px;
+  font-weight: 600;
+}
+:root[data-chrome="macos"] .toolbar-subtitle {
+  color: var(--mac-secondary);
+  font-size: 12px;
+  border-left-color: var(--mac-separator);
+}
+:root[data-chrome="macos"] .title-chevron {
+  color: var(--mac-tertiary);
+}
+:root[data-chrome="macos"] .toolbar-connection,
+:root[data-chrome="macos"] .toolbar-connection:not(.is-connected) {
+  color: var(--mac-secondary);
+  font-size: 11px;
+}
+:root[data-chrome="macos"] .toolbar-connection .status-dot {
+  width: 6px;
+  height: 6px;
+}
+:root[data-chrome="macos"] .toolbar-divider {
+  background: var(--mac-separator);
+  height: 18px;
+}
+:root[data-chrome="macos"] .pane-close-action {
+  color: var(--mac-secondary);
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .pane-close-action:hover {
+  color: var(--mac-red);
+  background: color-mix(in srgb, var(--mac-red) 14%, transparent);
+}
+:root[data-chrome="macos"] .terminal-layout {
+  background: var(--mac-toolbar-edge);
+}
+:root[data-chrome="macos"] .terminal-pane.is-focused::after {
+  border-color: var(--mac-accent);
+}
+:root[data-chrome="macos"] .pane-header {
+  height: 28px;
+  min-height: 28px;
+  background: var(--mac-bar);
+  border-bottom: 1px solid var(--mac-separator);
+  color: var(--mac-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  justify-content: center;
+}
+:root[data-chrome="macos"] .terminal-loading {
+  color: var(--mac-secondary);
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .terminal-error {
+  background: var(--mac-raised);
+  color: var(--mac-label);
+  border: 0;
+  border-radius: 10px;
+  box-shadow: var(--mac-menu-shadow);
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .terminal-error > svg {
+  color: var(--mac-orange);
+}
+:root[data-chrome="macos"]
+  :is(.workspace-statusbar, .workspace-status, .statusbar) {
+  min-height: 24px;
+  background: var(--mac-bar);
+  border-top: 1px solid var(--mac-separator);
+  color: var(--mac-secondary);
+  font-size: 11px;
+}
+:root[data-chrome="macos"]
+  :is(.workspace-statusbar, .workspace-status, .statusbar)
+  kbd {
+  font-size: 11px;
+}
+:root[data-chrome="macos"] .status-breadcrumb,
+:root[data-chrome="macos"] .status-breadcrumb > svg {
+  color: var(--mac-secondary);
+}
+:root[data-chrome="macos"] .status-version kbd {
+  color: var(--mac-tertiary);
+  border-left-color: var(--mac-separator);
+}
+:root[data-chrome="macos"] .status-activity {
+  color: var(--mac-secondary);
+  font-size: 11px;
+}
+:root[data-chrome="macos"] .status-activity:hover {
+  color: var(--mac-label);
+}
+:root[data-chrome="macos"] .key-sequence-hints {
+  background: var(--mac-bar);
+  font-size: 11px;
+}
+:root[data-chrome="macos"] .key-sequence-hints strong {
+  color: var(--mac-accent-text);
+}
+
+/* ---------- Tabs, splits and floating panes ---------- */
+
+:root[data-chrome="macos"] .tab-strip {
+  min-height: 32px;
+  padding: 3px 6px;
+  gap: 2px;
+  background: var(--mac-toolbar);
+  border-bottom: 1px solid var(--mac-toolbar-edge);
+}
+:root[data-chrome="macos"] .horizontal-tab {
+  border: 0;
+  border-radius: 6px;
+  color: var(--mac-secondary);
+}
+:root[data-chrome="macos"] .horizontal-tab:hover {
+  background: var(--mac-hover);
+}
+:root[data-chrome="macos"] .horizontal-tab.is-selected {
+  background: var(--mac-control);
+  color: var(--mac-label);
+  box-shadow:
+    0 0 0 0.5px var(--mac-control-edge),
+    0 1px 2px #0000001f;
+}
+:root[data-chrome="macos"] .horizontal-tab > button:first-child {
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .tab-close:hover {
+  color: var(--mac-label);
+  background: var(--mac-hover);
+}
+:root[data-chrome="macos"] .split-divider:hover::after,
+:root[data-chrome="macos"] .split-divider:focus-visible::after,
+:root[data-chrome="macos"] .sidebar-resizer:hover,
+:root[data-chrome="macos"] .sidebar-resizer:focus-visible {
+  background: color-mix(in srgb, var(--mac-accent) 60%, transparent);
+}
+:root[data-chrome="macos"] .floating-pane-wrapper {
+  border: 0;
+  border-radius: 10px;
+  box-shadow: var(--mac-shadow);
+}
+:root[data-chrome="macos"] .floating-resize-handle {
+  border-color: var(--mac-tertiary);
+}
+:root[data-chrome="macos"] .minimized-panes button {
+  background: var(--mac-control);
+  border: 0;
+  box-shadow: 0 0 0 0.5px var(--mac-control-edge);
+  color: var(--mac-label);
+  font-size: 11px;
+}
+:root[data-chrome="macos"] .disconnected-overlay {
+  background: color-mix(in srgb, var(--mac-window) 88%, transparent);
+  color: var(--mac-label);
+  backdrop-filter: blur(8px);
+}
+
+/* ---------- Menus, notices and activity ---------- */
+
+:root[data-chrome="macos"] :is(.context-menu, .terminal-context-menu) {
+  padding: 5px;
+  background: var(--mac-menu);
+  border: 0;
+  border-radius: 9px;
+  box-shadow: var(--mac-menu-shadow);
+  backdrop-filter: blur(24px) saturate(1.6);
+  color: var(--mac-label);
+}
+:root[data-chrome="macos"] :is(.context-menu, .terminal-context-menu) > button {
+  min-height: 24px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  font-size: 13px;
+}
+:root[data-chrome="macos"]
+  :is(.context-menu, .terminal-context-menu)
+  > button:is(:hover:not(:disabled), :focus-visible) {
+  background: var(--mac-accent-fill);
+  color: #ffffff;
+  outline: 0;
+}
+:root[data-chrome="macos"]
+  :is(.context-menu, .terminal-context-menu)
+  > button:is(:hover, :focus-visible)
+  kbd {
+  color: #ffffffcc;
+}
+:root[data-chrome="macos"] .context-menu > button.is-danger {
+  color: var(--mac-red);
+}
+:root[data-chrome="macos"] .context-menu > button.is-danger:hover,
+:root[data-chrome="macos"]
+  .terminal-context-menu
+  > .terminal-menu-danger:hover {
+  background: #d70015;
+  color: #ffffff;
+}
+:root[data-chrome="macos"] .context-menu hr,
+:root[data-chrome="macos"] .terminal-context-menu > [role="separator"] {
+  background: var(--mac-separator);
+  margin: 5px 9px;
+}
+:root[data-chrome="macos"] .terminal-search {
+  border: 0;
+  border-radius: 9px;
+  background: var(--mac-menu);
+  box-shadow: var(--mac-menu-shadow);
+  backdrop-filter: blur(24px) saturate(1.6);
+}
+:root[data-chrome="macos"] .program-notice {
+  border: 0;
+  border-left: 3px solid var(--mac-accent);
+  border-radius: 12px;
+  background: var(--mac-menu);
+  box-shadow: var(--mac-menu-shadow);
+  backdrop-filter: blur(24px) saturate(1.6);
+}
+:root[data-chrome="macos"] .program-notice.blocked {
+  border-left-color: var(--mac-yellow);
+}
+:root[data-chrome="macos"] .program-notice.error {
+  border-left-color: var(--mac-red);
+}
+:root[data-chrome="macos"] .notice-content strong {
+  font-size: 13px;
+}
+:root[data-chrome="macos"] .notice-content span {
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .activity-caption.working {
+  color: var(--mac-accent-text);
+}
+:root[data-chrome="macos"] .activity-status.working {
+  background: var(--mac-accent);
+}
+:root[data-chrome="macos"] .activity-caption.blocked,
+:root[data-chrome="macos"] .activity-entry.blocked > svg {
+  color: var(--mac-yellow);
+}
+:root[data-chrome="macos"] .activity-status.blocked {
+  background: var(--mac-yellow);
+}
+:root[data-chrome="macos"] .activity-caption.error,
+:root[data-chrome="macos"] .activity-entry.error > svg {
+  color: var(--mac-red);
+}
+:root[data-chrome="macos"] .activity-status.error {
+  background: var(--mac-red);
+}
+:root[data-chrome="macos"] .activity-caption.done,
+:root[data-chrome="macos"] .activity-entry.done > svg {
+  color: var(--mac-green);
+}
+:root[data-chrome="macos"] .activity-status.done {
+  background: var(--mac-green);
+}
+:root[data-chrome="macos"] .extra-program-icon {
+  color: var(--mac-secondary);
+}
+:root[data-chrome="macos"] .activity-panel {
+  background: var(--mac-sidebar);
+  border-left: 1px solid var(--mac-sidebar-edge);
+}
+:root[data-chrome="macos"] .activity-entry {
+  border: 0;
+  border-radius: 6px;
+}
+:root[data-chrome="macos"] .activity-entry:hover {
+  background: var(--mac-hover);
+}
+:root[data-chrome="macos"] .error-toast {
+  background: var(--mac-menu);
+  color: var(--mac-label);
+  border: 0;
+  border-radius: 12px;
+  box-shadow: var(--mac-menu-shadow);
+  backdrop-filter: blur(24px) saturate(1.6);
+  font-size: 13px;
+}
+:root[data-chrome="macos"] .error-toast > svg:first-child {
+  color: var(--mac-red);
+}
+:root[data-chrome="macos"] .connection-banner {
+  color: var(--mac-label);
+  background: color-mix(in srgb, var(--mac-orange) 16%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--mac-orange) 30%, transparent);
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .connection-banner > svg {
+  color: var(--mac-orange);
+}
+:root[data-chrome="macos"] .connection-banner button {
+  color: var(--mac-label);
+  border: 0;
+  border-radius: 6px;
+  background: var(--mac-control);
+  box-shadow: 0 0 0 0.5px var(--mac-control-edge);
+}
+
+/* ---------- Empty and startup states ---------- */
+
+:root[data-chrome="macos"] .startup-state {
+  color: var(--mac-secondary);
+}
+:root[data-chrome="macos"] .startup-state h2,
+:root[data-chrome="macos"] .empty-state :is(h1, h2) {
+  color: var(--mac-label);
+  font-weight: 700;
+  letter-spacing: -0.4px;
+}
+:root[data-chrome="macos"] .startup-state p,
+:root[data-chrome="macos"] .empty-state,
+:root[data-chrome="macos"] .empty-state small {
+  color: var(--mac-secondary);
+}
+:root[data-chrome="macos"] .empty-state > svg,
+:root[data-chrome="macos"] .eyebrow {
+  color: var(--mac-accent-text);
+}
+:root[data-chrome="macos"] .eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+:root[data-chrome="macos"] .empty-terminal-icon {
+  color: #ffffff;
+  border: 0;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #4b4b4f, #1c1c1e);
+  box-shadow:
+    0 0 0 0.5px #00000066,
+    0 8px 24px #00000040,
+    inset 0 1px 0 #ffffff26;
+  transform: none;
+}
+:root[data-chrome="macos"] .empty-terminal-icon > svg {
+  transform: none;
+}
+:root[data-chrome="macos"] .empty-palette,
+:root[data-chrome="macos"] .empty-palette kbd {
+  color: var(--mac-secondary);
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .empty-palette:hover {
+  color: var(--mac-label);
+}
+
+/* ---------- Dialogs and forms ---------- */
+
+:root[data-chrome="macos"] .dialog-backdrop {
+  background: var(--mac-backdrop);
+  backdrop-filter: none;
+}
+:root[data-chrome="macos"] .dialog {
+  background: var(--mac-raised);
+  border: 0;
+  border-radius: 12px;
+  box-shadow: var(--mac-shadow);
+  color: var(--mac-label);
+}
+:root[data-chrome="macos"] .dialog-header h2 {
+  color: var(--mac-label);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+}
+:root[data-chrome="macos"] .dialog-header p {
+  color: var(--mac-secondary);
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .dialog-footer {
+  background: transparent;
+  border-top: 1px solid var(--mac-separator);
+}
+:root[data-chrome="macos"] .button {
+  min-height: 24px;
+  padding: 3px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--mac-control);
+  color: var(--mac-label);
+  font-size: 13px;
+  font-weight: 400;
+  box-shadow:
+    0 0 0 0.5px var(--mac-control-edge),
+    0 1px 1px #0000001a;
+}
+:root[data-chrome="macos"] .button:hover:not(:disabled) {
+  background: var(--mac-control-hover);
+  border-color: transparent;
+}
+:root[data-chrome="macos"] .button:active:not(:disabled) {
+  filter: brightness(0.92);
+}
+:root[data-chrome="macos"] .button-primary,
+:root[data-chrome="macos"] .button-primary:hover:not(:disabled) {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--mac-accent-fill) 88%, #ffffff),
+    var(--mac-accent-fill)
+  );
+  color: #ffffff;
+  box-shadow:
+    0 0 0 0.5px #00000033,
+    0 1px 1px #0000001f,
+    inset 0 0.5px 0 #ffffff40;
+}
+:root[data-chrome="macos"] .button-primary:hover:not(:disabled) {
+  background: var(--mac-accent-fill-hover);
+}
+:root[data-chrome="macos"] .button-danger,
+:root[data-chrome="macos"] .button-danger:hover:not(:disabled) {
+  color: var(--mac-red);
+}
+:root[data-chrome="macos"] .button-ghost {
+  background: transparent;
+  box-shadow: none;
+  color: var(--mac-accent-text);
+}
+:root[data-chrome="macos"] .button-ghost:hover:not(:disabled) {
+  background: var(--mac-hover);
+}
+:root[data-chrome="macos"] .text-button {
+  color: var(--mac-accent-text);
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .text-button:hover {
+  color: var(--mac-accent);
+}
+:root[data-chrome="macos"] .form-field {
+  color: var(--mac-label);
+  font-size: 13px;
+}
+:root[data-chrome="macos"]
+  :is(
+    .form-input,
+    .form-select,
+    .form-field input,
+    .form-field select,
+    .form-field textarea
+  ) {
+  min-height: 24px;
+  padding: 4px 8px;
+  background: var(--mac-field);
+  border: 1px solid var(--mac-field-edge);
+  border-radius: 6px;
+  color: var(--mac-label);
+  font-size: 13px;
+}
+:root[data-chrome="macos"]
+  :is(.form-select, select.form-select, .form-field select) {
+  background: var(--mac-control);
+  border-color: var(--mac-control-edge);
+  box-shadow: 0 1px 1px #0000001a;
+}
+:root[data-chrome="macos"] .form-input::placeholder,
+:root[data-chrome="macos"] .form-field input::placeholder {
+  color: var(--mac-tertiary);
+}
+:root[data-chrome="macos"] .form-hint {
+  color: var(--mac-secondary);
+  font-size: 11px;
+}
+:root[data-chrome="macos"] .form-error {
+  color: var(--mac-red);
+  background: color-mix(in srgb, var(--mac-red) 10%, transparent);
+  border-color: color-mix(in srgb, var(--mac-red) 30%, transparent);
+  font-size: 12px;
+}
+:root[data-chrome="macos"]
+  :is(input[type="checkbox"], input[type="radio"], input[type="range"]) {
+  accent-color: var(--mac-accent);
+}
+:root[data-chrome="macos"] .settings-section,
+:root[data-chrome="macos"] .settings-section-label {
+  border-top-color: var(--mac-separator);
+}
+:root[data-chrome="macos"] .settings-section h3,
+:root[data-chrome="macos"] .settings-section-label,
+:root[data-chrome="macos"] .preferences-section h3 {
+  color: var(--mac-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+:root[data-chrome="macos"] .settings-row {
+  color: var(--mac-label);
+  font-size: 13px;
+}
+:root[data-chrome="macos"] .shortcut-grid {
+  color: var(--mac-secondary);
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .shortcut-grid kbd {
+  color: var(--mac-label);
+}
+:root[data-chrome="macos"] .settings-note {
+  color: var(--mac-secondary);
+  background: var(--mac-hover);
+  border: 0;
+  border-radius: 8px;
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .settings-host {
+  color: var(--mac-secondary);
+  background: var(--mac-field);
+  border: 1px solid var(--mac-separator);
+  border-radius: 8px;
+}
+:root[data-chrome="macos"] .settings-host strong {
+  color: var(--mac-label);
+  font-size: 13px;
+}
+:root[data-chrome="macos"] .settings-host span {
+  color: var(--mac-secondary);
+  font-size: 11px;
+}
+
+/* Settings window: a source list on the left, grouped rows on the right. */
+:root[data-chrome="macos"] .preferences-tabs {
+  gap: 1px;
+  padding: 4px 10px 12px;
+  border-right: 1px solid var(--mac-separator);
+}
+:root[data-chrome="macos"] .preferences-tabs button {
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--mac-label);
+  font-size: 13px;
+}
+:root[data-chrome="macos"] .preferences-tabs button:hover {
+  background: var(--mac-hover);
+}
+:root[data-chrome="macos"] .preferences-tabs button.is-active,
+:root[data-chrome="macos"] .preferences-tabs button.is-active:hover {
+  background: var(--mac-accent-fill);
+  color: #ffffff;
+}
+:root[data-chrome="macos"] .preferences-tabs button svg {
+  color: var(--mac-accent-text);
+}
+:root[data-chrome="macos"] .preferences-tabs button.is-active svg {
+  color: inherit;
+}
+:root[data-chrome="macos"] .preferences-section + .preferences-section {
+  border-top-color: var(--mac-separator);
+}
+:root[data-chrome="macos"] .preferences-section .settings-row small {
+  color: var(--mac-secondary);
+  font-size: 11px;
+}
+:root[data-chrome="macos"] .preferences-bottom {
+  background: transparent;
+  border-top-color: var(--mac-separator);
+}
+:root[data-chrome="macos"] .preferences-section .toggle-row input {
+  width: 26px;
+  height: 15px;
+  border-radius: 8px;
+  background: var(--mac-switch-off);
+}
+:root[data-chrome="macos"] .toggle-row input::before {
+  width: 13px;
+  height: 13px;
+  top: 1px;
+  left: 1px;
+  background: #ffffff;
+  box-shadow:
+    0 0 0 0.5px #00000026,
+    0 1px 2px #00000040;
+}
+:root[data-chrome="macos"] .toggle-row input:checked {
+  background: var(--mac-accent);
+}
+:root[data-chrome="macos"] .toggle-row input:checked::before {
+  transform: translateX(11px);
+  background: #ffffff;
+}
+:root[data-chrome="macos"] .range-control output {
+  color: var(--mac-secondary);
+  font-size: 12px;
+}
+:root[data-chrome="macos"] .font-preview,
+:root[data-chrome="macos"] :is(.settings-output, .diagnostic-output) {
+  background: var(--mac-window);
+  border-color: var(--mac-separator);
+  border-radius: 8px;
+}
+:root[data-chrome="macos"] .theme-swatches {
+  border-color: var(--mac-separator);
+}
+:root[data-chrome="macos"] .directory-entries > button {
+  font-size: 13px;
+  color: var(--mac-label);
+}
+:root[data-chrome="macos"] .directory-entries > button:hover {
+  background: var(--mac-hover);
+}
+:root[data-chrome="macos"] .directory-entries > button.is-selected {
+  background: var(--mac-accent-fill);
+  border-color: transparent;
+  color: #ffffff;
+}
+:root[data-chrome="macos"] .directory-entries > button svg {
+  color: var(--mac-accent-text);
+}
+:root[data-chrome="macos"] .directory-entries > button.is-selected svg {
+  color: inherit;
+}
+
+/* Command palette, styled after Spotlight. */
+:root[data-chrome="macos"] .command-dialog {
+  border-radius: 14px;
+  background: var(--mac-menu);
+  backdrop-filter: blur(30px) saturate(1.6);
+}
+:root[data-chrome="macos"] .palette-search {
+  height: 52px;
+  padding: 0 16px;
+  gap: 10px;
+  color: var(--mac-secondary);
+  border-bottom-color: var(--mac-separator);
+}
+:root[data-chrome="macos"] .palette-search input {
+  color: var(--mac-label);
+  font-size: 20px;
+  font-weight: 300;
+  letter-spacing: -0.3px;
+}
+:root[data-chrome="macos"] .palette-search input:focus {
+  box-shadow: none;
+}
+:root[data-chrome="macos"] .palette-search input::placeholder {
+  color: var(--mac-tertiary);
+}
+:root[data-chrome="macos"] .palette-search kbd {
+  border-color: var(--mac-separator);
+}
+:root[data-chrome="macos"] .palette-results {
+  padding: 6px;
+}
+:root[data-chrome="macos"] .palette-item {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--mac-label);
+}
+:root[data-chrome="macos"] .palette-item.is-selected {
+  background: var(--mac-accent-fill);
+  color: #ffffff;
+}
+:root[data-chrome="macos"] .palette-item-icon {
+  color: var(--mac-accent-text);
+}
+:root[data-chrome="macos"]
+  .palette-item.is-selected
+  :is(.palette-item-icon, .palette-item-content small, kbd, .palette-enter) {
+  color: #ffffffd9;
+}
+:root[data-chrome="macos"] .palette-item-content {
+  font-size: 13px;
+}
+:root[data-chrome="macos"] .palette-item-content small,
+:root[data-chrome="macos"] .palette-item kbd,
+:root[data-chrome="macos"] .palette-enter,
+:root[data-chrome="macos"] .palette-empty {
+  color: var(--mac-secondary);
+  font-size: 11px;
+}
+:root[data-chrome="macos"] .command-dialog .dialog-footer {
+  color: var(--mac-secondary);
+  font-size: 11px;
+}
+
+/* Block inspector and other terminal-adjacent surfaces. */
+:root[data-chrome="macos"] .block-inspector-heading {
+  color: var(--mac-accent-text);
+}
+:root[data-chrome="macos"] :is(.block-schema, .block-result) pre {
+  background: var(--mac-hover);
+  border-color: var(--mac-separator);
+  border-radius: 8px;
+}
+:root[data-chrome="macos"] .block-plugin-badge {
+  border-color: var(--mac-separator);
+}
+
+/* Default shell artwork follows the accent instead of Graphite's green box. */
+:root[data-chrome="macos"]
+  .program-icon.shell-artwork:not(.shell-theme, .shell-accent) {
+  border-color: transparent;
+  background: transparent;
+  color: var(--mac-accent-text);
+}
+:root[data-chrome="macos"]
+  .window-item.is-selected
+  .program-icon.shell-artwork {
+  border-color: transparent;
+  background: transparent;
+  color: inherit;
+}

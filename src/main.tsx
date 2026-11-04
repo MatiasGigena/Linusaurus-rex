@@ -4,5 +4,6 @@ import App from './App';
 import './styles.css';
 import './advanced.css';
 import './dialogs.css';
+import './macos.css';
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);

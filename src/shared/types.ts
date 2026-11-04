@@ -89,7 +89,7 @@ export interface Settings {
   sidebarCollapsed: boolean;
   lastSelection?: Selection;
   interfaceZoom: number;
-  theme: "graphite" | "midnight" | "light" | "system";
+  theme: "macos" | "macos-light" | "graphite" | "midnight" | "light" | "system";
   customTheme?: Record<string, string>;
   customLightTheme?: Record<string, string>;
   customDarkTheme?: Record<string, string>;
@@ -135,8 +135,8 @@ export interface Settings {
   smoothScrollDuration: number;
   preferGeneratedTitles: boolean;
   startupCommand: string;
-  lightTheme: "light" | "graphite" | "midnight";
-  darkTheme: "light" | "graphite" | "midnight";
+  lightTheme: "macos-light" | "macos" | "light" | "graphite" | "midnight";
+  darkTheme: "macos" | "macos-light" | "light" | "graphite" | "midnight";
   useExtendedPalette: boolean;
   forceCursorStyle: boolean;
   cursorBlinkInterval: number;
@@ -637,7 +637,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fontFamily: '"JetBrains Mono", "DejaVu Sans Mono", monospace',
   sidebarCollapsed: false,
   interfaceZoom: 1,
-  theme: "graphite",
+  theme: "system",
   appearance: "system",
   cursorStyle: "block",
   cursorBlink: true,
@@ -730,8 +730,8 @@ export const DEFAULT_SETTINGS: Settings = {
   selectionBackground: "#61757480",
   showWindowOnLaunch: true,
   developerMode: false,
-  lightTheme: "light",
-  darkTheme: "graphite",
+  lightTheme: "macos-light",
+  darkTheme: "macos",
   useExtendedPalette: true,
   forceCursorStyle: false,
   cursorBlinkInterval: 500,

@@ -110,7 +110,7 @@ export function validateSettings(value: unknown): Settings {
     inactiveWindowFade: [0, 0.8],
   };
   const enums: Record<string, string[]> = {
-    theme: ["graphite", "midnight", "light", "system"],
+    theme: ["macos", "macos-light", "graphite", "midnight", "light", "system"],
     appearance: ["system", "dark", "light"],
     cursorStyle: ["block", "underline", "bar"],
     tabStyle: ["left", "right", "top"],
@@ -118,8 +118,8 @@ export function validateSettings(value: unknown): Settings {
     paneStyle: ["comfortable", "compact"],
     sidebarGesture: ["swipe", "alt-swipe", "off"],
     animation: ["snappy", "natural", "off"],
-    lightTheme: ["light", "graphite", "midnight"],
-    darkTheme: ["light", "graphite", "midnight"],
+    lightTheme: ["macos-light", "macos", "light", "graphite", "midnight"],
+    darkTheme: ["macos", "macos-light", "light", "graphite", "midnight"],
     fontStyle: ["normal", "italic", "oblique"],
     appLinks: ["ask", "always", "never"],
     shellIconTheme: ["default", "theme", "accent"],

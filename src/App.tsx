@@ -153,6 +153,8 @@ export default function App() {
   const [report, setReport] = useState<{ title: string; body: string }>();
   const [menu, setMenu] = useState<Menu>();
   const [activityOpen, setActivityOpen] = useState(false);
+  // The resolved interface theme, e.g. "macos" when "Follow system" picks the macOS dark palette.
+  const [interfaceTheme, setInterfaceTheme] = useState<string>();
   const [activityOnly, setActivityOnly] = useState(false);
   const [activityGroup, setActivityGroup] = useState<"session" | "priority">(
     "session",
@@ -277,10 +279,18 @@ export default function App() {
             : settings.darkTheme
           : settings.theme;
       document.documentElement.dataset.theme = theme;
+      document.documentElement.dataset.chrome = theme.startsWith("macos")
+        ? "macos"
+        : "default";
+      setInterfaceTheme(theme);
       document.documentElement.dataset.animation = settings.animation;
+      // The stock highlight is tuned for Graphite; macOS uses its accent instead.
       document.documentElement.style.setProperty(
         "--active-pane-color",
-        settings.highlightColor,
+        theme.startsWith("macos") &&
+          settings.highlightColor === DEFAULT_SETTINGS.highlightColor
+          ? "var(--mac-accent)"
+          : settings.highlightColor,
       );
       document.documentElement.style.setProperty(
         "--active-pane-opacity",
@@ -1377,11 +1387,19 @@ export default function App() {
         }
         return;
       }
-      case "client.appearance.switch_mode":
+      case "client.appearance.switch_mode": {
+        const current =
+          settings.theme === "system" ? interfaceTheme : settings.theme;
+        const opposite: Partial<Record<string, Settings["theme"]>> = {
+          macos: "macos-light",
+          "macos-light": "macos",
+          light: "graphite",
+        };
         return ws.saveSettings({
           ...settings,
-          theme: settings.theme === "light" ? "graphite" : "light",
+          theme: opposite[current ?? ""] ?? "light",
         });
+      }
       case "client.config.copy_path": {
         const info = await window.rex.request("configInfo", { hostId });
         return window.rex.writeClipboard(info.path);
@@ -2010,6 +2028,11 @@ export default function App() {
         <p>{error}</p>
       </div>
     );
+  // macOS chrome puts traffic lights at the window's top-left: in the sidebar
+  // when it is shown on the left, otherwise at the start of the toolbar.
+  const macChrome = interfaceTheme?.startsWith("macos") ?? false;
+  const trafficLightsInSidebar =
+    macChrome && !settings.sidebarCollapsed && settings.tabStyle !== "right";
   return (
     <div
       className={`app-shell tabs-${settings.tabStyle} pane-${settings.paneStyle}`}
@@ -2071,6 +2094,9 @@ export default function App() {
           })
         }
         onReorderWindow={reorder}
+        onWindowControl={
+          trafficLightsInSidebar ? window.rex.windowControl : undefined
+        }
       />
       <main className="workspace">
         <h1 className="sr-only">Linusaurus Rex workspace</h1>
@@ -2101,6 +2127,13 @@ export default function App() {
           onSettings={() => setSettingsTab("appearance")}
           onRenameWindow={() => dispatch("client.tab.rename")}
           onWindowControl={window.rex.windowControl}
+          windowControlsPlacement={
+            !macChrome
+              ? "trailing"
+              : trafficLightsInSidebar
+                ? "none"
+                : "leading"
+          }
         />
         {settings.tabStyle === "top" && activeWindow && selection && view && (
           <TabStrip
