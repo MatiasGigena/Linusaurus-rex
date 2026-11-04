@@ -1,6 +1,6 @@
 import type { Terminal } from "@xterm/xterm";
 import type { TerminalFrame } from "../shared/types";
-import type { GraphicsPart } from "./kitty";
+import type { GraphicsPart } from "./kitty-protocol";
 import type { TerminalRuntime } from "./runtime";
 
 // Frames contain decoded strings, so this bound counts UTF-16 code units.

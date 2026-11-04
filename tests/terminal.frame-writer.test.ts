@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { TerminalFrameWriter } from "../src/terminal/frame-writer.js";
 import { TerminalBoundary } from "../src/terminal/boundary.js";
-import { KittyFramer } from "../src/terminal/kitty.js";
+import { KittyFramer } from "../src/terminal/kitty-protocol.js";
 import type { TerminalRuntime } from "../src/terminal/runtime.js";
 
 function harness(command: (data: string) => Promise<string> = async () => "") {
