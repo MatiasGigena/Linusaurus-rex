@@ -1237,6 +1237,78 @@
 :root[data-chrome="macos"] .sidebar-filter input::placeholder {
   color: var(--mac-secondary);
 }
+:root[data-chrome="macos"] .sidebar-bottom-compact {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  margin: 0;
+  padding: 0 10px;
+  border-top: 1px solid var(--mac-separator);
+}
+/* "New session" and its menu read as one split button. */
+:root[data-chrome="macos"] .new-session-split {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-right: auto;
+  border-radius: 6px;
+}
+:root[data-chrome="macos"] .new-session-split:hover {
+  background: var(--mac-hover);
+}
+:root[data-chrome="macos"] .sidebar-bottom-compact .new-workspace-button {
+  width: auto;
+  min-width: 0;
+  height: 28px;
+  gap: 6px;
+  padding: 0 6px 0 8px;
+  border: 0;
+  border-radius: 6px 0 0 6px;
+  color: var(--mac-label);
+  font-size: 13px;
+}
+:root[data-chrome="macos"] .sidebar-bottom-compact .new-workspace-button:hover {
+  color: var(--mac-label);
+  background: var(--mac-hover);
+}
+:root[data-chrome="macos"] .new-session-more {
+  width: 22px;
+  height: 28px;
+  border-radius: 0 6px 6px 0;
+}
+:root[data-chrome="macos"] .new-session-split:hover .new-session-more {
+  box-shadow: inset 1px 0 0 var(--mac-separator);
+}
+:root[data-chrome="macos"] .sidebar-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--mac-hover);
+  color: var(--mac-label);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+:root[data-chrome="macos"] .sidebar-activity.is-active {
+  background: var(--mac-accent-fill);
+  color: #ffffff;
+}
+:root[data-chrome="macos"] .sidebar-activity.is-active .activity-status {
+  background: #ffffff;
+}
+:root[data-chrome="macos"] .sidebar-bottom-compact .server-status {
+  gap: 6px;
+  color: var(--mac-orange);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 /* Toolbar: a title, a quiet subtitle, and the few actions people use. */
 :root[data-chrome="macos"] .toolbar-terminal-icon,
 :root[data-chrome="macos"] .toolbar-divider {
@@ -1304,4 +1376,16 @@
 }
 :root[data-chrome="macos"] .toolbar-subtitle {
   grid-area: 2 / 1;
+}
+
+/* macOS menus grow to fit their longest item instead of wrapping. */
+:root[data-chrome="macos"] .context-menu {
+  width: max-content;
+  min-width: 200px;
+  max-width: min(360px, calc(100vw - 16px));
+}
+:root[data-chrome="macos"] .context-menu > button span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

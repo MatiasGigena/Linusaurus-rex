@@ -2097,6 +2097,8 @@ export default function App() {
         onWindowControl={
           trafficLightsInSidebar ? window.rex.windowControl : undefined
         }
+        compactFooter={macChrome}
+        activityCount={allActivities.length}
       />
       <main className="workspace">
         <h1 className="sr-only">Linusaurus Rex workspace</h1>
