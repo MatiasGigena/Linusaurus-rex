@@ -85,7 +85,7 @@ type Pending = {
 };
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
-async function processStart(pid: number): Promise<string | undefined> {
+async function readProcessStartTicks(pid: number): Promise<string | undefined> {
   try {
     const text = await readFile(`/proc/${pid}/stat`, "utf8"),
       start = text.slice(text.lastIndexOf(")") + 2).split(" ")[19];
@@ -379,7 +379,10 @@ export class SystemdUserServices {
               text,
             );
         if (!match || Number(match[1]) <= 1) continue;
-        if (!match[3] && (await processStart(Number(match[1]))) === match[2])
+        if (
+          !match[3] &&
+          (await readProcessStartTicks(Number(match[1]))) === match[2]
+        )
           continue;
         const current = await lstat(path).catch(() => undefined);
         if (
@@ -412,7 +415,7 @@ export class SystemdUserServices {
     }
   }
   private async guard(unit: ServiceSnapshot) {
-    const owner = await processStart(process.pid);
+    const owner = await readProcessStartTicks(process.pid);
     if (!owner)
       throw new Error("The desktop process identity could not be read.");
     const directory = join(
@@ -653,9 +656,28 @@ export class SystemdUserServices {
         );
       return effective;
     } catch (error) {
-      if (before) await write(pending.preview.path, before);
-      else await unlink(pending.preview.path);
-      await this.run("systemctl", ["--user", "daemon-reload"]);
+      let fileRestored = false;
+      try {
+        if (before) await write(pending.preview.path, before);
+        else await unlink(pending.preview.path);
+        fileRestored = true;
+        await this.run("systemctl", ["--user", "daemon-reload"]);
+      } catch (rollbackError) {
+        const primaryMessage =
+          error instanceof Error ? error.message : String(error);
+        const rollbackMessage =
+          rollbackError instanceof Error
+            ? rollbackError.message
+            : String(rollbackError);
+        const status = fileRestored
+          ? `The ${before ? "previous drop-in was restored" : "new drop-in was removed"}, but the service manager reload failed`
+          : "The file rollback failed; service manager reload was not attempted";
+        throw new AggregateError(
+          [error, rollbackError],
+          `Applying server origins failed: ${primaryMessage}. ${status}: ${rollbackMessage}`,
+          { cause: error },
+        );
+      }
       throw error;
     }
   }
