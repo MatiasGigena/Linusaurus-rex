@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import { pickDirectoryPath } from "../src/workspace/actions/directoryActions";
-import { createHostSaver } from "../src/workspace/actions/hostActions";
+import {
+  createHostSaver,
+  HostSaveIncompleteError,
+} from "../src/workspace/actions/hostActions";
 import { createServerActions } from "../src/workspace/actions/serverActions";
 import { terminalCommands } from "../src/terminal/commands";
 import { WorkspaceDialogController } from "../src/workspace/dialogs";
@@ -184,7 +187,11 @@ test("host saving configures the host before credentials and reconnects only aft
       timeline.push("reconnect");
     },
   );
-  await assert.rejects(save(host, credentials), (error) => error === failure);
+  await assert.rejects(
+    save(host, credentials),
+    (error) =>
+      error instanceof HostSaveIncompleteError && error.cause === failure,
+  );
   assert.deepEqual(timeline, ["settings", "credentials"]);
   fail = false;
   expectedHost = { ...host, label: "Renamed remote" };
