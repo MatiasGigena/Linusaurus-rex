@@ -68,12 +68,15 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
         activeHost?.id ||
         "local",
     );
+    const selectionMatchesHost = selection?.hostId === hostId;
     const sessionId = String(
       args.session_id ||
         (event && "sessionId" in event ? event.sessionId : undefined) ||
-        selection?.sessionId ||
+        (selectionMatchesHost ? selection?.sessionId : undefined) ||
         "",
     );
+    const selectionMatchesSession =
+      selectionMatchesHost && selection?.sessionId === sessionId;
     const currentView = views[viewKey(hostId, sessionId)];
     const requestedBlock =
       args.block_id ||
@@ -85,16 +88,19 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
           )
         : undefined) ||
       currentView?.windows.find(
-        (window) => window.id === String(args.window_id || selection?.windowId),
+        (window) =>
+          window.id ===
+          String(
+            args.window_id ||
+              (selectionMatchesSession ? selection?.windowId : undefined),
+          ),
       ) ||
       currentView?.windows.find(
         (window) => window.id === currentView.activeWindowId,
       ) ||
       currentView?.windows[0];
     const displayedContext =
-      selection?.hostId === hostId &&
-      selection.sessionId === sessionId &&
-      selection.windowId === currentWindow?.id;
+      selectionMatchesSession && selection?.windowId === currentWindow?.id;
     const blockId = String(
       args.block_id ||
         (event && "blockId" in event ? event.blockId : undefined) ||
