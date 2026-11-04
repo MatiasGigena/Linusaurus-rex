@@ -607,6 +607,89 @@ test(
             ) <= 12,
             "Bilinear-scaled placeholder tiles must preserve their quadrant color",
           );
+      // A nonzero image row is invalid for this one-cell placement. The next
+      // unmarked glyph must start at row/column zero after an ordinary cell or
+      // a screen-row boundary, rather than inheriting that invalid image row.
+      await emit(
+        "\x1b_Ga=t,f=24,s=1,v=1,i=501;/wD/\x1b\\\x1b_Ga=p,U=1,i=501,p=1,c=1,r=1;\x1b\\",
+      );
+      const resetColumns = await page.evaluate(
+        () => (window as any).fixture.runtime().terminal.cols,
+      );
+      await emit(
+        "\x1b[12;1H\x1b[38;2;0;1;245m\x1b[58;2;0;0;1m" +
+          placeholder +
+          one +
+          zero +
+          "X" +
+          placeholder +
+          `\x1b[12;${resetColumns}H` +
+          placeholder +
+          one +
+          zero +
+          "\x1b[13;1H" +
+          placeholder +
+          "\x1b[0m",
+      );
+      await page.waitForFunction(() => {
+        const buffer = (window as any).fixture.runtime().terminal.buffer.active;
+        return (
+          buffer.getLine(11)?.getCell(1)?.getChars() === "X" &&
+          buffer.getLine(12)?.getCell(0)?.getChars().startsWith("\u{10eeee}")
+        );
+      });
+      const resetPixels = await page.evaluate(async () => {
+        const term = (window as any).fixture.runtime().terminal;
+        await new Promise<void>((resolve) => term.write("", resolve));
+        await new Promise<void>((resolve) => {
+          const listener = term.onRender(() => {
+            listener.dispose();
+            resolve();
+          });
+          term.refresh(0, term.rows - 1);
+        });
+        const screen = document.querySelector<HTMLElement>(".xterm-screen")!;
+        const canvas = document.querySelector<HTMLCanvasElement>(
+          'canvas[data-kitty-virtual="true"]',
+        )!;
+        const context = canvas.getContext("2d")!;
+        const cw = screen.clientWidth / term.cols,
+          ch = screen.clientHeight / term.rows;
+        return [
+          [0, 11],
+          [1, 11],
+          [2, 11],
+          [0, 12],
+        ].map(([x, y]) =>
+          Array.from(
+            context.getImageData(
+              Math.floor((x + 0.5) * cw),
+              Math.floor((y + 0.5) * ch),
+              1,
+              1,
+            ).data,
+          ),
+        );
+      });
+      assert.deepEqual(
+        resetPixels.slice(0, 2),
+        [
+          [0, 0, 0, 0],
+          [0, 0, 0, 0],
+        ],
+        "an invalid placeholder and ordinary text must not paint an image",
+      );
+      assert.deepEqual(
+        resetPixels[2],
+        [255, 0, 255, 255],
+        "an ordinary-cell gap must reset placeholder continuation",
+      );
+      assert.deepEqual(
+        resetPixels[3],
+        [255, 0, 255, 255],
+        "a new screen row must reset placeholder continuation",
+      );
+      await emit("\x1b_Ga=d,d=I,i=501;\x1b\\");
       await emit(
         "\x1b_Ga=T,f=24,s=1,v=1,i=402,p=1,c=1,r=1,P=401,Q=9,H=3,V=1;////\x1b\\",
       );
