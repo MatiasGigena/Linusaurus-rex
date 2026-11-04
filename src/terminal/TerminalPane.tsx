@@ -9,9 +9,10 @@ import { registerTerminalInput, type TerminalMenu } from './input';
 import { terminalOptions, terminalServerTheme } from './themes';
 import { applicationLinks, linkProtocol } from './links';
 import { TerminalVisuals } from './visuals';
-import { terminalCommands, type TerminalCommandCompletion } from './commands';
+import { terminalCommands, type TerminalCommandCompletion, type TerminalCommandRequest } from './commands';
 import { TerminalFrameWriter } from './frame-writer';
 import { TerminalCommandSession, terminalErrorMessage as displayError } from './command-session';
+import { registerTerminalViewport } from './viewport';
 import '@xterm/xterm/css/xterm.css';
 import './terminal.css';
 
@@ -245,11 +246,13 @@ function createTerminalCommandExecutor(bindings: TerminalCommandBindings) {
     }
   };
   const execute = (
-    command: string,
+    command: TerminalCommandRequest,
     signal?: AbortSignal,
     completion: TerminalCommandCompletion = "settled",
   ) => session.executeCommand(
-    generation => handleCommand(command, generation, signal, completion),
+    generation => typeof command === 'string'
+      ? handleCommand(command, generation, signal, completion)
+      : pasteCommand(command.text, generation, signal, completion),
     signal,
   );
   const paste = (text?: string) => session.executeCommand(
@@ -264,6 +267,7 @@ export function TerminalPane(props: TerminalPaneProps) {
   const container = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<TerminalRuntime | undefined>(undefined);
   const visualsRef = useRef<TerminalVisuals | undefined>(undefined);
+  const viewportRef = useRef<ReturnType<typeof registerTerminalViewport> | undefined>(undefined);
   const callbacks = useRef(props); callbacks.current = props;
   const settingsRef = useRef(settings); settingsRef.current = settings;
   const searchInput = useRef<HTMLInputElement>(null);
@@ -292,30 +296,18 @@ export function TerminalPane(props: TerminalPaneProps) {
     const visuals = new TerminalVisuals(term, runtime.element, hostElement, settingsRef.current);
     visualsRef.current = visuals;
     const session = new TerminalCommandSession({ visible: isVisible, connected: setConnected, error: setError });
+    const viewport = registerTerminalViewport({
+      runtime, hostElement, ref: { hostId, sessionId, blockId },
+      settings: () => settingsRef.current,
+      visible: isVisible,
+      onError: failure => setError(`Resize failed: ${displayError(failure)}`),
+    });
+    viewportRef.current = viewport;
     let sawFrame = false;
-    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    let resizeAnimation = 0;
-    let lastSize = '';
     const ref = { hostId, sessionId, blockId };
     const subscriptionId = crypto.randomUUID();
     const enqueue = (send: () => Promise<unknown>) => session.enqueue(send);
-    const sendSize = () => {
-      if (session.isDisposed || !isVisible() || !document.hasFocus() || !hostElement.isConnected || hostElement.clientWidth === 0 || hostElement.clientHeight === 0) return;
-      if (settingsRef.current.smoothResize) runtime.fit.fit();
-      clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => {
-        if (session.isDisposed || !isVisible() || !document.hasFocus()) return;
-        if (!settingsRef.current.smoothResize) runtime.fit.fit();
-        const size = `${term.cols}/${term.rows}`;
-        if (size === lastSize) return;
-        lastSize = size;
-        void window.rex.request('resize', { ...ref, cols: term.cols, rows: term.rows }).catch((failure: unknown) => {
-          lastSize = '';
-          if (!session.isDisposed) setError(`Resize failed: ${displayError(failure)}`);
-        });
-      }, 100);
-    };
     const startSubscription = () => {
       if (!session.isDisposed) void window.rex.request('subscribe', { ...ref, subscriptionId }).catch(session.fail);
     };
@@ -325,11 +317,7 @@ export function TerminalPane(props: TerminalPaneProps) {
         if (!session.isDisposed) setError(`${source === 'image' ? 'Image: ' : ''}${displayError(failure)}`);
       },
       complete: (frame, frameGeneration) => {
-        const snapshot = !frame.kind || frame.kind === 'snapshot';
-        if (snapshot || frame.kind === 'resize') {
-          if (snapshot) lastSize = '';
-          resizeAnimation = requestAnimationFrame(sendSize);
-        }
+        viewport.frameComplete(frame);
         if (frame.kind !== 'resize') session.frameRendered(frameGeneration, writer.hasPendingSnapshot);
       },
     });
@@ -408,11 +396,6 @@ export function TerminalPane(props: TerminalPaneProps) {
     });
     const disposeLinks = registerTerminalLinks(runtime, () => settingsRef.current, session.reportError);
     const resultsListener = runtime.search.onDidChangeResults((results) => { if (!session.isDisposed) setSearchResults(results); });
-    const observer = new ResizeObserver(sendSize); observer.observe(hostElement);
-    const visibility = () => { if (!document.hidden && isVisible()) { lastSize = ''; sendSize(); } };
-    document.addEventListener('visibilitychange', visibility);
-    const windowFocus = () => { if (isVisible()) { lastSize = ''; sendSize(); } };
-    window.addEventListener('focus', windowFocus);
     const colorScheme = matchMedia('(prefers-color-scheme: light)');
     const updateColorScheme = () => {
       if (settingsRef.current.theme !== 'system') return;
@@ -426,23 +409,17 @@ export function TerminalPane(props: TerminalPaneProps) {
       if (!show) {
         session.hide();
         input.reset();
-        clearTimeout(resizeTimer);
-        void window.rex.request('releaseViewport', ref).catch(() => {});
-      } else {
-        lastSize = '';
-        sendSize();
-        commandRegistration.activate();
       }
+      viewport.visibilityChanged(show);
+      if (show) commandRegistration.activate();
     };
     runtime.visibilityChanged = visibilityChanged;
-    sendSize();
+    viewport.start();
     startSubscription();
     return () => {
       session.dispose();
-      clearTimeout(resizeTimer);
       clearTimeout(retryTimer);
-      cancelAnimationFrame(resizeAnimation);
-      observer.disconnect();
+      viewport.dispose();
       unsubscribe();
       cursorStyleListener.dispose();
       input.dispose();
@@ -452,12 +429,11 @@ export function TerminalPane(props: TerminalPaneProps) {
       resultsListener.dispose();
       commandRegistration.dispose();
       writer.dispose();
-      document.removeEventListener('visibilitychange', visibility);
-      window.removeEventListener('focus', windowFocus);
       colorScheme.removeEventListener('change', updateColorScheme);
       void window.rex.request('unsubscribe', { subscriptionId }).catch(() => {});
       releaseTerminal(runtime);
       if (runtimeRef.current === runtime) runtimeRef.current = undefined;
+      if (viewportRef.current === viewport) viewportRef.current = undefined;
       if (runtime.visibilityChanged === visibilityChanged) runtime.visibilityChanged = undefined;
       visuals.dispose();
       if (visualsRef.current === visuals) visualsRef.current = undefined;
@@ -484,10 +460,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     if (!settings.ligatures && runtime.terminal.element) runtime.terminal.element.style.fontFeatureSettings = '"calt" off, "liga" off';
     runtime.cursorResetPending = settings.forceCursorStyle;
     if (settings.forceCursorStyle) runtime.requestCursorReset?.();
-    if (visible && document.hasFocus()) {
-      runtime.fit.fit();
-      void window.rex.request('resize', { hostId, sessionId, blockId, cols: runtime.terminal.cols, rows: runtime.terminal.rows }).catch((failure: unknown) => setError(displayError(failure)));
-    }
+    viewportRef.current?.settingsChanged();
     if (visible) synchronizeTheme(runtime, { hostId, sessionId, blockId }, settings, setError);
   }, [settings, hostId, sessionId, blockId, visible]);
   useEffect(() => {

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { TerminalCommandBroker } from "../src/terminal/commands.js";
+import {
+  TerminalCommandBroker,
+  type TerminalCommandRequest,
+} from "../src/terminal/commands.js";
 import type { TerminalRef } from "../src/shared/types.js";
 
 const target: TerminalRef = {
@@ -9,7 +12,10 @@ const target: TerminalRef = {
   blockId: "pane",
 };
 const commands = (
-  execute: (command: string, signal: AbortSignal) => Promise<void>,
+  execute: (
+    command: TerminalCommandRequest,
+    signal: AbortSignal,
+  ) => Promise<void>,
 ) => ({
   available: () => true,
   focused: () => true,
@@ -37,6 +43,7 @@ test("command handoff waits for full target registration and visibility, accepti
   let visible = false;
   const registration = broker.register(target, {
     ...commands(async (command) => {
+      assert.ok(typeof command === "string");
       received.push(command);
     }),
     available: () => visible,
@@ -159,6 +166,7 @@ test("reentrant activation cannot accept another queued command twice", async ()
   const received: string[] = [];
   const registration = broker.register(target, {
     ...commands(async (command) => {
+      assert.ok(typeof command === "string");
       received.push(command);
       if (command === "first") registration.activate();
     }),
@@ -186,6 +194,7 @@ test("untargeted commands require the visible focused pane", async () => {
   const focused = broker.register(
     { ...target, blockId: "focused" },
     commands(async (command) => {
+      assert.ok(typeof command === "string");
       received.push(command);
     }),
   );
@@ -193,4 +202,44 @@ test("untargeted commands require the visible focused pane", async () => {
   assert.deepEqual(received, ["copy"]);
   hidden.dispose();
   focused.dispose();
+});
+
+test("explicit paste handoff snapshots text, targets the full pane identity and settles only after execution", async () => {
+  const broker = new TerminalCommandBroker();
+  const request = { command: "paste" as const, text: "'/work/quoted path'" };
+  const received: TerminalCommandRequest[] = [];
+  const pending = broker.dispatch(request, target);
+  request.text = "changed after handoff";
+  let settled = false;
+  const observed = pending.then(() => {
+    settled = true;
+  });
+  let finish!: () => void;
+  const wrong = broker.register(
+    { ...target, blockId: "other-pane" },
+    commands(async () => {
+      throw new Error("Wrong pane accepted explicit paste");
+    }),
+  );
+  const registration = broker.register(target, {
+    available: () => true,
+    focused: () => false,
+    onError: () => {},
+    execute: async (command, _signal, completion) => {
+      assert.equal(completion, "settled");
+      received.push(command);
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    },
+  });
+  assert.deepEqual(received, [
+    { command: "paste", text: "'/work/quoted path'" },
+  ]);
+  assert.equal(settled, false);
+  finish();
+  await observed;
+  assert.equal(settled, true);
+  registration.dispose();
+  wrong.dispose();
 });

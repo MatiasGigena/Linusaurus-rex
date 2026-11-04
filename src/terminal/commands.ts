@@ -2,11 +2,13 @@ import type { TerminalRef } from "../shared/types";
 
 const HANDOFF_TIMEOUT_MS = 10_000;
 export type TerminalCommandCompletion = "settled" | "queued";
+export type TerminalCommandRequest =
+  string | { command: "paste"; text: string };
 interface PaneCommands {
   available(): boolean;
   focused(): boolean;
   execute(
-    command: string,
+    command: TerminalCommandRequest,
     signal: AbortSignal,
     completion: TerminalCommandCompletion,
   ): Promise<void>;
@@ -14,7 +16,7 @@ interface PaneCommands {
 }
 interface PendingCommand {
   key: string;
-  command: string;
+  command: TerminalCommandRequest;
   completion: TerminalCommandCompletion;
   controller: AbortController;
   timer?: ReturnType<typeof setTimeout>;
@@ -52,7 +54,7 @@ export class TerminalCommandBroker {
   }
 
   dispatch(
-    command: string,
+    command: TerminalCommandRequest,
     target?: TerminalRef,
     completion: TerminalCommandCompletion = "settled",
   ): Promise<void> {
@@ -66,7 +68,7 @@ export class TerminalCommandBroker {
     return new Promise((resolve, reject) => {
       const pending: PendingCommand = {
         key,
-        command,
+        command: typeof command === "string" ? command : { ...command },
         completion,
         resolve,
         reject,
@@ -178,7 +180,7 @@ export const terminalCommands = new TerminalCommandBroker();
  * with later send errors reported locally. Other commands still await their work.
  */
 export function dispatchTerminalCommandAsync(
-  command: string,
+  command: TerminalCommandRequest,
   target?: TerminalRef,
   completion: TerminalCommandCompletion = "settled",
 ): Promise<void> {
@@ -186,7 +188,7 @@ export function dispatchTerminalCommandAsync(
 }
 
 export function dispatchTerminalCommand(
-  command: string,
+  command: TerminalCommandRequest,
   target?: TerminalRef,
 ): void {
   void dispatchTerminalCommandAsync(command, target).catch(() => {});
