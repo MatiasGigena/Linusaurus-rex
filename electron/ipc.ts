@@ -542,35 +542,31 @@ class WindowContext {
         identifier(args.windowId, "tab ID"),
       );
     if (method === "reorderWindow")
-      return this.rex.callMethod(host, "session.move_window", {
-        session_id: sessionId,
-        window_id: identifier(args.windowId, "tab ID"),
-        ...(args.beforeWindowId
-          ? {
-              before_window_id: identifier(
-                args.beforeWindowId,
-                "target tab ID",
-              ),
-            }
-          : {}),
-      });
+      return this.rex.reorderWindow(
+        host,
+        sessionId,
+        identifier(args.windowId, "tab ID"),
+        args.beforeWindowId
+          ? identifier(args.beforeWindowId, "target tab ID")
+          : undefined,
+      );
     if (method === "resizeDivider") {
       if (args.direction !== "horizontal" && args.direction !== "vertical")
         throw new Error("Invalid divider direction");
-      return this.rex.callMethod(host, "session.resize_pane", {
-        session_id: sessionId,
-        before_block_id: identifier(args.beforeBlockId, "before pane ID"),
-        after_block_id: identifier(args.afterBlockId, "after pane ID"),
+      return this.rex.resizeDivider(host, sessionId, {
+        beforeBlockId: identifier(args.beforeBlockId, "before pane ID"),
+        afterBlockId: identifier(args.afterBlockId, "after pane ID"),
         direction: args.direction,
         ratio: fraction(args.ratio, "divider ratio"),
       });
     }
     if (method === "resizeLayer")
-      return this.rex.callMethod(host, "session.resize_layer", {
-        session_id: sessionId,
-        layer_id: identifier(args.layerId, "floating pane ID"),
-        bounds: validateBounds(args.bounds),
-      });
+      return this.rex.resizeLayer(
+        host,
+        sessionId,
+        identifier(args.layerId, "floating pane ID"),
+        validateBounds(args.bounds),
+      );
     if (method === "createBlock")
       return this.rex.createBlock(host, sessionId, {
         flavor: identifier(args.flavor, "block type"),
@@ -660,24 +656,25 @@ class WindowContext {
     }
     if (method === "movePane") {
       const direction = identifier(args.direction, "move direction");
-      if (!["left", "right", "above", "below"].includes(direction))
+      if (
+        direction !== "left" &&
+        direction !== "right" &&
+        direction !== "above" &&
+        direction !== "below"
+      )
         throw new Error("Invalid move direction");
-      return this.rex.callMethod(host, "session.move_block", {
-        session_id: sessionId,
-        block_id: blockId,
-        anchor_block_id: identifier(args.anchorBlockId, "target pane ID"),
-        direction: ["left", "right"].includes(direction)
-          ? "horizontal"
-          : "vertical",
-        side: ["left", "above"].includes(direction) ? "before" : "after",
+      return this.rex.movePane(host, sessionId, blockId, {
+        anchorBlockId: identifier(args.anchorBlockId, "target pane ID"),
+        direction,
       });
     }
     if (method === "swapPanes")
-      return this.rex.callMethod(host, "session.swap_blocks", {
-        session_id: sessionId,
-        block_id: blockId,
-        other_block_id: identifier(args.otherBlockId, "other pane ID"),
-      });
+      return this.rex.swapPanes(
+        host,
+        sessionId,
+        blockId,
+        identifier(args.otherBlockId, "other pane ID"),
+      );
     if (method === "layoutAction")
       return layoutAction(
         (host, method, payload) => this.rex.callMethod(host, method, payload),

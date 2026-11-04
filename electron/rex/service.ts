@@ -6,7 +6,7 @@ export type { SavedHost } from './saved-hosts.js';
 import { parseCreatedSession, parseSessionList } from './session-summary.js';
 import { RexControl, localEndpoint, type RexCredentials } from './control.js';
 import { RexTerminalStream, type FrameKind, type FrameSize } from './stream.js';
-import type { Host as RexHost, SessionSummary, SessionView, ServerStatus } from '../../src/shared/types.js';
+import type { Host as RexHost, SessionSummary, SessionView, ServerStatus, RexMethods, PaneRect } from '../../src/shared/types.js';
 
 export type { Host as RexHost } from '../../src/shared/types.js';
 type Ref = { host: RexHost; sessionId: string; blockId: string };
@@ -14,6 +14,14 @@ type Capture = { content: string; id?: number; total?: number };
 type InputQueue = { tail: Promise<void>; generation: number };
 type Dimensions = Ref & { columns: number; rows: number };
 type ControlConnection = { pending: Promise<RexControl>; control?: RexControl };
+type PaneDirection = RexMethods['movePane']['args']['direction'];
+
+function panePlacement(direction: PaneDirection): { direction: 'horizontal' | 'vertical'; side: 'before' | 'after' } {
+  return {
+    direction: direction === 'above' || direction === 'below' ? 'vertical' : 'horizontal',
+    side: direction === 'left' || direction === 'above' ? 'before' : 'after',
+  };
+}
 
 const MAX_SNAPSHOT = 256 * 1024 * 1024;
 
@@ -140,11 +148,40 @@ export class RexService {
     await this.call(host, 'session.close_window', { session_id: sessionId, window_id: windowId });
   }
 
+  reorderWindow(host: RexHost, sessionId: string, windowId: string, beforeWindowId?: string) {
+    return this.call(host, 'session.move_window', {
+      session_id: sessionId, window_id: windowId,
+      ...(beforeWindowId ? { before_window_id: beforeWindowId } : {}),
+    });
+  }
+
+  resizeDivider(host: RexHost, sessionId: string, divider: Pick<RexMethods['resizeDivider']['args'], 'beforeBlockId' | 'afterBlockId' | 'direction' | 'ratio'>) {
+    return this.call(host, 'session.resize_pane', {
+      session_id: sessionId, before_block_id: divider.beforeBlockId,
+      after_block_id: divider.afterBlockId, direction: divider.direction, ratio: divider.ratio,
+    });
+  }
+
+  resizeLayer(host: RexHost, sessionId: string, layerId: string, bounds: PaneRect) {
+    return this.call(host, 'session.resize_layer', { session_id: sessionId, layer_id: layerId, bounds });
+  }
+
+  movePane(host: RexHost, sessionId: string, blockId: string, move: Pick<RexMethods['movePane']['args'], 'anchorBlockId' | 'direction'>) {
+    return this.call(host, 'session.move_block', {
+      session_id: sessionId, block_id: blockId, anchor_block_id: move.anchorBlockId,
+      ...panePlacement(move.direction),
+    });
+  }
+
+  swapPanes(host: RexHost, sessionId: string, blockId: string, otherBlockId: string) {
+    return this.call(host, 'session.swap_blocks', { session_id: sessionId, block_id: blockId, other_block_id: otherBlockId });
+  }
+
   async split(host: RexHost, sessionId: string, blockId: string, direction: 'right' | 'below' | 'left' | 'above', options: { cwd?: string; ratio?: number; command?: string } = {}) {
     const { cwd, ratio, command } = options;
     await this.call(host, 'session.new_split', {
-      session_id: sessionId, anchor_id: blockId, direction: ['below', 'above'].includes(direction) ? 'vertical' : 'horizontal',
-      side: ['left', 'above'].includes(direction) ? 'before' : 'after', layout: shellLayout(cwd, command), focus: true, ...(ratio !== undefined ? { ratio } : {}),
+      session_id: sessionId, anchor_id: blockId, ...panePlacement(direction),
+      layout: shellLayout(cwd, command), focus: true, ...(ratio !== undefined ? { ratio } : {}),
     });
   }
 

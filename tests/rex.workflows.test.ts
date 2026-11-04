@@ -49,6 +49,110 @@ const view = {
   ],
 };
 
+test("layout primitives own exact window, divider, floating-layer and swap wire payloads", async () => {
+  const current = fixture(() => ({}));
+  try {
+    await current.service.reorderWindow(host, "session", "tab", "before-tab");
+    await current.service.reorderWindow(host, "session", "tab");
+    await current.service.resizeDivider(host, "session", {
+      beforeBlockId: "before",
+      afterBlockId: "after",
+      direction: "vertical",
+      ratio: 0.4,
+    });
+    await current.service.resizeLayer(
+      host,
+      "session",
+      "layer",
+      [0.1, 0.2, 0.3, 0.4],
+    );
+    await current.service.swapPanes(host, "session", "pane", "other");
+    assert.deepEqual(current.calls, [
+      {
+        method: "session.move_window",
+        payload: {
+          session_id: "session",
+          window_id: "tab",
+          before_window_id: "before-tab",
+        },
+      },
+      {
+        method: "session.move_window",
+        payload: { session_id: "session", window_id: "tab" },
+      },
+      {
+        method: "session.resize_pane",
+        payload: {
+          session_id: "session",
+          before_block_id: "before",
+          after_block_id: "after",
+          direction: "vertical",
+          ratio: 0.4,
+        },
+      },
+      {
+        method: "session.resize_layer",
+        payload: {
+          session_id: "session",
+          layer_id: "layer",
+          bounds: [0.1, 0.2, 0.3, 0.4],
+        },
+      },
+      {
+        method: "session.swap_blocks",
+        payload: {
+          session_id: "session",
+          block_id: "pane",
+          other_block_id: "other",
+        },
+      },
+    ]);
+  } finally {
+    current.service.dispose();
+  }
+});
+
+test("pane movement and splitting use the same four-direction protocol mapping", async () => {
+  const current = fixture(() => ({}));
+  try {
+    for (const [direction, wireDirection, side] of [
+      ["left", "horizontal", "before"],
+      ["right", "horizontal", "after"],
+      ["above", "vertical", "before"],
+      ["below", "vertical", "after"],
+    ] as const) {
+      await current.service.movePane(host, "session", "moving", {
+        anchorBlockId: "anchor",
+        direction,
+      });
+      assert.deepEqual(current.calls.at(-1), {
+        method: "session.move_block",
+        payload: {
+          session_id: "session",
+          block_id: "moving",
+          anchor_block_id: "anchor",
+          direction: wireDirection,
+          side,
+        },
+      });
+      await current.service.split(host, "session", "anchor", direction);
+      assert.deepEqual(current.calls.at(-1), {
+        method: "session.new_split",
+        payload: {
+          session_id: "session",
+          anchor_id: "anchor",
+          direction: wireDirection,
+          side,
+          layout: { block: { flavor: "com.superlogical.terminal.shell" } },
+          focus: true,
+        },
+      });
+    }
+  } finally {
+    current.service.dispose();
+  }
+});
+
 test("tutorial creation validates its selected pane and rolls back only its own failed session", async () => {
   let valid = true;
   const current = fixture((method) =>
@@ -126,10 +230,7 @@ test("plugin placement falls back to the target tab's first pane when it has no 
     const call = current.calls.at(-1);
     assert.ok(call);
     assert.equal(call.method, "session.new_split");
-    assert.equal(
-      "anchor_id" in call.payload && call.payload.anchor_id,
-      "pane",
-    );
+    assert.equal("anchor_id" in call.payload && call.payload.anchor_id, "pane");
   } finally {
     current.service.dispose();
   }
