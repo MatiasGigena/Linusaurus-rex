@@ -1,5 +1,6 @@
 import {
   activeSessionSelection,
+  SupersededSessionInspectionError,
   WorkspaceReconciliationError,
   type SessionMutationPlan,
   type WorkspaceOperations,
@@ -54,6 +55,8 @@ export function useWorkspace() {
   const inFlight = useRef<Promise<HostSnapshot[]> | undefined>(undefined);
   const refreshQueued = useRef(false);
   const viewEpoch = useRef(0);
+  const inspectionGeneration = useRef(0);
+  const inspectionSequences = useRef(new Map<string, number>());
   const mounted = useRef(true);
   const configured = useRef(new Map<string, string>());
   const delayedRefresh = useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -71,6 +74,21 @@ export function useWorkspace() {
       );
       if (!configuration)
         throw new Error("The selected host is no longer configured.");
+      // An older full snapshot must not publish while this newer read is pending.
+      // Direct reads still use per-session sequences rather than this epoch.
+      viewEpoch.current++;
+      const key = viewKey(hostId, sessionId);
+      const sequence = (inspectionSequences.current.get(key) || 0) + 1;
+      inspectionSequences.current.set(key, sequence);
+      const generation = inspectionGeneration.current;
+      const isCurrentInspection = () =>
+        mounted.current &&
+        inspectionSequences.current.get(key) === sequence &&
+        inspectionGeneration.current === generation &&
+        settingsRef.current?.hosts.some(
+          (host) =>
+            host.id === hostId && host.endpoint === configuration.endpoint,
+        );
       let view: SessionView;
       try {
         view = await window.rex.request("inspectSession", {
@@ -78,66 +96,55 @@ export function useWorkspace() {
           sessionId,
         });
       } catch (failure) {
-        if (
-          mounted.current &&
-          settingsRef.current?.hosts.some(
-            (host) =>
-              host.id === hostId && host.endpoint === configuration.endpoint,
-          )
-        )
-          setHosts((previous) => {
-            const existing = previous.find((host) => host.id === hostId);
-            const failed = {
-              ...(existing || configuration),
-              connected: false,
-              error: errorMessage(failure),
-              sessions: existing?.sessions || [],
-            };
-            return existing
-              ? previous.map((host) => (host.id === hostId ? failed : host))
-              : [...previous, failed];
-          });
-        throw failure;
-      }
-      viewEpoch.current++;
-      if (
-        mounted.current &&
-        settingsRef.current?.hosts.some(
-          (host) =>
-            host.id === hostId && host.endpoint === configuration.endpoint,
-        )
-      ) {
+        if (!isCurrentInspection())
+          throw new SupersededSessionInspectionError(failure);
+        viewEpoch.current++;
         setHosts((previous) => {
           const existing = previous.find((host) => host.id === hostId);
-          const host = existing || configuration;
-          if (!host) return previous;
-          const sessions = existing?.sessions || [];
-          const summary = { id: view.id, label: view.label };
-          const next = {
-            ...host,
-            connected: true,
-            error: undefined,
-            sessions: sessions.some((session) => session.id === view.id)
-              ? sessions.map((session) =>
-                  session.id === view.id ? summary : session,
-                )
-              : [...sessions, summary],
+          const failed = {
+            ...(existing || configuration),
+            connected: false,
+            error: errorMessage(failure),
+            sessions: existing?.sessions || [],
           };
           return existing
-            ? previous.map((item) => (item.id === hostId ? next : item))
-            : [...previous, next];
+            ? previous.map((host) => (host.id === hostId ? failed : host))
+            : [...previous, failed];
         });
-        setViews((previous) => ({
-          ...previous,
-          [viewKey(hostId, sessionId)]: view,
-        }));
-        const current = selectionRef.current;
-        if (current?.hostId === hostId && current.sessionId === sessionId)
-          setFocusedPane(
-            view.windows.find((window) => window.id === current.windowId)
-              ?.focusedBlockId,
-          );
+        throw failure;
       }
+      if (!isCurrentInspection()) throw new SupersededSessionInspectionError();
+      viewEpoch.current++;
+      setHosts((previous) => {
+        const existing = previous.find((host) => host.id === hostId);
+        const host = existing || configuration;
+        if (!host) return previous;
+        const sessions = existing?.sessions || [];
+        const summary = { id: view.id, label: view.label };
+        const next = {
+          ...host,
+          connected: true,
+          error: undefined,
+          sessions: sessions.some((session) => session.id === view.id)
+            ? sessions.map((session) =>
+                session.id === view.id ? summary : session,
+              )
+            : [...sessions, summary],
+        };
+        return existing
+          ? previous.map((item) => (item.id === hostId ? next : item))
+          : [...previous, next];
+      });
+      setViews((previous) => ({
+        ...previous,
+        [viewKey(hostId, sessionId)]: view,
+      }));
+      const current = selectionRef.current;
+      if (current?.hostId === hostId && current.sessionId === sessionId)
+        setFocusedPane(
+          view.windows.find((window) => window.id === current.windowId)
+            ?.focusedBlockId,
+        );
       return view;
     },
     [],
@@ -168,6 +175,7 @@ export function useWorkspace() {
         refreshQueued.current = true;
         return;
       }
+      inspectionGeneration.current++;
       for (const host of nextHosts) {
         if (!host.connected) {
           configured.current.delete(host.id);
@@ -259,8 +267,10 @@ export function useWorkspace() {
       if (
         JSON.stringify(settingsRef.current?.hosts) !==
         JSON.stringify(saved.hosts)
-      )
+      ) {
         viewEpoch.current++;
+        inspectionGeneration.current++;
+      }
       settingsRef.current = saved;
       setSettings(saved);
     }
@@ -324,7 +334,11 @@ export function useWorkspace() {
         (host) => host.id === hostId,
       );
       requireCurrentHost(host);
+      // A general host mutation has no narrower session target. Preserve its
+      // workspace-wide read barrier until the converging snapshot is published.
+      inspectionGeneration.current++;
       const completed = await completeMutation(action, async () => {
+        inspectionGeneration.current++;
         requireCurrentHost(host);
         const snapshots = await refreshHosts();
         requireCurrentHost(host);
@@ -352,13 +366,29 @@ export function useWorkspace() {
         (host) => host.id === plan.hostId,
       );
       requireCurrentHost(host);
+      // Targeted writes supersede reads of this session, not unrelated sessions.
+      // The post-write reload advances the same sequence again before reading.
+      // Newly created sessions are identified by the result callback only then.
+      if (typeof plan.sessionId === "string") {
+        const key = viewKey(plan.hostId, plan.sessionId);
+        inspectionSequences.current.set(
+          key,
+          (inspectionSequences.current.get(key) || 0) + 1,
+        );
+      }
       const completed = await completeMutation(action, async (result) => {
         requireCurrentHost(host);
         const sessionId =
           typeof plan.sessionId === "function"
             ? plan.sessionId(result)
             : plan.sessionId;
-        const view = await reloadSession(plan.hostId, sessionId);
+        let view: SessionView;
+        try {
+          view = await reloadSession(plan.hostId, sessionId);
+        } catch (failure) {
+          requireCurrentHost(host);
+          throw failure;
+        }
         requireCurrentHost(host);
         if (plan.selectActive) {
           const next = activeSessionSelection(plan.hostId, view);
@@ -393,18 +423,23 @@ export function useWorkspace() {
       blockId?: string,
     ) => {
       setFocusedPane(blockId);
-      setSelection((previous) => ({
+      const previous = selectionRef.current;
+      const requested: Selection = {
         hostId,
         sessionId,
         windowId:
           windowId ||
-          (previous?.sessionId === sessionId ? previous.windowId : ""),
-      }));
+          (previous?.hostId === hostId && previous.sessionId === sessionId
+            ? previous.windowId
+            : ""),
+      };
+      selectionRef.current = requested;
+      setSelection(requested);
       if (sessionId && !windowId)
         void reloadSession(hostId, sessionId)
           .then((view) =>
             setSelection((current) =>
-              current?.hostId === hostId && current.sessionId === sessionId
+              current === requested
                 ? {
                     hostId,
                     sessionId,
@@ -413,7 +448,13 @@ export function useWorkspace() {
                 : current,
             ),
           )
-          .catch((failure) => setError(errorMessage(failure)));
+          .catch((failure) => {
+            if (
+              mounted.current &&
+              !(failure instanceof SupersededSessionInspectionError)
+            )
+              setError(errorMessage(failure));
+          });
     },
     [reloadSession],
   );
@@ -482,6 +523,7 @@ export function useWorkspace() {
         setSettings(event.settings);
         if (changed) {
           viewEpoch.current++;
+          inspectionGeneration.current++;
           scheduleRefresh();
         }
       } else if (event.type === "status") {
@@ -495,6 +537,7 @@ export function useWorkspace() {
     return () => {
       mounted.current = false;
       viewEpoch.current++;
+      inspectionGeneration.current++;
       clearInterval(timer);
       clearTimeout(delayedRefresh.current);
       unsubscribe();

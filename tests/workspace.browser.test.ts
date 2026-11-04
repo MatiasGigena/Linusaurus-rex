@@ -16,9 +16,10 @@ window.fixture={calls,
  pending(){return requests.filter(request=>!request.settled).map(({id,method,args})=>({id,method,args}));},
  fail(id,message,code='permission_denied'){const request=requests.find(request=>request.id===id&&!request.settled);if(!request)throw Error('Missing pending request '+id);request.settled=true;const error=Object.assign(new Error(message),{code,method:request.method});window.fixture.lastFailure=error;request.reject(error);},
  complete(id,value){const request=requests.find(request=>request.id===id&&!request.settled);if(!request)throw Error('Missing pending request '+id);request.settled=true;request.resolve(value);},
- refresh(){void workspace.refresh();},reload(hostId,sessionId){void workspace.reloadSession(hostId,sessionId);},
+ refresh(){void workspace.refresh();},select(hostId,sessionId,windowId){workspace.select(hostId,sessionId,windowId);},reload(hostId,sessionId){void workspace.reloadSession(hostId,sessionId).catch(error=>{(window.fixture.reloadErrors??=[]).push(error.message);});},
  reloadAfterResize(){const reload=workspace.reloadSession;window.fixture.reloadResult='pending';void window.rex.request('resizeDivider',{hostId:'one',sessionId:'s',beforeBlockId:'before',afterBlockId:'after',direction:'horizontal',ratio:0.5}).then(()=>reload('one','s')).then(()=>{window.fixture.reloadResult='complete';},error=>{window.fixture.reloadResult=error.message;});},
  mutate(){window.fixture.mutation='pending';void workspace.operations.mutateSession({hostId:'one',sessionId:'s',selectActive:true},()=>window.rex.request('renameWindow',{hostId:'one',sessionId:'s',windowId:'w',label:'Updated'})).then(value=>{window.fixture.mutation='complete';window.fixture.completed=value;},error=>{window.fixture.mutation=error.message;window.fixture.failureIdentity=error===window.fixture.lastFailure;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
+ mutateTarget(sessionId,key){(window.fixture.mutations??={})[key]='pending';void workspace.operations.mutateSession({hostId:'one',sessionId},()=>window.rex.request('renameWindow',{hostId:'one',sessionId,windowId:'w',label:key})).then(()=>{window.fixture.mutations[key]='complete';},error=>{window.fixture.mutations[key]=error.message;});},
  run(){window.fixture.mutation='pending';void workspace.operations.run('one',()=>window.rex.request('renameWindow',{hostId:'one',sessionId:'s',windowId:'w',label:'Updated'})).then(()=>{window.fixture.mutation='complete';},error=>{window.fixture.mutation=error.message;window.fixture.failureIdentity=error===window.fixture.lastFailure;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
  dispatch(name,args={}){const noop=()=>{};const execute=createWorkspaceActions({workspace:workspace.operations,settings,hosts:workspace.hosts,views:workspace.views,selection:workspace.selection,keymaps:workspace.keymaps,focusedPane:workspace.focusedPane,workspaceElement:{current:null},setPalette:noop,setSettingsTab:noop,setDiagnostics:noop,setPairing:noop,setEditingHost:noop,setConfirmation:noop,setForm:noop,setCollapsedSessions:noop,setActivityOnly:noop,setActivityOpen:noop,setActivityGroup:noop,setDirectoryBrowser:noop,setReport:noop,onError:noop});window.fixture.mutation='pending';void execute(name,args).then(value=>{window.fixture.mutation='complete';window.fixture.completed=value;},error=>{window.fixture.mutation=error.message;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
  preferences(patch){settings={...settings,...patch};for(const listener of listeners)listener({type:'settings',settings});},
@@ -57,7 +58,10 @@ interface WorkspaceFixtureWindow {
     refresh(): void;
     run(): void;
     mutate(): void;
+    mutateTarget(sessionId: string, key: string): void;
+    mutations?: Record<string, string>;
     reload(hostId: string, sessionId: string): void;
+    select(hostId: string, sessionId: string, windowId?: string): void;
     reloadAfterResize(): void;
     reloadResult?: string;
     changeHosts(hosts: { id: string; label: string; endpoint: string }[]): void;
@@ -964,3 +968,490 @@ for (const scenario of [
     },
   );
 }
+
+for (const outcome of ["success", "failure"] as const) {
+  test(
+    `an older direct inspection ${outcome} cannot replace a newer inspection's view, focus, or host status`,
+    options,
+    async () => {
+      await withBrowserFixture(
+        `workspace-direct-order-${outcome}`,
+        source,
+        async (page) => {
+          await initialWorkspace(page);
+          await page.evaluate((outcome) => {
+            const fixture = (window as unknown as WorkspaceFixtureWindow)
+              .fixture;
+            if (outcome === "failure") fixture.select("one", "s");
+            else fixture.reload("one", "s");
+          }, outcome);
+          const old = await pending(page, "inspectSession", "one");
+          await page.evaluate(() =>
+            (window as unknown as WorkspaceFixtureWindow).fixture.reload(
+              "one",
+              "s",
+            ),
+          );
+          const latest = await pending(page, "inspectSession", "one", old);
+          const current = view("s", "Newest direct inspection");
+          current.windows[0].focusedBlockId = "new-focus";
+          await complete(page, latest, current);
+          await expect
+            .poll(async () => (await snapshot(page)).views["one/s"])
+            .toBe("Newest direct inspection");
+          if (outcome === "success")
+            await complete(page, old, view("s", "Older direct inspection"));
+          else await fail(page, old, "Older inspection denied");
+          await nextFrame(page);
+          assert.equal(
+            (await snapshot(page)).views["one/s"],
+            "Newest direct inspection",
+          );
+          assert.equal((await snapshot(page)).connected.one, true);
+          assert.equal((await snapshot(page)).hostErrors.one, undefined);
+          assert.equal((await snapshot(page)).error, undefined);
+          assert.equal(
+            await page.evaluate(
+              "JSON.parse(document.querySelector('#workspace-state').textContent).focusedPane",
+            ),
+            "new-focus",
+          );
+        },
+      );
+    },
+  );
+}
+
+test(
+  "a published workspace snapshot supersedes a still-pending direct session inspection",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-direct-versus-snapshot",
+      source,
+      async (page) => {
+        await initialWorkspace(page);
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.reload(
+            "one",
+            "s",
+          ),
+        );
+        const old = await pending(page, "inspectSession", "one");
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.refresh(),
+        );
+        await complete(page, await pending(page, "status", "one"), {
+          connected: true,
+        });
+        await complete(page, await pending(page, "listSessions", "one"), [
+          { id: "s", label: "Session" },
+        ]);
+        const latest = await pending(page, "inspectSession", "one", old);
+        await complete(page, latest, view("s", "Newer published workspace"));
+        await expect
+          .poll(async () => (await snapshot(page)).views["one/s"])
+          .toBe("Newer published workspace");
+        await complete(page, old, view("s", "Older direct session"));
+        await nextFrame(page);
+        assert.equal(
+          (await snapshot(page)).views["one/s"],
+          "Newer published workspace",
+        );
+      },
+    );
+  },
+);
+
+test(
+  "starting a mutation prevents a pre-mutation inspection from publishing before reconciliation",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-direct-versus-mutation",
+      source,
+      async (page) => {
+        await initialWorkspace(page);
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.reload(
+            "one",
+            "s",
+          ),
+        );
+        const old = await pending(page, "inspectSession", "one");
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.mutate(),
+        );
+        const changed = await pending(page, "renameWindow", "one");
+        await complete(page, old, view("s", "Pre-mutation direct session"));
+        await nextFrame(page);
+        assert.equal(
+          (await snapshot(page)).views["one/s"],
+          "Last good session",
+        );
+        await complete(page, changed, undefined);
+        await complete(
+          page,
+          await pending(page, "inspectSession", "one"),
+          view("s", "Mutation reconciled"),
+        );
+        await expect.poll(() => mutationStatus(page)).toBe("complete");
+        assert.equal(
+          (await snapshot(page)).views["one/s"],
+          "Mutation reconciled",
+        );
+      },
+    );
+  },
+);
+
+test(
+  "independent session inspections may complete in either order without superseding one another",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-independent-inspections",
+      source,
+      async (page) => {
+        await initialWorkspace(page);
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.reload(
+            "one",
+            "s",
+          ),
+        );
+        const selected = await pending(page, "inspectSession", "one");
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.reload(
+            "one",
+            "other",
+          ),
+        );
+        const other = await pending(page, "inspectSession", "one", selected);
+        await complete(page, other, view("other", "Other session refreshed"));
+        await expect
+          .poll(async () => (await snapshot(page)).views["one/other"])
+          .toBe("Other session refreshed");
+        await complete(page, selected, view("s", "Selected session refreshed"));
+        await expect
+          .poll(async () => (await snapshot(page)).views["one/s"])
+          .toBe("Selected session refreshed");
+        assert.equal(
+          (await snapshot(page)).views["one/other"],
+          "Other session refreshed",
+        );
+        assert.equal((await snapshot(page)).error, undefined);
+      },
+    );
+  },
+);
+
+test(
+  "a current selection inspection failure remains visible while superseded selection failures stay quiet",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-selection-inspection-error",
+      source,
+      async (page) => {
+        await initialWorkspace(page);
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.select(
+            "one",
+            "s",
+          ),
+        );
+        const inspected = await pending(page, "inspectSession", "one");
+        await fail(page, inspected, "Current selection denied");
+        await expect
+          .poll(async () => (await snapshot(page)).error)
+          .toBe("Current selection denied");
+        assert.equal(
+          (await snapshot(page)).hostErrors.one,
+          "Current selection denied",
+        );
+        assert.equal(
+          (await snapshot(page)).views["one/s"],
+          "Last good session",
+        );
+      },
+    );
+  },
+);
+
+test(
+  "a current direct inspection failure cannot be hidden by an older in-flight full refresh",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-error-versus-old-refresh",
+      source,
+      async (page) => {
+        await initialWorkspace(page);
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.refresh(),
+        );
+        const old = await startInspection(page);
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.reload(
+            "one",
+            "s",
+          ),
+        );
+        const latest = await pending(page, "inspectSession", "one", old);
+        await fail(page, latest, "Newest inspection denied");
+        await expect
+          .poll(async () => (await snapshot(page)).hostErrors.one)
+          .toBe("Newest inspection denied");
+        await complete(page, old, view("s", "Older successful full refresh"));
+        await nextFrame(page);
+        assert.equal(
+          (await snapshot(page)).hostErrors.one,
+          "Newest inspection denied",
+        );
+        assert.equal((await snapshot(page)).connected.one, false);
+        assert.equal(
+          (await snapshot(page)).views["one/s"],
+          "Last good session",
+        );
+      },
+    );
+  },
+);
+
+test(
+  "a pending session selection inspection cannot undo a later explicit window choice",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-selection-request-owner",
+      source,
+      async (page) => {
+        await initialWorkspace(page);
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.select(
+            "one",
+            "s",
+          ),
+        );
+        const inspected = await pending(page, "inspectSession", "one");
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.select(
+            "one",
+            "s",
+            "chosen",
+          ),
+        );
+        const current = view("s", "Session after explicit selection");
+        current.windows.push({
+          ...current.windows[0],
+          id: "chosen",
+          label: "Chosen tab",
+        });
+        await complete(page, inspected, current);
+        await nextFrame(page);
+        assert.equal(
+          await page.evaluate(
+            "JSON.parse(document.querySelector('#workspace-state').textContent).selection.windowId",
+          ),
+          "chosen",
+        );
+      },
+    );
+  },
+);
+
+test(
+  "an older full refresh cannot supersede a direct inspection that started afterward",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-new-direct-versus-old-refresh",
+      source,
+      async (page) => {
+        await initialWorkspace(page);
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.refresh(),
+        );
+        const olderSnapshot = await startInspection(page);
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.reload(
+            "one",
+            "s",
+          ),
+        );
+        const newerDirect = await pending(
+          page,
+          "inspectSession",
+          "one",
+          olderSnapshot,
+        );
+        await complete(page, olderSnapshot, view("s", "Older full refresh"));
+        await nextFrame(page);
+        await complete(page, newerDirect, view("s", "Newer direct inspection"));
+        await nextFrame(page);
+        assert.equal(
+          (await snapshot(page)).views["one/s"],
+          "Newer direct inspection",
+        );
+        assert.deepEqual(
+          await page.evaluate("window.fixture.reloadErrors || []"),
+          [],
+        );
+      },
+    );
+  },
+);
+
+for (const firstCompletion of ["first", "second"] as const) {
+  test(
+    `independent session mutations reconcile successfully when ${firstCompletion} inspection finishes first`,
+    options,
+    async () => {
+      await withBrowserFixture(
+        `workspace-independent-mutations-${firstCompletion}`,
+        source,
+        async (page) => {
+          await initialWorkspace(page);
+          await page.evaluate(() =>
+            (window as unknown as WorkspaceFixtureWindow).fixture.mutateTarget(
+              "s",
+              "first",
+            ),
+          );
+          await complete(
+            page,
+            await pending(page, "renameWindow", "one"),
+            undefined,
+          );
+          const first = await pending(page, "inspectSession", "one");
+          await page.evaluate(() =>
+            (window as unknown as WorkspaceFixtureWindow).fixture.mutateTarget(
+              "other",
+              "second",
+            ),
+          );
+          await complete(
+            page,
+            await pending(page, "renameWindow", "one"),
+            undefined,
+          );
+          const second = await pending(page, "inspectSession", "one", first);
+          const inspections = {
+            first: {
+              request: first,
+              view: view("s", "First mutation reconciled"),
+            },
+            second: {
+              request: second,
+              view: view("other", "Second mutation reconciled"),
+            },
+          };
+          const lastCompletion =
+            firstCompletion === "first" ? "second" : "first";
+          await complete(
+            page,
+            inspections[firstCompletion].request,
+            inspections[firstCompletion].view,
+          );
+          await nextFrame(page);
+          assert.equal(
+            (await snapshot(page)).busy,
+            true,
+            "the remaining mutation keeps the workspace busy",
+          );
+          await complete(
+            page,
+            inspections[lastCompletion].request,
+            inspections[lastCompletion].view,
+          );
+          await expect
+            .poll(() =>
+              page.evaluate(() =>
+                Object.values(
+                  (window as unknown as WorkspaceFixtureWindow).fixture
+                    .mutations || {},
+                ).every((status) => status !== "pending"),
+              ),
+            )
+            .toBe(true);
+          assert.deepEqual(
+            await page.evaluate(
+              () =>
+                (window as unknown as WorkspaceFixtureWindow).fixture.mutations,
+            ),
+            { first: "complete", second: "complete" },
+          );
+          const state = await snapshot(page);
+          assert.equal(state.views["one/s"], "First mutation reconciled");
+          assert.equal(state.views["one/other"], "Second mutation reconciled");
+          assert.equal(state.busy, false);
+          assert.equal(state.error, undefined);
+        },
+      );
+    },
+  );
+}
+
+test(
+  "a new mutation of the same session invalidates an earlier post-write inspection before applying",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-same-session-mutations",
+      source,
+      async (page) => {
+        await initialWorkspace(page);
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.mutateTarget(
+            "s",
+            "first",
+          ),
+        );
+        await complete(
+          page,
+          await pending(page, "renameWindow", "one"),
+          undefined,
+        );
+        const older = await pending(page, "inspectSession", "one");
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.mutateTarget(
+            "s",
+            "second",
+          ),
+        );
+        const latestAction = await pending(page, "renameWindow", "one");
+        await complete(page, older, view("s", "Older mutation inspection"));
+        await nextFrame(page);
+        assert.equal(
+          (await snapshot(page)).views["one/s"],
+          "Last good session",
+          "the pending same-session write must prevent stale publication",
+        );
+        await complete(page, latestAction, undefined);
+        const latest = await pending(page, "inspectSession", "one");
+        await complete(page, latest, view("s", "Latest mutation reconciled"));
+        await expect
+          .poll(() =>
+            page.evaluate(
+              () =>
+                (window as unknown as WorkspaceFixtureWindow).fixture.mutations
+                  ?.second,
+            ),
+          )
+          .toBe("complete");
+        const state = await snapshot(page);
+        assert.equal(state.views["one/s"], "Latest mutation reconciled");
+        assert.equal(state.busy, false);
+        assert.match(
+          await page.evaluate(
+            () =>
+              (window as unknown as WorkspaceFixtureWindow).fixture.mutations
+                ?.first || "",
+          ),
+          /inspection was superseded/,
+        );
+      },
+    );
+  },
+);
