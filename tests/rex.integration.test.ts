@@ -2,17 +2,18 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { RexService } from '../electron/rex/service.js';
-import { RexCommandRunner } from '../electron/rex/command.js';
 
 const local = { id: 'local', label: 'This computer', endpoint: '' };
 
 // Opt-in: creates one temporary session; cleanup only ever targets its returned ID.
 test('installed Rex supports terminal input, alternate screen, resize and session layouts', { skip: process.env.REX_INTEGRATION !== '1', timeout: 30_000 }, async () => {
   const rex = new RexService();
-  const cleanup = new RexCommandRunner();
+  const cleanup = new RexService();
+  let cleanupHost = local;
   let sessionId: string | undefined;
   try {
     sessionId = await rex.createSession(local, `linusaurus-verification-${Date.now()}`, '/tmp');
+    cleanupHost = { ...local, endpoint: (await rex.control(local)).endpoint };
     const view = await rex.inspect(local, sessionId);
     const blockId = view.windows[0].panes[0].id;
     const originalWindow = view.windows[0].id;
@@ -78,8 +79,8 @@ test('installed Rex supports terminal input, alternate screen, resize and sessio
     finally { survivor.dispose(); }
   } finally {
     rex.dispose();
-    if (sessionId) await cleanup.run(['--autostart=false', 'api', 'call', 'session.destroy', '-'], JSON.stringify({ session_id: sessionId }));
-    cleanup.dispose();
+    try { if (sessionId) await cleanup.callMethod(cleanupHost, 'session.destroy', { session_id: sessionId }); }
+    finally { cleanup.dispose(); }
   }
 });
 
