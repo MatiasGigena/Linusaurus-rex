@@ -17,19 +17,11 @@ import {
   enrichWindow,
 } from "./workspace/presentation";
 import { WorkspaceLayout } from "./components/workspace/WorkspaceLayout";
+import { WorkspaceEmptyState } from "./components/workspace/WorkspaceEmptyState";
 import { useInterfaceAppearance } from "./hooks/useInterfaceAppearance";
 import { createWorkspaceActions } from "./workspace/actions/createWorkspaceActions";
 import { useEffect, useRef, useState } from "react";
-import {
-  AlertCircle,
-  ChevronRight,
-  Command,
-  Eye,
-  Loader2,
-  Plus,
-  RefreshCw,
-  TerminalSquare,
-} from "lucide-react";
+import { AlertCircle, ChevronRight, Eye, Loader2 } from "lucide-react";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { Toolbar } from "./components/workspace/Toolbar";
 import { ContextMenu } from "./components/ContextMenu";
@@ -428,46 +420,13 @@ export default function App() {
           execute={(name, args) => executeRef.current(name, args)}
           onError={ws.setError}
         >
-          <div className="empty-state">
-            <div className="empty-terminal-icon">
-              <TerminalSquare size={30} />
-            </div>
-            <span className="eyebrow">LINUSAURUS REX</span>
-            <h1>
-              {hosts.some((host) => host.connected)
-                ? "Make room for your next idea."
-                : "Your workspace is waiting."}
-            </h1>
-            <p>
-              {hosts.some((host) => host.connected)
-                ? "Choose a session, or start a fresh workspace. Your programs stay on Rex when this app closes."
-                : activeHost?.error ||
-                  "Connect to your existing Rex server to bring your terminals together."}
-            </p>
-            <div className="empty-actions">
-              <button
-                className="button button-primary"
-                onClick={() => dispatch("session.new")}
-              >
-                <Plus size={15} />
-                New session
-              </button>
-              <button
-                className="button"
-                onClick={() => safely(() => ws.refresh())}
-              >
-                <RefreshCw size={14} />
-                Reconnect
-              </button>
-            </div>
-            <button
-              className="empty-palette"
-              onClick={() => dialogs.open({ kind: "palette", scope: "all" })}
-            >
-              <Command size={13} />
-              Find a session or command<kbd>Ctrl Shift P</kbd>
-            </button>
-          </div>
+          <WorkspaceEmptyState
+            connected={hosts.some((host) => host.connected)}
+            error={activeHost?.error}
+            onNewSession={() => dispatch("session.new")}
+            onReconnect={() => safely(() => ws.refresh())}
+            onPalette={() => dialogs.open({ kind: "palette", scope: "all" })}
+          />
         </WorkspaceLayout>
         {settings.showKeyHints &&
           ws.keyHints &&
