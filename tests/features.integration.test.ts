@@ -24,13 +24,13 @@ test('installed Rex supports registered client actions, Lua key forwarding, and 
     assert.ok(reply);assert.deepEqual(performed,['client.sidebar.toggle']);
     await control.call('client.set_script',{scripts:[{name:'linusaurus-features.lua',source:'rex.bind("ctrl+g", function(ctx, ev)\n rex.session.set_label{label="features-key-worked"}\n return true\nend)\nrex.bind("ctrl+b>z", function(ctx, ev)\n rex.session.set_label{label="features-sequence-worked"}\n return true\nend)\nrex.mode("verification",{exclusive=true})\nrex.bind("ctrl+r","client.mode.enter",{name="verification",once=true})\nrex.bind("verification/h","client.sidebar.toggle")'}]});
     await features.configure(host);
-    const key=await features.input(host,'key',sessionId,blockId,{key:'key_g',mods:'ctrl',consumed_mods:'',text:'',unshifted_codepoint:103,composing:false,action:'press'});
+    const key=await features.inputKey(host,sessionId,blockId,{key:'key_g',mods:'ctrl',consumed_mods:'',text:'',unshifted_codepoint:103,composing:false,action:'press'});
     assert.equal((key as any).handled,true);assert.equal((await rex.inspect(host,sessionId)).label,'features-key-worked');
-    await features.input(host,'key',sessionId,blockId,{key:'key_b',mods:'ctrl',consumed_mods:'',text:'',unshifted_codepoint:98,composing:false,action:'press'});
-    await features.input(host,'key',sessionId,blockId,{key:'key_z',mods:'',consumed_mods:'',text:'z',unshifted_codepoint:122,composing:false,action:'press'});
+    await features.inputKey(host,sessionId,blockId,{key:'key_b',mods:'ctrl',consumed_mods:'',text:'',unshifted_codepoint:98,composing:false,action:'press'});
+    await features.inputKey(host,sessionId,blockId,{key:'key_z',mods:'',consumed_mods:'',text:'z',unshifted_codepoint:122,composing:false,action:'press'});
     assert.equal((await rex.inspect(host,sessionId)).label,'features-sequence-worked');
-    await features.input(host,'key',sessionId,blockId,{key:'key_r',mods:'ctrl',consumed_mods:'',text:'',unshifted_codepoint:114,composing:false,action:'press'});
-    await features.input(host,'key',sessionId,blockId,{key:'key_h',mods:'',consumed_mods:'',text:'h',unshifted_codepoint:104,composing:false,action:'press'});
+    await features.inputKey(host,sessionId,blockId,{key:'key_r',mods:'ctrl',consumed_mods:'',text:'',unshifted_codepoint:114,composing:false,action:'press'});
+    await features.inputKey(host,sessionId,blockId,{key:'key_h',mods:'',consumed_mods:'',text:'h',unshifted_codepoint:104,composing:false,action:'press'});
     assert.deepEqual(performed,['client.sidebar.toggle','client.sidebar.toggle']);
     await rex.split(host,sessionId,blockId,'right');
     const split=(await rex.inspect(host,sessionId)).windows[0];const other=split.panes.find(pane=>pane.id!==blockId)!.id;

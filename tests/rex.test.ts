@@ -10,18 +10,100 @@ const local = { id: 'local', label: 'This computer', endpoint: '' };
 type Call = { method: string; payload: Record<string, unknown> };
 function mock(invoke: (call: Call) => Promise<unknown>) {
   const calls: Call[] = [];
+  const attachments: string[] = [];
   const factory = () => {
     const control = {
       endpoint: 'unix:///fake/rex.sock', connected: true,
       readyPublic: async () => ({ protocol: 'rex.control.v1', api_revision: 10 }),
-      attach: async (_sessionId: string) => {},
+      attach: async (sessionId: string) => { attachments.push(sessionId); },
       call: async (method: string, payload: Record<string, unknown>) => { const call = { method, payload }; calls.push(call); return invoke(call); },
       dispose: () => { control.connected = false; },
     };
     return control as unknown as RexControl;
   };
-  return { calls, service: new RexService({ controlFactory: factory }) };
+  return { calls, attachments, service: new RexService({ controlFactory: factory }) };
 }
+
+test('session and pane operations own their wire requests and preserve results and failures', async () => {
+  const result = { accepted: true };
+  let failure: Error | undefined;
+  const current = mock(async (call) => {
+    assert.equal(
+      current.attachments.at(-1),
+      call.payload.session_id,
+      'The session must be attached before each operation',
+    );
+    if (failure) throw failure;
+    return result;
+  });
+  try {
+    assert.equal(await current.service.destroySession(local, 's'), result);
+    assert.equal(
+      await current.service.renamePane(local, 's', 'b', 'Named'),
+      result,
+    );
+    assert.equal(
+      await current.service.listDirectory(local, 's', 'b', {
+        path: '/quoted path',
+        files: true,
+        limit: 2000,
+        prefix: 'pre',
+      }),
+      result,
+    );
+    assert.equal(await current.service.blockInfo(local, 's', 'b'), result);
+    assert.equal(
+      await current.service.callBlock(local, 's', 'b', 'plugin.echo', {
+        nested: { value: true },
+      }),
+      result,
+    );
+    assert.deepEqual(current.calls, [
+      { method: 'session.destroy', payload: { session_id: 's' } },
+      {
+        method: 'session.set_block_label',
+        payload: { session_id: 's', block_id: 'b', label: 'Named' },
+      },
+      {
+        method: 'com.superlogical.terminal.list_dir',
+        payload: {
+          session_id: 's',
+          block_id: 'b',
+          args: {
+            path: '/quoted path',
+            files: true,
+            limit: 2000,
+            prefix: 'pre',
+          },
+        },
+      },
+      {
+        method: 'session.describe_block',
+        payload: { session_id: 's', block_id: 'b' },
+      },
+      {
+        method: 'block.method',
+        payload: {
+          session_id: 's',
+          block_id: 'b',
+          method: 'plugin.echo',
+          args: { nested: { value: true } },
+        },
+      },
+    ]);
+    assert.deepEqual(current.attachments, ['s', 's', 's', 's', 's']);
+    failure = Object.assign(new Error('Permission denied'), {
+      code: 'permission_denied',
+      method: 'block.method',
+    });
+    await assert.rejects(
+      current.service.callBlock(local, 's', 'b', 'plugin.echo', {}),
+      (error) => error === failure,
+    );
+  } finally {
+    current.service.dispose();
+  }
+});
 
 test('terminal input bytes go in a single control request without invoking a shell', async () => {
   const { calls, service } = mock(async () => ({}));

@@ -277,18 +277,13 @@ export class ClientFeatures {
     }
     return result.result;
   }
-  async input(
+  async inputKey(
     host: Host,
-    method: "key" | "paste" | "mouse" | "wheel" | "focus",
     sessionId: string,
     blockId: string,
-    value: Record<string, unknown>,
+    value: RexKeyEvent,
     prefix?: string[],
   ) {
-    // Paste/pointer/focus calls can be the result of a client shortcut. They must
-    // not wait behind the shortcut awaiting that same renderer action's reply.
-    if (method !== "key")
-      return this.inputNow(host, method, sessionId, blockId, value, prefix);
     let queue = this.inputQueues.get(host.id);
     if (!queue) {
       queue = { tail: Promise.resolve(), generation: 0, count: 0 };
@@ -302,14 +297,7 @@ export class ClientFeatures {
       if (queue.generation !== generation || this.disposed)
         throw new Error("Input discarded after the connection failed.");
       try {
-        return await this.inputNow(
-          host,
-          method,
-          sessionId,
-          blockId,
-          value,
-          prefix,
-        );
+        return await this.inputKeyNow(host, sessionId, blockId, value, prefix);
       } catch (error) {
         queue.generation++;
         throw error;
@@ -324,40 +312,48 @@ export class ClientFeatures {
         this.inputQueues.delete(host.id);
     }
   }
-  private async inputNow(
+  private async inputKeyNow(
     host: Host,
-    method: "key" | "paste" | "mouse" | "wheel" | "focus",
     sessionId: string,
     blockId: string,
-    value: Record<string, unknown>,
+    value: RexKeyEvent,
     prefix?: string[],
   ) {
     const control = await this.rex.control(host);
     await control.attach(sessionId);
-    if (method === "key") {
-      if (!this.keymaps.has(host.id)) await this.keymap(host);
-      const route = prefix
-        ? { kind: "forward" as const, prefix }
-        : this.router(host.id).route(value as unknown as RexKeyEvent);
-      if (route.kind === "consume") return { handled: true };
-      if (route.kind === "action") {
-        if (route.action === "client.key.forward")
-          return control.call("client.key", {
-            session_id: sessionId,
-            block_id: blockId,
-            key: value,
-            ...(route.prefix.length ? { prefix: route.prefix } : {}),
-          });
-        await this.invoke(host, route.action, route.args, sessionId, blockId);
-        return { handled: true };
-      }
-      return control.call("client.key", {
-        session_id: sessionId,
-        block_id: blockId,
-        key: value,
-        ...(route.prefix?.length ? { prefix: route.prefix } : {}),
-      });
+    if (!this.keymaps.has(host.id)) await this.keymap(host);
+    const route = prefix
+      ? { kind: "forward" as const, prefix }
+      : this.router(host.id).route(value);
+    if (route.kind === "consume") return { handled: true };
+    if (route.kind === "action") {
+      if (route.action === "client.key.forward")
+        return control.call("client.key", {
+          session_id: sessionId,
+          block_id: blockId,
+          key: value,
+          ...(route.prefix.length ? { prefix: route.prefix } : {}),
+        });
+      await this.invoke(host, route.action, route.args, sessionId, blockId);
+      return { handled: true };
     }
+    return control.call("client.key", {
+      session_id: sessionId,
+      block_id: blockId,
+      key: value,
+      ...(route.prefix?.length ? { prefix: route.prefix } : {}),
+    });
+  }
+  // Reverse client actions must not wait behind the key awaiting their reply.
+  async input(
+    host: Host,
+    method: "paste" | "mouse" | "wheel" | "focus",
+    sessionId: string,
+    blockId: string,
+    value: Record<string, unknown>,
+  ) {
+    const control = await this.rex.control(host);
+    await control.attach(sessionId);
     return control.call("block.event", {
       session_id: sessionId,
       block_id: blockId,

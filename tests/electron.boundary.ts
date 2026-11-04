@@ -12,6 +12,7 @@ import {
 import { CHANNELS } from "../electron/channels.js";
 import { RexService } from "../electron/rex/service.js";
 import { DEFAULT_SETTINGS } from "../src/shared/types.js";
+import { WebSocketServer } from "ws";
 
 type RemoteClient = {
   client_id?: string;
@@ -26,6 +27,258 @@ const root = resolve(import.meta.dirname, "..");
 const directory = await mkdtemp(join(root, "test-results-boundary-"));
 const service = new RexService();
 let app: ElectronApplication | undefined;
+
+async function verifyRequestOperations(page: Page) {
+  const server = new WebSocketServer({
+    port: 0,
+    host: "127.0.0.1",
+    handleProtocols: () => "rex.control.v1",
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("listening", resolve);
+    server.once("error", reject);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const host = {
+    id: "boundary-operations",
+    label: "Boundary operations",
+    endpoint: `http://127.0.0.1:${address.port}`,
+  };
+  const calls: { method: string; payload: object }[] = [];
+  const owned = new Set([
+    "session.destroy",
+    "session.set_block_label",
+    "com.superlogical.terminal.list_dir",
+    "session.describe_block",
+    "block.method",
+  ]);
+  server.on("connection", (socket) =>
+    socket.on("message", (bytes) => {
+      const message = JSON.parse(bytes.toString()) as {
+        type: string;
+        id: string;
+        method: string;
+        payload: { method?: string };
+      };
+      if (message.type === "hello") {
+        socket.send(
+          JSON.stringify({
+            type: "welcome",
+            protocol: "rex.control.v1",
+            api_revision: 10,
+          }),
+        );
+        return;
+      }
+      if (owned.has(message.method))
+        calls.push({ method: message.method, payload: message.payload });
+      const payload =
+        message.method === "session.list"
+          ? { sessions: [] }
+          : message.method === "server.version"
+            ? { version: "boundary" }
+            : message.method === "client.keymap"
+              ? { actions: [], bindings: [], modes: [] }
+              : message.method === "block.method" &&
+                  message.payload.method === "oversized"
+                ? "x".repeat(16 * 1024 * 1024)
+                : message.method === "block.method" &&
+                    message.payload.method === "empty"
+                  ? undefined
+                  : { accepted: true };
+      const error =
+        message.method === "block.method" && message.payload.method === "denied"
+          ? { message: "Blocked by fixture", code: "fixture_denied" }
+          : undefined;
+      socket.send(
+        JSON.stringify({
+          type: "response",
+          id: message.id,
+          payload,
+          ...(error ? { error } : {}),
+        }),
+      );
+    }),
+  );
+  const invoke = (method: string, args: object) =>
+    page.evaluate(
+      async ({ method, args }) => {
+        // Deliberately cross the production bridge with untrusted values, beyond its TS contract.
+        const request = window.rex.request as unknown as (
+          method: string,
+          args: unknown,
+        ) => Promise<unknown>;
+        return request(method, args);
+      },
+      { method, args },
+    );
+  const ref = {
+    hostId: host.id,
+    sessionId: "owned-session",
+    blockId: "owned-pane",
+  };
+  try {
+    await page.evaluate(async (host) => {
+      const settings = await window.rex.getSettings();
+      await window.rex.setSettings({
+        ...settings,
+        hosts: [...settings.hosts, host],
+      });
+    }, host);
+    assert.equal(
+      ((await invoke("status", { hostId: host.id })) as { connected: boolean })
+        .connected,
+      true,
+    );
+    assert.ok(
+      await invoke("diagnostics", {}),
+      "Desktop diagnostics keeps its optional host contract",
+    );
+    for (const [method, args, failure] of [
+      ["unrecognized", {}, /Invalid host ID/],
+      ["unrecognized", { hostId: host.id }, /Invalid session ID/],
+      [
+        "unrecognized",
+        { hostId: host.id, sessionId: ref.sessionId },
+        /Invalid pane ID/,
+      ],
+      ["unrecognized", ref, /Unsupported Rex operation/],
+      [
+        "listDirectory",
+        { ...ref, path: "/", files: "false" },
+        /directory listing mode/,
+      ],
+      ["listDirectory", { ...ref, path: "/", limit: 2001 }, /directory limit/],
+      ["listDirectory", { ...ref, path: "x".repeat(8193) }, /directory path/],
+      [
+        "listDirectory",
+        { ...ref, path: "/", prefix: "x".repeat(513) },
+        /directory prefix/,
+      ],
+      ["callBlock", { ...ref, method: "echo", args: [] }, /Expected an object/],
+      [
+        "key",
+        {
+          ...ref,
+          event: {
+            key: "key_x",
+            mods: "",
+            consumed_mods: "",
+            text: "",
+            unshifted_codepoint: 0,
+            composing: false,
+            action: ["press"],
+          },
+        },
+        /Invalid key action/,
+      ],
+      [
+        "mouse",
+        { ...ref, event: { x: 0, y: 0, mods: "", action: ["press"] } },
+        /Invalid pointer action/,
+      ],
+      [
+        "mouse",
+        {
+          ...ref,
+          event: { x: 0, y: 0, mods: "", action: "press", button: ["left"] },
+        },
+        /Invalid pointer button/,
+      ],
+    ] as const)
+      await assert.rejects(invoke(method, args), failure);
+    assert.deepEqual(
+      calls,
+      [],
+      "Malformed renderer operations must fail before the corresponding domain RPC",
+    );
+    await invoke("destroySession", {
+      hostId: host.id,
+      sessionId: ref.sessionId,
+    });
+    await invoke("renamePane", { ...ref, label: "Named" });
+    await invoke("listDirectory", { ...ref, path: "/quoted path", prefix: "" });
+    await invoke("blockInfo", ref);
+    assert.deepEqual(
+      await invoke("callBlock", {
+        ...ref,
+        method: "echo",
+        args: { value: true },
+      }),
+      { accepted: true },
+    );
+    assert.deepEqual(calls, [
+      { method: "session.destroy", payload: { session_id: ref.sessionId } },
+      {
+        method: "session.set_block_label",
+        payload: {
+          session_id: ref.sessionId,
+          block_id: ref.blockId,
+          label: "Named",
+        },
+      },
+      {
+        method: "com.superlogical.terminal.list_dir",
+        payload: {
+          session_id: ref.sessionId,
+          block_id: ref.blockId,
+          args: { path: "/quoted path", files: false, limit: 2000 },
+        },
+      },
+      {
+        method: "session.describe_block",
+        payload: { session_id: ref.sessionId, block_id: ref.blockId },
+      },
+      {
+        method: "block.method",
+        payload: {
+          session_id: ref.sessionId,
+          block_id: ref.blockId,
+          method: "echo",
+          args: { value: true },
+        },
+      },
+    ]);
+    assert.equal(await invoke("callBlock", { ...ref, method: "empty" }), null);
+    await assert.rejects(
+      invoke("callBlock", { ...ref, method: "oversized" }),
+      /16 MiB inspector limit/,
+    );
+    const failure = await page.evaluate(async (ref) => {
+      try {
+        await window.rex.request("callBlock", { ...ref, method: "denied" });
+        return null;
+      } catch (error) {
+        return error instanceof Error
+          ? {
+              message: error.message,
+              code: "code" in error ? error.code : undefined,
+              method: "method" in error ? error.method : undefined,
+            }
+          : null;
+      }
+    }, ref);
+    assert.deepEqual(failure, {
+      message: "Blocked by fixture",
+      code: "fixture_denied",
+      method: "block.method",
+    });
+  } finally {
+    try {
+      await page.evaluate(async (hostId) => {
+        const settings = await window.rex.getSettings();
+        await window.rex.setSettings({
+          ...settings,
+          hosts: settings.hosts.filter((host) => host.id !== hostId),
+        });
+      }, host.id);
+    } finally {
+      for (const socket of server.clients) socket.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }
+}
 
 async function rejectedBridge(page: Page) {
   // Each operation crosses the real production preload and ipcMain handler.
@@ -265,6 +518,7 @@ try {
     "trusted clipboard",
   );
   await verifyCredentialAdapter(app, page);
+  await verifyRequestOperations(page);
   assert.equal(
     await page.evaluate(() =>
       window.rex.request("setContext", { uiBusy: false }),

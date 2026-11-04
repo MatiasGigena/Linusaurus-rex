@@ -5,8 +5,79 @@ import {
   parseKeyMode,
   parsePathPicker,
   updateRendererContext,
+  parseKeyEvent,
+  parsePointerEvent,
 } from "../electron/bridge-contracts.js";
 import { trustedRenderer } from "../electron/renderer-boundary.js";
+
+test("keyboard actions admit only literal protocol values", () => {
+  const event = {
+    key: "key_x",
+    action: "press",
+    mods: "ctrl",
+    consumed_mods: "",
+    text: "x",
+    unshifted_codepoint: 120,
+    composing: false,
+  };
+  for (const action of ["press", "release", "repeat"])
+    assert.deepEqual(parseKeyEvent({ ...event, action }), { ...event, action });
+  for (const action of [
+    ["press"],
+    { toString: () => "press" },
+    null,
+    1,
+    "PRESS",
+  ])
+    assert.throws(
+      () => parseKeyEvent({ ...event, action }),
+      /Invalid key action/,
+    );
+});
+
+test("pointer actions admit only literal protocol values", () => {
+  for (const action of ["press", "motion", "release"])
+    for (const button of [undefined, "left", "middle", "right"])
+      assert.equal(
+        parsePointerEvent("mouse", { x: 1, y: 2, mods: "", action, button })
+          .action,
+        action,
+      );
+  for (const action of [["press"], { toString: () => "press" }, null, 1])
+    assert.throws(
+      () => parsePointerEvent("mouse", { x: 1, y: 2, mods: "", action }),
+      /Invalid pointer action/,
+    );
+});
+
+test("pointer buttons admit only literal protocol values and wheel deltas stay bounded", () => {
+  for (const button of [["left"], { toString: () => "left" }, null, 1])
+    assert.throws(
+      () =>
+        parsePointerEvent("mouse", {
+          x: 1,
+          y: 2,
+          mods: "",
+          action: "press",
+          button,
+        }),
+      /Invalid pointer button/,
+    );
+  assert.deepEqual(
+    parsePointerEvent("wheel", {
+      x: 0,
+      y: 65535,
+      delta_x: -1000,
+      delta_y: 1000,
+    }),
+    { x: 0, y: 65535, delta_x: -1000, delta_y: 1000 },
+  );
+  assert.throws(
+    () =>
+      parsePointerEvent("wheel", { x: 0, y: 0, delta_x: Infinity, delta_y: 0 }),
+    /Invalid wheel delta/,
+  );
+});
 
 test("key modes require a name only for entry and reject contradictory exit arguments", () => {
   assert.deepEqual(parseKeyMode({ operation: "enter", name: "resize" }), {

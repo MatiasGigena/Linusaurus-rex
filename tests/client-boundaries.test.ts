@@ -24,6 +24,143 @@ const key = (name: string) => ({
   action: "press" as const,
 });
 
+test("typed key input preserves ordering, prefix forwarding and immediate reverse paste", async () => {
+  const current = preferenceFixture();
+  try {
+    await current.connect(current.hosts[0]);
+    const control = current.controls.get("first");
+    assert.ok(control);
+    const original = control.call.bind(control);
+    const sent: { method: string; payload: object }[] = [];
+    let release!: () => void;
+    let started!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const firstStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    control.call = async (method, payload) => {
+      if (method === "client.key") {
+        sent.push({ method, payload });
+        if (sent.length === 1) {
+          started();
+          await held;
+        }
+      } else if (method === "block.event") sent.push({ method, payload });
+      return original(method, payload);
+    };
+    const first = current.features.inputKey(
+      current.hosts[0],
+      "s",
+      "b",
+      key("one"),
+      ["prefix"],
+    );
+    await firstStarted;
+    const second = current.features.inputKey(
+      current.hosts[0],
+      "s",
+      "b",
+      key("two"),
+      [],
+    );
+    await current.features.input(current.hosts[0], "paste", "s", "b", {
+      text: "reverse paste",
+    });
+    assert.deepEqual(sent, [
+      {
+        method: "client.key",
+        payload: {
+          session_id: "s",
+          block_id: "b",
+          key: key("one"),
+          prefix: ["prefix"],
+        },
+      },
+      {
+        method: "block.event",
+        payload: {
+          session_id: "s",
+          block_id: "b",
+          event: { type: "paste", payload: { text: "reverse paste" } },
+        },
+      },
+    ]);
+    release();
+    await Promise.all([first, second]);
+    assert.deepEqual(sent.at(-1), {
+      method: "client.key",
+      payload: { session_id: "s", block_id: "b", key: key("two") },
+    });
+  } finally {
+    current.features.dispose();
+  }
+});
+
+test("a failed typed key invalidates queued keys without replay and retains the original failure", async () => {
+  const current = preferenceFixture();
+  try {
+    await current.connect(current.hosts[0]);
+    const control = current.controls.get("first");
+    assert.ok(control);
+    let reject!: (error: Error) => void;
+    let started!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const sent: object[] = [];
+    const original = control.call.bind(control);
+    control.call = async (method, payload) => {
+      if (method !== "client.key") return original(method, payload);
+      sent.push(payload);
+      started();
+      return new Promise((_resolve, fail) => {
+        reject = fail;
+      });
+    };
+    const failure = Object.assign(new Error("Key write failed"), {
+      code: "network_error",
+      method: "client.key",
+    });
+    const first = current.features.inputKey(
+      current.hosts[0],
+      "s",
+      "b",
+      key("one"),
+      [],
+    );
+    await firstStarted;
+    const second = current.features.inputKey(
+      current.hosts[0],
+      "s",
+      "b",
+      key("two"),
+      [],
+    );
+    const firstRejected = assert.rejects(first, (error) => error === failure);
+    const secondRejected = assert.rejects(second, /Input discarded/);
+    reject(failure);
+    await Promise.all([firstRejected, secondRejected]);
+    assert.equal(sent.length, 1);
+    control.call = original;
+    await current.features.inputKey(
+      current.hosts[0],
+      "s",
+      "b",
+      key("fresh"),
+      [],
+    );
+    assert.equal(
+      sent.length,
+      1,
+      "A new key may send after failure; an old queued key must never replay",
+    );
+  } finally {
+    current.features.dispose();
+  }
+});
+
 test("malformed remote keymap entries are filtered before keyboard routing", () => {
   const map = normalizeKeymap({
     actions: [
@@ -389,7 +526,7 @@ test("saved preference failures are reported per host while other operations and
     const previousActions = emitted.filter(
       (event) => event.type === "action",
     ).length;
-    await features.input(hosts[0], "key", "session", "pane", key("x"));
+    await features.inputKey(hosts[0], "session", "pane", key("x"));
     assert.equal(
       emitted.filter((event) => event.type === "action").length,
       previousActions + 1,
@@ -402,7 +539,7 @@ test("saved preference failures are reported per host while other operations and
     assert.deepEqual(label?.payload, { label: "Saved label" });
     const configuration = calls.find((call) => call.method === "client.keymap");
     assert.match(JSON.stringify(configuration?.payload), /"keys":\["y"\]/);
-    await features.input(hosts[0], "key", "session", "pane", key("y"));
+    await features.inputKey(hosts[0], "session", "pane", key("y"));
     assert.equal(
       emitted.filter((event) => event.type === "action").length,
       previousActions + 2,
@@ -442,9 +579,8 @@ test("incoming keymap changes report configuration failure, preserve active rout
             !event.connected,
         ),
     );
-    await current.features.input(
+    await current.features.inputKey(
       current.hosts[0],
-      "key",
       "session",
       "pane",
       key("x"),
@@ -457,9 +593,8 @@ test("incoming keymap changes report configuration failure, preserve active rout
     current.failures.clear();
     current.emit(current.hosts[0], "keymap_changed");
     await new Promise<void>((resolve) => setImmediate(resolve));
-    await current.features.input(
+    await current.features.inputKey(
       current.hosts[0],
-      "key",
       "session",
       "pane",
       key("y"),

@@ -18,6 +18,8 @@ import { CHANNELS } from "./channels.js";
 import { captureRequest } from "../src/shared/requestResult.js";
 import { trustedRenderer } from "./renderer-boundary.js";
 import {
+  parseKeyEvent,
+  parsePointerEvent,
   parseLayoutAction,
   parseKeyMode,
   parsePathPicker,
@@ -27,7 +29,6 @@ import { RexService } from "./rex/service.js";
 import type {
   ClientEvent,
   Host,
-  RexKeyEvent,
   RendererContext,
   Selection,
   Settings,
@@ -339,6 +340,12 @@ class WindowContext {
   ): Promise<unknown> {
     if (["input", "key", "paste", "mouse", "wheel"].includes(method))
       this.lastInput = Date.now();
+    return this.desktopRequest(method, args);
+  }
+  private async desktopRequest(
+    method: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
     if (method === "updateStatus") return updates(this.store).status();
     if (method === "checkUpdates") return updates(this.store).check();
     if (method === "downloadUpdate") return updates(this.store).download();
@@ -359,27 +366,7 @@ class WindowContext {
       this.visibility();
       return;
     }
-    if (method === "resizeWindow") {
-      const delta = integer(
-        args.deltaWidth,
-        "window width adjustment",
-        -500,
-        500,
-      );
-      if (this.window.isMaximized() || this.window.isFullScreen()) return;
-      const bounds = this.window.getBounds(),
-        area = screen.getDisplayMatching(bounds).workArea;
-      const width = Math.min(
-        Math.max(760, bounds.width + delta),
-        Math.max(760, area.width),
-      );
-      const x = Math.max(
-        area.x,
-        Math.min(bounds.x, area.x + area.width - width),
-      );
-      this.window.setBounds({ ...bounds, x, width });
-      return;
-    }
+    if (method === "resizeWindow") return this.resizeWindow(args);
     if (method === "integrationsStatus") {
       const result = await this.integrations.status();
       return {
@@ -396,26 +383,18 @@ class WindowContext {
     if (method === "openExternal")
       return this.links.open(string(args.url, "URL", 8192));
     if (method === "pickPath") return this.pickPath(parsePathPicker(args));
-    if (method === "importTheme") {
-      const result = await dialog.showOpenDialog(this.window, {
-        title: "Import terminal theme",
-        properties: ["openFile"],
-        filters: [
-          {
-            name: "Terminal colors",
-            extensions: ["itermcolors", "theme", "conf", "txt"],
-          },
-          { name: "All files", extensions: ["*"] },
-        ],
-      });
-      if (result.canceled || !result.filePaths[0]) return null;
-      return parseTheme(await readFile(result.filePaths[0], "utf8"));
-    }
+    if (method === "importTheme") return this.importTheme();
     if (method === "diagnostics")
       return this.diagnostics(
         typeof args.hostId === "string" ? this.host(args.hostId) : undefined,
       );
-    const host = this.host(args.hostId);
+    return this.hostRequest(method, args, this.host(args.hostId));
+  }
+  private async hostRequest(
+    method: string,
+    args: Record<string, unknown>,
+    host: Host,
+  ): Promise<unknown> {
     if (method === "setCredentials") {
       await hostCredentials.set(host, args);
       this.rex.reconnect(host);
@@ -494,7 +473,19 @@ class WindowContext {
           await this.startupCommand(host),
         ),
       };
-    const sessionId = identifier(args.sessionId, "session ID");
+    return this.sessionRequest(
+      method,
+      args,
+      host,
+      identifier(args.sessionId, "session ID"),
+    );
+  }
+  private async sessionRequest(
+    method: string,
+    args: Record<string, unknown>,
+    host: Host,
+    sessionId: string,
+  ): Promise<unknown> {
     if (method === "inspectSession")
       return this.features.trackViewAndScheduleMetadata(
         host,
@@ -507,9 +498,7 @@ class WindowContext {
         identifier(args.label, "session name"),
       );
     if (method === "destroySession")
-      return this.rex.callMethod(host, "session.destroy", {
-        session_id: sessionId,
-      });
+      return this.rex.destroySession(host, sessionId);
     if (method === "newWindow")
       return this.rex.createWindow(
         host,
@@ -576,7 +565,21 @@ class WindowContext {
             ? undefined
             : identifier(args.windowId, "destination tab ID"),
       });
-    const blockId = identifier(args.blockId, "pane ID");
+    return this.paneRequest(
+      method,
+      args,
+      host,
+      sessionId,
+      identifier(args.blockId, "pane ID"),
+    );
+  }
+  private async paneRequest(
+    method: string,
+    args: Record<string, unknown>,
+    host: Host,
+    sessionId: string,
+    blockId: string,
+  ): Promise<unknown> {
     if (method === "releaseViewport")
       return this.rex.releaseViewport(host, sessionId, blockId);
     if (method === "listDirectory") {
@@ -587,32 +590,26 @@ class WindowContext {
           : string(args.prefix, "directory prefix", 512);
       if (args.files !== undefined && typeof args.files !== "boolean")
         throw new Error("Invalid directory listing mode");
-      return this.rex.callMethod(host, "com.superlogical.terminal.list_dir", {
-        session_id: sessionId,
-        block_id: blockId,
-        args: {
-          path,
-          files: args.files === true,
-          limit:
-            args.limit === undefined
-              ? 2000
-              : integer(args.limit, "directory limit", 1, 2000),
-          ...(prefix ? { prefix } : {}),
-        },
+      return this.rex.listDirectory(host, sessionId, blockId, {
+        path,
+        files: args.files === true,
+        limit:
+          args.limit === undefined
+            ? 2000
+            : integer(args.limit, "directory limit", 1, 2000),
+        ...(prefix ? { prefix } : {}),
       });
     }
     if (method === "blockInfo")
-      return this.rex.callMethod(host, "session.describe_block", {
-        session_id: sessionId,
-        block_id: blockId,
-      });
+      return this.rex.blockInfo(host, sessionId, blockId);
     if (method === "callBlock") {
-      const result = await this.rex.callMethod(host, "block.method", {
-        session_id: sessionId,
-        block_id: blockId,
-        method: identifier(args.method, "block method"),
-        args: args.args === undefined ? {} : record(args.args),
-      });
+      const result = await this.rex.callBlock(
+        host,
+        sessionId,
+        blockId,
+        identifier(args.method, "block method"),
+        args.args === undefined ? {} : record(args.args),
+      );
       if (Buffer.byteLength(JSON.stringify(result ?? null)) > 16 * 1024 * 1024)
         throw new Error(
           "The block response exceeds the 16 MiB inspector limit.",
@@ -631,11 +628,12 @@ class WindowContext {
       return this.rex.focusBlock(host, sessionId, blockId);
     if (method === "zoom") return this.rex.zoom(host, sessionId, blockId);
     if (method === "renamePane")
-      return this.rex.callMethod(host, "session.set_block_label", {
-        session_id: sessionId,
-        block_id: blockId,
-        label: identifier(args.label, "pane name"),
-      });
+      return this.rex.renamePane(
+        host,
+        sessionId,
+        blockId,
+        identifier(args.label, "pane name"),
+      );
     if (method === "split") {
       const direction = identifier(args.direction, "split direction");
       if (!["left", "right", "above", "below"].includes(direction))
@@ -701,12 +699,11 @@ class WindowContext {
         integer(args.rows, "rows", 1, 500),
       );
     if (method === "key")
-      return this.features.input(
+      return this.features.inputKey(
         host,
-        "key",
         sessionId,
         blockId,
-        validateKey(args.event),
+        parseKeyEvent(args.event),
         Array.isArray(args.prefix)
           ? args.prefix.map((key) => string(key, "key prefix", 128))
           : undefined,
@@ -728,36 +725,76 @@ class WindowContext {
         method,
         sessionId,
         blockId,
-        validatePointer(method, args.event),
+        parsePointerEvent(method, args.event),
       );
-    if (method === "subscribe") {
-      const subscriptionId = identifier(args.subscriptionId, "subscription ID");
-      if (
-        !this.subscriptions.has(subscriptionId) &&
-        this.subscriptions.size >= 64
-      )
-        throw new Error("Too many terminal subscriptions");
-      this.subscriptions.get(subscriptionId)?.stop();
-      const send = (frame: Omit<TerminalFrame, "subscriptionId">) => {
-        if (!this.disposed && !this.window.isDestroyed())
-          this.window.webContents.send(CHANNELS.terminal, {
-            subscriptionId,
-            ...frame,
-          });
-      };
-      this.subscriptions.set(subscriptionId, {
-        host,
-        stop: this.rex.subscribe(
-          host,
-          sessionId,
-          blockId,
-          (data, kind, size) => send({ data, kind, ...size }),
-          (error) => send({ error }),
-        ),
-      });
-      return;
-    }
+    if (method === "subscribe")
+      return this.subscribe(host, sessionId, blockId, args);
     throw new Error("Unsupported Rex operation");
+  }
+  private resizeWindow(args: Record<string, unknown>) {
+    const delta = integer(
+      args.deltaWidth,
+      "window width adjustment",
+      -500,
+      500,
+    );
+    if (this.window.isMaximized() || this.window.isFullScreen()) return;
+    const bounds = this.window.getBounds(),
+      area = screen.getDisplayMatching(bounds).workArea;
+    const width = Math.min(
+      Math.max(760, bounds.width + delta),
+      Math.max(760, area.width),
+    );
+    const x = Math.max(area.x, Math.min(bounds.x, area.x + area.width - width));
+    this.window.setBounds({ ...bounds, x, width });
+    return;
+  }
+  private async importTheme() {
+    const result = await dialog.showOpenDialog(this.window, {
+      title: "Import terminal theme",
+      properties: ["openFile"],
+      filters: [
+        {
+          name: "Terminal colors",
+          extensions: ["itermcolors", "theme", "conf", "txt"],
+        },
+        { name: "All files", extensions: ["*"] },
+      ],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    return parseTheme(await readFile(result.filePaths[0], "utf8"));
+  }
+  private subscribe(
+    host: Host,
+    sessionId: string,
+    blockId: string,
+    args: Record<string, unknown>,
+  ) {
+    const subscriptionId = identifier(args.subscriptionId, "subscription ID");
+    if (
+      !this.subscriptions.has(subscriptionId) &&
+      this.subscriptions.size >= 64
+    )
+      throw new Error("Too many terminal subscriptions");
+    this.subscriptions.get(subscriptionId)?.stop();
+    const send = (frame: Omit<TerminalFrame, "subscriptionId">) => {
+      if (!this.disposed && !this.window.isDestroyed())
+        this.window.webContents.send(CHANNELS.terminal, {
+          subscriptionId,
+          ...frame,
+        });
+    };
+    this.subscriptions.set(subscriptionId, {
+      host,
+      stop: this.rex.subscribe(
+        host,
+        sessionId,
+        blockId,
+        (data, kind, size) => send({ data, kind, ...size }),
+        (error) => send({ error }),
+      ),
+    });
+    return;
   }
   windowControl(action: unknown) {
     if (this.window.isDestroyed()) return;
@@ -969,71 +1006,6 @@ class WindowContext {
     });
     return result.canceled ? null : (result.filePaths[0] ?? null);
   }
-}
-
-export function validateKey(value: unknown): Record<string, unknown> {
-  const event = record(value);
-  const key = identifier(event.key, "physical key");
-  if (!/^[a-z][a-z0-9_]{0,63}$/.test(key))
-    throw new Error("Invalid physical key");
-  if (!["press", "release", "repeat"].includes(String(event.action)))
-    throw new Error("Invalid key action");
-  if (typeof event.composing !== "boolean")
-    throw new Error("Invalid composing state");
-  const mods = string(event.mods, "modifiers", 160),
-    consumed = string(event.consumed_mods, "consumed modifiers", 160);
-  if (
-    !/^(?:[a-z_]+(?:\+[a-z_]+)*)?$/.test(mods) ||
-    !/^(?:[a-z_]+(?:\+[a-z_]+)*)?$/.test(consumed)
-  )
-    throw new Error("Invalid keyboard modifiers");
-  return {
-    key,
-    mods,
-    consumed_mods: consumed,
-    text: string(event.text, "key text", 65536, true),
-    unshifted_codepoint: integer(
-      event.unshifted_codepoint,
-      "unshifted codepoint",
-      0,
-      0x10ffff,
-    ),
-    composing: event.composing,
-    action: event.action as RexKeyEvent["action"],
-  } satisfies RexKeyEvent;
-}
-export function validatePointer(
-  kind: "mouse" | "wheel",
-  value: unknown,
-): Record<string, unknown> {
-  const event = record(value);
-  const result: Record<string, unknown> = {
-    x: integer(event.x, "pointer column", 0, 65535),
-    y: integer(event.y, "pointer row", 0, 65535),
-  };
-  if (kind === "mouse") {
-    if (!["press", "motion", "release"].includes(String(event.action)))
-      throw new Error("Invalid pointer action");
-    result.action = event.action;
-    if (event.button !== undefined) {
-      if (!["left", "middle", "right"].includes(String(event.button)))
-        throw new Error("Invalid pointer button");
-      result.button = event.button;
-    }
-    result.mods = string(event.mods, "pointer modifiers", 80);
-  } else {
-    for (const axis of ["delta_x", "delta_y"]) {
-      const value = event[axis];
-      if (
-        typeof value !== "number" ||
-        !Number.isFinite(value) ||
-        Math.abs(value) > 1000
-      )
-        throw new Error("Invalid wheel delta");
-      result[axis] = value;
-    }
-  }
-  return result;
 }
 
 /** One IPC router dispatches to the owning window; multiple windows never overwrite handlers. */

@@ -136,6 +136,10 @@ export class RexService {
     await this.call(host, 'session.set_label', { session_id: sessionId, label });
   }
 
+  destroySession(host: RexHost, sessionId: string): Promise<unknown> {
+    return this.call(host, 'session.destroy', { session_id: sessionId });
+  }
+
   async createWindow(host: RexHost, sessionId: string, label = 'Shell', cwd?: string, command?: string) {
     await this.call(host, 'session.new_window', { session_id: sessionId, window_label: label, layout: shellLayout(cwd, command), focus: true });
   }
@@ -187,6 +191,54 @@ export class RexService {
 
   async closeBlock(host: RexHost, sessionId: string, blockId: string) {
     await this.call(host, 'block.close', { session_id: sessionId, block_id: blockId });
+  }
+
+  renamePane(
+    host: RexHost,
+    sessionId: string,
+    blockId: string,
+    label: string,
+  ): Promise<unknown> {
+    return this.call(host, 'session.set_block_label', {
+      session_id: sessionId,
+      block_id: blockId,
+      label,
+    });
+  }
+
+  listDirectory(
+    host: RexHost,
+    sessionId: string,
+    blockId: string,
+    options: { path: string; files: boolean; limit: number; prefix?: string },
+  ): Promise<unknown> {
+    return this.block(host, sessionId, blockId, 'list_dir', options);
+  }
+
+  blockInfo(
+    host: RexHost,
+    sessionId: string,
+    blockId: string,
+  ): Promise<unknown> {
+    return this.call(host, 'session.describe_block', {
+      session_id: sessionId,
+      block_id: blockId,
+    });
+  }
+
+  callBlock(
+    host: RexHost,
+    sessionId: string,
+    blockId: string,
+    method: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.call(host, 'block.method', {
+      session_id: sessionId,
+      block_id: blockId,
+      method,
+      args,
+    });
   }
 
   async focusBlock(host: RexHost, sessionId: string, blockId: string) {
