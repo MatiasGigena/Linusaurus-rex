@@ -11,12 +11,14 @@ import {
 import { Dialog } from "./Dialog";
 import type { RexMethods, TerminalRef } from "../shared/types";
 import { errorMessage } from "../core/workspace";
+import { WorkspaceReconciliationError } from "../core/workspaceOperations";
 interface DirectoryDialogProps {
   terminalRef: TerminalRef;
   endpoint?: string;
   mode: "insert" | "directory";
   recent: string[];
   onPick(path: string): Promise<void>;
+  onRefresh?(): Promise<void>;
   onClose(): void;
 }
 export function DirectoryDialog(props: DirectoryDialogProps) {
@@ -39,6 +41,7 @@ function DirectoryBrowser({
   mode,
   recent,
   onPick,
+  onRefresh,
   onClose,
 }: DirectoryDialogProps) {
   const [directory, setDirectory] =
@@ -48,10 +51,15 @@ function DirectoryBrowser({
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [committedError, setCommittedError] = useState<string>();
   const [error, setError] = useState<string>();
   const mounted = useRef(true);
   const listingRequest = useRef(0);
   const pickingRequest = useRef(0);
+  const pickingPhase = useRef<"ready" | "saving" | "committed" | "refreshing">(
+    "ready",
+  );
   const load = async (next: string): Promise<boolean> => {
     if (!mounted.current) return false;
     const request = ++listingRequest.current;
@@ -99,16 +107,43 @@ function DirectoryBrowser({
   const fullPath = (name: string) =>
     `${directory?.path.replace(/\/$/, "") || ""}/${name}` || "/";
   const pick = async (value: string) => {
-    if (saving || !value) return;
+    if (pickingPhase.current !== "ready" || !value) return;
     const request = ++pickingRequest.current;
+    pickingPhase.current = "saving";
     setSaving(true);
+    setError(undefined);
     try {
       await onPick(value);
       if (mounted.current && pickingRequest.current === request) onClose();
     } catch (failure) {
       if (mounted.current && pickingRequest.current === request) {
-        setError(errorMessage(failure));
+        if (failure instanceof WorkspaceReconciliationError) {
+          pickingPhase.current = "committed";
+          setCommittedError(errorMessage(failure));
+        } else {
+          pickingPhase.current = "ready";
+          setError(errorMessage(failure));
+        }
         setSaving(false);
+      }
+    }
+  };
+  const refresh = async () => {
+    if (!onRefresh || pickingPhase.current !== "committed") return;
+    const request = ++pickingRequest.current;
+    pickingPhase.current = "refreshing";
+    setRefreshing(true);
+    setError(undefined);
+    try {
+      await onRefresh();
+      if (mounted.current && pickingRequest.current === request) onClose();
+    } catch (failure) {
+      if (mounted.current && pickingRequest.current === request)
+        setError(errorMessage(failure));
+    } finally {
+      if (mounted.current && pickingRequest.current === request) {
+        pickingPhase.current = "committed";
+        setRefreshing(false);
       }
     }
   };
@@ -172,6 +207,7 @@ function DirectoryBrowser({
             <button
               key={value}
               title={value}
+              disabled={mode === "insert" && (saving || !!committedError)}
               onClick={() =>
                 mode === "insert" ? void pick(value) : void load(value)
               }
@@ -304,15 +340,26 @@ function DirectoryBrowser({
           a large directory.
         </p>
       )}
-      {error && (
+      {(committedError || error) && (
         <p className="form-error" role="alert">
+          {committedError}
+          {committedError && error ? " " : ""}
           {error}
         </p>
       )}
       <div className="dialog-actions">
         <button className="button" onClick={onClose}>
-          Cancel
+          {committedError ? "Dismiss" : "Cancel"}
         </button>
+        {committedError && onRefresh && (
+          <button
+            className="button"
+            disabled={refreshing}
+            onClick={() => void refresh()}
+          >
+            {refreshing ? "Refreshing…" : "Refresh workspace"}
+          </button>
+        )}
         {selected &&
           !directory?.entries.find((entry) => entry.name === selected)
             ?.file && (
@@ -326,7 +373,9 @@ function DirectoryBrowser({
           )}
         <button
           className="button button-primary"
-          disabled={saving || loading || directory?.status !== "ok"}
+          disabled={
+            saving || !!committedError || loading || directory?.status !== "ok"
+          }
           onClick={() =>
             void pick(selected ? fullPath(selected) : directory?.path || "")
           }
