@@ -220,8 +220,9 @@ export class LinuxUpdateManager {
   }
   /**
    * Release fetch/metadata failures resolve with a published phase="error" state.
-   * Rejects while another check/download is active; cancellation returns the
-   * current state. Callers must handle both rejection and the returned phase.
+   * Rejects while another check/download is active. cancel() publishes its state
+   * immediately; this operation resolves to the current state when abort handling
+   * settles. Callers must handle both rejection and the returned phase.
    */
   async check() {
     if (this.controller)
@@ -262,8 +263,9 @@ export class LinuxUpdateManager {
   }
   /**
    * Transfer/verification failures resolve with a published phase="error" state;
-   * cancellation returns the current state. Rejects while a check/download is
-   * active, without a selected release, or if partial-file cleanup itself fails.
+   * after cancel() publishes its state, the aborted transfer resolves to the
+   * current state when abort handling and cleanup settle. Rejects while a check/
+   * download is active, without a selected release, or if cleanup itself fails.
    */
   async download() {
     if (this.controller)
@@ -367,6 +369,12 @@ export class LinuxUpdateManager {
     } else await this.options.install?.(path, "deb");
     return this.publish({ phase: "ready" });
   }
+  /**
+   * Requests check/download abortion, clears a scheduled install, and immediately
+   * publishes/returns ready when a verified download exists, otherwise idle.
+   * Aborted operations settle later with the current published state; this call
+   * does not wait for their abort handling or partial-file cleanup.
+   */
   cancel() {
     this.controller?.abort();
     this.scheduled = false;
