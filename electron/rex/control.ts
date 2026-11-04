@@ -7,6 +7,34 @@ export interface RexWelcome { protocol: string; api_revision: number; api_server
 export type RexEvent = { type: string; seq?: number; payload?: Record<string, unknown>; [key: string]: unknown };
 type Pending = { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function controlMessage(value: unknown): RexEvent {
+  if (!isRecord(value) || typeof value.type !== 'string' || !value.type) throw new Error('Invalid Rex control message envelope.');
+  return value as RexEvent;
+}
+function invalidWelcome(): never { throw new Error('Rex sent an invalid control welcome.'); }
+function validateWelcome(message: RexEvent, revisions: { min: number; max: number }): asserts message is RexEvent & RexWelcome {
+  if (message.type !== 'welcome' || message.protocol !== 'rex.control.v1' || typeof message.api_revision !== 'number' || !Number.isInteger(message.api_revision) || message.api_revision < revisions.min || message.api_revision > revisions.max) {
+    throw new Error(`Rex control protocol is incompatible; API revisions ${revisions.min}–${revisions.max} are supported.`);
+  }
+  const serverRevision = message.api_server_revision;
+  if (serverRevision !== undefined && (typeof serverRevision !== 'number' || !Number.isSafeInteger(serverRevision) || serverRevision < 0)) invalidWelcome();
+  if (message.limits !== undefined) {
+    if (!isRecord(message.limits)) invalidWelcome();
+    const bytes = message.limits.max_message_bytes;
+    if (bytes !== undefined && (typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes <= 0)) invalidWelcome();
+  }
+  if (message.client !== undefined) {
+    const client = message.client;
+    if (!isRecord(client) || typeof client.id !== 'string' || !client.id) invalidWelcome();
+    if (client.reconnect_token !== undefined && typeof client.reconnect_token !== 'string') invalidWelcome();
+    if (client.resumed !== undefined && typeof client.resumed !== 'boolean') invalidWelcome();
+  }
+  if (message.features !== undefined && (!Array.isArray(message.features) || message.features.some(feature => typeof feature !== 'string'))) invalidWelcome();
+}
+
 /** Server rejection identity remains available without changing its displayed message. */
 export class RexRequestError extends Error {
   constructor(message: string, readonly code: string | undefined, readonly method: string) {
@@ -90,10 +118,10 @@ export class RexControl {
       this.socket.on('message', (bytes, binary) => {
         try {
           if (binary) throw new Error('Rex sent binary content on its control connection.');
-          const message = JSON.parse(bytes.toString()) as RexEvent;
+          const message = controlMessage(JSON.parse(bytes.toString()));
           if (!this.readyDone) {
-            const welcome = message as unknown as RexWelcome;
-            if (message.type !== 'welcome' || welcome.protocol !== 'rex.control.v1' || welcome.api_revision < this.revisions.min || welcome.api_revision > this.revisions.max) throw new Error(`Rex control protocol is incompatible; API revisions ${this.revisions.min}–${this.revisions.max} are supported.`);
+            validateWelcome(message, this.revisions);
+            const welcome = message;
             this.maxMessageBytes = Math.min(16 * 1024 * 1024, welcome.limits?.max_message_bytes ?? this.maxMessageBytes);
             this.welcome = welcome; this.readyDone = true; clearTimeout(timer); resolve(welcome);
           } else if (message.type === 'response') {
