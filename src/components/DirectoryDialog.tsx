@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   File,
@@ -11,19 +11,36 @@ import {
 import { Dialog } from "./Dialog";
 import type { RexMethods, TerminalRef } from "../shared/types";
 import { errorMessage } from "../core/workspace";
-export function DirectoryDialog({
+interface DirectoryDialogProps {
+  terminalRef: TerminalRef;
+  endpoint?: string;
+  mode: "insert" | "directory";
+  recent: string[];
+  onPick(path: string): Promise<void>;
+  onClose(): void;
+}
+export function DirectoryDialog(props: DirectoryDialogProps) {
+  const { hostId, sessionId, blockId } = props.terminalRef;
+  return (
+    <DirectoryBrowser
+      key={JSON.stringify([
+        hostId,
+        sessionId,
+        blockId,
+        props.endpoint,
+        props.mode,
+      ])}
+      {...props}
+    />
+  );
+}
+function DirectoryBrowser({
   terminalRef,
   mode,
   recent,
   onPick,
   onClose,
-}: {
-  terminalRef: TerminalRef;
-  mode: "insert" | "directory";
-  recent: string[];
-  onPick(path: string): Promise<void>;
-  onClose(): void;
-}) {
+}: DirectoryDialogProps) {
   const [directory, setDirectory] =
     useState<RexMethods["listDirectory"]["result"]>();
   const [path, setPath] = useState("");
@@ -32,7 +49,14 @@ export function DirectoryDialog({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
-  const load = async (next: string) => {
+  const mounted = useRef(true);
+  const listingRequest = useRef(0);
+  const pickingRequest = useRef(0);
+  const load = async (next: string): Promise<boolean> => {
+    if (!mounted.current) return false;
+    const request = ++listingRequest.current;
+    const ownsRequest = () =>
+      mounted.current && listingRequest.current === request;
     setLoading(true);
     setError(undefined);
     setSelected("");
@@ -44,6 +68,7 @@ export function DirectoryDialog({
         files: mode === "insert",
         limit: 2000,
       });
+      if (!ownsRequest()) return false;
       setDirectory(result);
       setPath(result.path || next);
       if (result.status !== "ok")
@@ -54,26 +79,37 @@ export function DirectoryDialog({
               ? "This path is not a directory."
               : "The directory does not exist.",
         );
+      return result.status === "ok";
     } catch (failure) {
-      setError(errorMessage(failure));
+      if (ownsRequest()) setError(errorMessage(failure));
+      return false;
     } finally {
-      setLoading(false);
+      if (ownsRequest()) setLoading(false);
     }
   };
   useEffect(() => {
+    mounted.current = true;
     void load("");
-  }, [terminalRef.hostId, terminalRef.sessionId, terminalRef.blockId]);
+    return () => {
+      mounted.current = false;
+      listingRequest.current++;
+      pickingRequest.current++;
+    };
+  }, []);
   const fullPath = (name: string) =>
     `${directory?.path.replace(/\/$/, "") || ""}/${name}` || "/";
   const pick = async (value: string) => {
     if (saving || !value) return;
+    const request = ++pickingRequest.current;
     setSaving(true);
     try {
       await onPick(value);
-      onClose();
+      if (mounted.current && pickingRequest.current === request) onClose();
     } catch (failure) {
-      setError(errorMessage(failure));
-      setSaving(false);
+      if (mounted.current && pickingRequest.current === request) {
+        setError(errorMessage(failure));
+        setSaving(false);
+      }
     }
   };
   const entries = (directory?.entries || [])
@@ -183,13 +219,21 @@ export function DirectoryDialog({
             if (entry.file) void pick(fullPath(entry.name));
             else {
               const list = event.currentTarget;
-              void load(fullPath(entry.name)).then(() =>
-                requestAnimationFrame(() =>
-                  list
-                    .querySelector<HTMLButtonElement>('[role="option"]')
-                    ?.focus(),
-                ),
-              );
+              const loaded = load(fullPath(entry.name));
+              const request = listingRequest.current;
+              void loaded.then((applied) => {
+                if (!applied) return;
+                requestAnimationFrame(() => {
+                  if (
+                    mounted.current &&
+                    listingRequest.current === request &&
+                    list.isConnected
+                  )
+                    list
+                      .querySelector<HTMLButtonElement>('[role="option"]')
+                      ?.focus();
+                });
+              });
             }
             return;
           }

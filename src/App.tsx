@@ -1316,6 +1316,7 @@ export default function App() {
       {diagnostics && (
         <DiagnosticsDialog
           hostId={activeHost?.id}
+          endpoint={activeHost?.endpoint}
           onClose={() => setDiagnostics(false)}
           onServerAction={serverAction}
         />
@@ -1334,6 +1335,7 @@ export default function App() {
       {directoryBrowser && (
         <DirectoryDialog
           terminalRef={directoryBrowser.ref}
+          endpoint={settings.hosts.find((host) => host.id === directoryBrowser.ref.hostId)?.endpoint}
           mode={directoryBrowser.mode}
           recent={
             settings.showRecentPaths

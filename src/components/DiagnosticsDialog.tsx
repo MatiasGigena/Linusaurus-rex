@@ -1,17 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Copy, ExternalLink, RefreshCw } from "lucide-react";
 import { Dialog } from "./Dialog";
 import { errorMessage } from "../core/workspace";
 import { decodeServerDetails, type ServerDetails } from "../core/serverDetails";
-export function DiagnosticsDialog({
+interface DiagnosticsDialogProps {
+  hostId?: string;
+  endpoint?: string;
+  onClose(): void;
+  onServerAction(action: string, args?: Record<string, unknown>): void;
+}
+export function DiagnosticsDialog(props: DiagnosticsDialogProps) {
+  return (
+    <DiagnosticsReport
+      key={JSON.stringify([props.hostId, props.endpoint])}
+      {...props}
+    />
+  );
+}
+function DiagnosticsReport({
   hostId,
   onClose,
   onServerAction,
-}: {
-  hostId?: string;
-  onClose(): void;
-  onServerAction(action: string, args?: Record<string, unknown>): void;
-}) {
+}: DiagnosticsDialogProps) {
   const [report, setReport] = useState<Record<string, unknown>>();
   const [details, setDetails] = useState<ServerDetails>();
   const [error, setError] = useState<string>();
@@ -19,8 +29,16 @@ export function DiagnosticsDialog({
   const [controlUrl, setControlUrl] = useState("");
   const [tags, setTags] = useState("");
   const [allowMembers, setAllowMembers] = useState(false);
-  const reportFailure = (failure: unknown) => setError(errorMessage(failure));
+  const mounted = useRef(true);
+  const requestRevision = useRef(0);
+  const reportFailure = (failure: unknown) => {
+    if (mounted.current) setError(errorMessage(failure));
+  };
   const load = () => {
+    if (!mounted.current) return;
+    const request = ++requestRevision.current;
+    const ownsRequest = () =>
+      mounted.current && requestRevision.current === request;
     void Promise.all([
       window.rex.request("diagnostics", { hostId }),
       hostId
@@ -28,6 +46,7 @@ export function DiagnosticsDialog({
         : Promise.resolve({}),
     ])
       .then(([info, status]) => {
+        if (!ownsRequest()) return;
         const server = decodeServerDetails(status);
         const next = {
           report: { ...info, status: server },
@@ -45,9 +64,18 @@ export function DiagnosticsDialog({
         setHostname(next.hostname);
         setError(undefined);
       })
-      .catch(reportFailure);
+      .catch((failure) => {
+        if (ownsRequest()) reportFailure(failure);
+      });
   };
-  useEffect(load, [hostId]);
+  useEffect(() => {
+    mounted.current = true;
+    load();
+    return () => {
+      mounted.current = false;
+      requestRevision.current++;
+    };
+  }, []);
   const ts = details?.tailscale;
   const remoteUrl = ts?.https?.url;
   const authUrl = ts?.auth_url;
