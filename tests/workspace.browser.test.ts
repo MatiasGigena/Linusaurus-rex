@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { expect, type Page } from "@playwright/test";
 import { withBrowserFixture } from "./browser-fixture";
+import type { RendererContext } from "../src/shared/types";
 
 const source = `
 import React from 'react';
@@ -18,14 +19,16 @@ window.fixture={calls,
  pending(){return requests.filter(request=>!request.settled).map(({id,method,args})=>({id,method,args}));},
  fail(id,message,code='permission_denied'){const request=requests.find(request=>request.id===id&&!request.settled);if(!request)throw Error('Missing pending request '+id);request.settled=true;const error=Object.assign(new Error(message),{code,method:request.method});window.fixture.lastFailure=error;request.reject(error);},
  complete(id,value){const request=requests.find(request=>request.id===id&&!request.settled);if(!request)throw Error('Missing pending request '+id);request.settled=true;request.resolve(value);},
- refresh(){void workspace.refresh();},select(hostId,sessionId,windowId){workspace.select(hostId,sessionId,windowId);},reload(hostId,sessionId){void workspace.reloadSession(hostId,sessionId).catch(error=>{(window.fixture.reloadErrors??=[]).push(error.message);});},
+ refresh(){void workspace.refresh();},select(hostId,sessionId,windowId,blockId){workspace.select(hostId,sessionId,windowId,blockId);},reload(hostId,sessionId){void workspace.reloadSession(hostId,sessionId).catch(error=>{(window.fixture.reloadErrors??=[]).push(error.message);});},
  reloadAfterResize(){const reload=workspace.reloadSession;window.fixture.reloadResult='pending';void window.rex.request('resizeDivider',{hostId:'one',sessionId:'s',beforeBlockId:'before',afterBlockId:'after',direction:'horizontal',ratio:0.5}).then(()=>reload('one','s')).then(()=>{window.fixture.reloadResult='complete';},error=>{window.fixture.reloadResult=error.message;});},
  mutate(){window.fixture.mutation='pending';void workspace.operations.mutateSession({hostId:'one',sessionId:'s',selectActive:true},()=>window.rex.request('renameWindow',{hostId:'one',sessionId:'s',windowId:'w',label:'Updated'})).then(value=>{window.fixture.mutation='complete';window.fixture.completed=value;},error=>{window.fixture.mutation=error.message;window.fixture.failureIdentity=error===window.fixture.lastFailure;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
  mutateTarget(sessionId,key){(window.fixture.mutations??={})[key]='pending';void workspace.operations.mutateSession({hostId:'one',sessionId},()=>window.rex.request('renameWindow',{hostId:'one',sessionId,windowId:'w',label:key})).then(()=>{window.fixture.mutations[key]='complete';},error=>{window.fixture.mutations[key]=error.message;});},
  mutateHostAndRefresh(){window.fixture.mutation='pending';void workspace.operations.mutateHostAndRefresh('one',()=>window.rex.request('renameWindow',{hostId:'one',sessionId:'s',windowId:'w',label:'Updated'})).then(()=>{window.fixture.mutation='complete';},error=>{window.fixture.mutation=error.message;window.fixture.failureIdentity=error===window.fixture.lastFailure;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
- dispatch(name,args={}){const noop=()=>{};const execute=createWorkspaceActions({dialogs,workspace:workspace.operations,settings,hosts:workspace.hosts,views:workspace.views,selection:workspace.selection,keymaps:workspace.keymaps,focusedPane:workspace.focusedPane,workspaceElement:{current:null},setCollapsedSessions:noop,setActivityOnly:noop,setActivityOpen:noop,setActivityGroup:noop,onError:noop});window.fixture.mutation='pending';void execute(name,args).then(value=>{window.fixture.mutation='complete';window.fixture.completed=value;},error=>{window.fixture.mutation=error.message;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
+ dispatch(name,args={}){const noop=()=>{};const execute=createWorkspaceActions({dialogs,workspace:workspace.operations,settings,hosts:workspace.hosts,views:workspace.views,selection:workspace.selection,keymaps:workspace.keymaps,focusedPane:workspace.focusedPane,workspaceElement:{current:null},setCollapsedSessions:noop,setActivityOnly:noop,setActivityOpen:noop,setActivityGroup:noop});window.fixture.mutation='pending';void execute(name,args).then(value=>{window.fixture.mutation='complete';window.fixture.completed=value;},error=>{window.fixture.mutation=error.message;window.fixture.failureCause=error.cause===window.fixture.lastFailure;window.fixture.failureCode=error.code;window.fixture.failureMethod=error.method;});},
  preferences(patch){settings={...settings,...patch};for(const listener of listeners)listener({type:'settings',settings});},
  changeHosts(hosts){settings={...settings,hosts};for(const listener of listeners)listener({type:'settings',settings});},
+ visibility(hidden){Object.defineProperty(document,'hidden',{configurable:true,value:hidden});document.dispatchEvent(new Event('visibilitychange'));},
+ report(message){workspace.setError(message);},
  status(hostId,connected){for(const listener of listeners)listener({type:'status',hostId,connected});},
  unmount(){setVisible(false);}
 };
@@ -33,7 +36,7 @@ window.rex={
  getSettings:async()=>settings,
  setSettings:async(next)=>{calls.push({method:'setSettings'});settings=next;return next;},
  onClientEvent:callback=>{listeners.add(callback);return()=>listeners.delete(callback);},
- request(method,args){const id=++nextId;calls.push({id,method,args});if(method==='setContext')return Promise.resolve();if(method==='keymap'&&!window.fixture.deferKeymaps)return Promise.resolve({actions:[],bindings:[],modes:[],warnings:[]});return new Promise((resolve,reject)=>requests.push({id,method,args,resolve,reject,settled:false}));}
+ request(method,args){const id=++nextId;calls.push({id,method,args});if(method==='setContext'&&!window.fixture.deferContexts)return Promise.resolve();if(method==='keymap'&&!window.fixture.deferKeymaps)return Promise.resolve({actions:[],bindings:[],modes:[],warnings:[]});return new Promise((resolve,reject)=>requests.push({id,method,args,resolve,reject,settled:false}));}
 };
 function WorkspaceFixture(){const state=useWorkspace();workspace=state;return React.createElement('pre',{id:'workspace-state'},JSON.stringify({settingsHosts:state.settings?.hosts.map(host=>host.id),hosts:state.hosts.map(host=>host.id),views:Object.fromEntries(Object.entries(state.views).map(([key,view])=>[key,view.label])),hostErrors:Object.fromEntries(state.hosts.map(host=>[host.id,host.error])),connected:Object.fromEntries(state.hosts.map(host=>[host.id,host.connected])),keymapHosts:Object.keys(state.keymaps),selection:state.selection,focusedPane:state.focusedPane,sessions:Object.fromEntries(state.hosts.map(host=>[host.id,host.sessions.map(session=>session.label)])),busy:state.busy,loading:state.loading,error:state.error}));}
 function Root(){const[visible,show]=React.useState(true);setVisible=show;return visible?React.createElement(WorkspaceFixture):React.createElement('p',null,'Workspace unmounted');}
@@ -42,12 +45,15 @@ createRoot(document.getElementById('root')).render(React.createElement(Root));
 interface PendingRequest {
   id: number;
   method: string;
-  args: { hostId?: string; sessionId?: string };
+  args: { hostId?: string; sessionId?: string } & RendererContext;
 }
 interface WorkspaceFixtureWindow {
   fixture: {
     calls: PendingRequest[];
     deferKeymaps?: boolean;
+    deferContexts?: boolean;
+    visibility(hidden: boolean): void;
+    report(message: string): void;
     mutation?: string;
     failureIdentity?: boolean;
     failureCause?: boolean;
@@ -64,7 +70,12 @@ interface WorkspaceFixtureWindow {
     mutateTarget(sessionId: string, key: string): void;
     mutations?: Record<string, string>;
     reload(hostId: string, sessionId: string): void;
-    select(hostId: string, sessionId: string, windowId?: string): void;
+    select(
+      hostId: string,
+      sessionId: string,
+      windowId?: string,
+      blockId?: string,
+    ): void;
     reloadAfterResize(): void;
     reloadResult?: string;
     changeHosts(hosts: { id: string; label: string; endpoint: string }[]): void;
@@ -1706,6 +1717,247 @@ test(
         await expect
           .poll(async () => (await snapshot(page)).keymapHosts)
           .toEqual(["one"]);
+      },
+    );
+  },
+);
+
+async function contextRequest(page: Page, after = 0): Promise<PendingRequest> {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (after) =>
+          (window as unknown as WorkspaceFixtureWindow).fixture
+            .pending()
+            .some(
+              (request) =>
+                request.method === "setContext" && request.id > after,
+            ),
+        after,
+      ),
+    )
+    .toBe(true);
+  const request = await page.evaluate(
+    (after) =>
+      (window as unknown as WorkspaceFixtureWindow).fixture
+        .pending()
+        .find(
+          (request) => request.method === "setContext" && request.id > after,
+        ),
+    after,
+  );
+  if (!request) throw Error("Missing pending context publication");
+  return request;
+}
+async function contextFixture(page: Page) {
+  await complete(
+    page,
+    await startInspection(page),
+    view("s", "Context session"),
+  );
+  await expect
+    .poll(async () => (await snapshot(page)).views["one/s"])
+    .toBe("Context session");
+  await page.evaluate(() => {
+    const fixture = (window as unknown as WorkspaceFixtureWindow).fixture;
+    fixture.deferContexts = true;
+    fixture.select("one", "s", "w", "other");
+  });
+  return contextRequest(page);
+}
+
+test(
+  "context publication failures report and a refresh retries the latest selection",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-context-refresh",
+      source,
+      async (page) => {
+        const first = await contextFixture(page);
+        await page.evaluate(
+          (id) =>
+            (window as unknown as WorkspaceFixtureWindow).fixture.fail(
+              id,
+              "Context refused",
+            ),
+          first.id,
+        );
+        await expect
+          .poll(async () => (await snapshot(page)).error)
+          .toBe("Workspace context: Context refused");
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.select(
+            "one",
+            "s",
+            "w",
+            "b",
+          ),
+        );
+        const latest = await contextRequest(page, first.id);
+        await page.evaluate(
+          (id) =>
+            (window as unknown as WorkspaceFixtureWindow).fixture.fail(
+              id,
+              "Latest context refused",
+            ),
+          latest.id,
+        );
+        await expect
+          .poll(async () => (await snapshot(page)).error)
+          .toBe("Workspace context: Latest context refused");
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.refresh(),
+        );
+        const retry = await contextRequest(page, latest.id);
+        assert.deepEqual(retry.args.selection, {
+          hostId: "one",
+          sessionId: "s",
+          windowId: "w",
+          blockId: "b",
+        });
+        assert.equal(retry.args.visible, true);
+        await complete(page, retry.id, undefined);
+      },
+    );
+  },
+);
+
+test(
+  "visibility retries current context after a failed publication",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-context-visibility",
+      source,
+      async (page) => {
+        const first = await contextFixture(page);
+        await page.evaluate(
+          (id) =>
+            (window as unknown as WorkspaceFixtureWindow).fixture.fail(
+              id,
+              "Context refused",
+            ),
+          first.id,
+        );
+        await expect
+          .poll(async () => (await snapshot(page)).error)
+          .toBe("Workspace context: Context refused");
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.visibility(
+            true,
+          ),
+        );
+        const retry = await contextRequest(page, first.id);
+        assert.equal(retry.args.visible, false);
+        assert.deepEqual(retry.args.selection, first.args.selection);
+        await complete(page, retry.id, undefined);
+      },
+    );
+  },
+);
+
+for (const lifetime of [
+  "new selection",
+  "host replacement",
+  "unmount",
+] as const) {
+  test(
+    `stale context failures cannot overwrite feedback after ${lifetime}`,
+    options,
+    async () => {
+      await withBrowserFixture(
+        `workspace-context-stale-${lifetime.replaceAll(" ", "-")}`,
+        source,
+        async (page) => {
+          const old = await contextFixture(page);
+          const before = await page.evaluate(
+            () =>
+              (window as unknown as WorkspaceFixtureWindow).fixture.calls
+                .length,
+          );
+          await page.evaluate(
+            ({ lifetime, id }) => {
+              const fixture = (window as unknown as WorkspaceFixtureWindow)
+                .fixture;
+              fixture.report("Replacement feedback");
+              if (lifetime === "new selection")
+                fixture.select("one", "s", "w", "b");
+              else if (lifetime === "host replacement")
+                fixture.changeHosts([
+                  {
+                    id: "one",
+                    label: "New endpoint",
+                    endpoint: "unix:///new.sock",
+                  },
+                ]);
+              else fixture.unmount();
+              fixture.fail(id, "Old context failed");
+            },
+            { lifetime, id: old.id },
+          );
+          if (lifetime === "unmount") {
+            await expect(page.getByText("Workspace unmounted")).toBeVisible();
+            await nextFrame(page);
+            assert.equal(
+              await page.evaluate(
+                () =>
+                  (window as unknown as WorkspaceFixtureWindow).fixture.calls
+                    .length,
+              ),
+              before,
+            );
+          } else {
+            await nextFrame(page);
+            assert.equal((await snapshot(page)).error, "Replacement feedback");
+          }
+        },
+      );
+    },
+  );
+}
+
+test(
+  "refresh retries context without waiting for an older snapshot collection",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-context-held-refresh",
+      source,
+      async (page) => {
+        const failed = await contextFixture(page);
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.refresh(),
+        );
+        const held = await pending(page, "status", "one");
+        await page.evaluate(
+          (id) =>
+            (window as unknown as WorkspaceFixtureWindow).fixture.fail(
+              id,
+              "Context refused",
+            ),
+          failed.id,
+        );
+        await expect
+          .poll(async () => (await snapshot(page)).error)
+          .toBe("Workspace context: Context refused");
+        await page.evaluate(() =>
+          (window as unknown as WorkspaceFixtureWindow).fixture.refresh(),
+        );
+        const retry = await contextRequest(page, failed.id);
+        assert.deepEqual(retry.args.selection, failed.args.selection);
+        assert.equal(
+          await page.evaluate(
+            (id) =>
+              (window as unknown as WorkspaceFixtureWindow).fixture
+                .pending()
+                .some((request) => request.id === id),
+            held,
+          ),
+          true,
+          "Context recovery is independent of the held host read",
+        );
+        await complete(page, retry.id, undefined);
       },
     );
   },

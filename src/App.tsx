@@ -129,11 +129,8 @@ export default function App() {
     };
   }, []);
   useEffect(() => {
-    if (window.rex)
-      void window.rex
-        .request("setContext", { uiBusy: modalOpen || !!menu })
-        .catch(() => {});
-  }, [modalOpen, menu]);
+    ws.publishUiBusy(modalOpen || !!menu);
+  }, [modalOpen, menu, ws.publishUiBusy]);
   useEffect(() => {
     if (!window.rex) return;
     void window.rex

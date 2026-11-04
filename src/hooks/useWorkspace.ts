@@ -46,6 +46,11 @@ export function useWorkspace() {
   settingsRef.current = settings;
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
+  const focusedPaneRef = useRef(focusedPane);
+  focusedPaneRef.current = focusedPane;
+  const uiBusyRef = useRef(false);
+  const contextRevision = useRef(0);
+  const contextNeedsRetry = useRef(false);
   const actionHandler = useRef<
     (
       name: string,
@@ -62,6 +67,48 @@ export function useWorkspace() {
   const configured = useRef(new Map<string, { endpoint: string }>());
   const delayedRefresh = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
+  );
+
+  const publishContext = useCallback(() => {
+    if (!window.rex || !mounted.current) return;
+    const revision = ++contextRevision.current;
+    const configuredEndpoints = () =>
+      JSON.stringify(
+        settingsRef.current?.hosts.map(({ id, endpoint }) => [id, endpoint]),
+      );
+    const configuration = configuredEndpoints();
+    const currentSelection = selectionRef.current;
+    const currentPane = focusedPaneRef.current;
+    const uiBusy = uiBusyRef.current;
+    const ownsPublication = () =>
+      mounted.current &&
+      contextRevision.current === revision &&
+      configuration === configuredEndpoints() &&
+      selectionRef.current === currentSelection &&
+      focusedPaneRef.current === currentPane &&
+      uiBusyRef.current === uiBusy;
+    contextNeedsRetry.current = false;
+    void window.rex
+      .request("setContext", {
+        selection: currentSelection
+          ? { ...currentSelection, blockId: currentPane }
+          : null,
+        visible: !document.hidden,
+        uiBusy,
+      })
+      .catch((failure) => {
+        if (!ownsPublication()) return;
+        contextNeedsRetry.current = true;
+        setError(`Workspace context: ${errorMessage(failure)}`);
+      });
+  }, []);
+  const publishUiBusy = useCallback(
+    (uiBusy: boolean) => {
+      if (uiBusyRef.current === uiBusy && !contextNeedsRetry.current) return;
+      uiBusyRef.current = uiBusy;
+      publishContext();
+    },
+    [publishContext],
   );
 
   const reloadSession = useCallback(
@@ -150,6 +197,41 @@ export function useWorkspace() {
     },
     [],
   );
+  const synchronizeHostKeymap = useCallback((host: HostState) => {
+    if (!host.connected) {
+      configured.current.delete(host.id);
+      return;
+    }
+    if (configured.current.get(host.id)?.endpoint === host.endpoint) return;
+    const configuration = { endpoint: host.endpoint };
+    configured.current.set(host.id, configuration);
+    const ownsKeymap = () =>
+      mounted.current &&
+      configured.current.get(host.id) === configuration &&
+      settingsRef.current?.hosts.some(
+        (current) =>
+          current.id === host.id && current.endpoint === host.endpoint,
+      );
+    void window.rex
+      .request("keymap", { hostId: host.id })
+      .then((keymap) => {
+        if (!ownsKeymap()) {
+          if (configured.current.get(host.id) === configuration)
+            configured.current.delete(host.id);
+          return;
+        }
+        setKeymaps((previous) => ({ ...previous, [host.id]: keymap }));
+      })
+      .catch((failure) => {
+        const current = ownsKeymap();
+        if (configured.current.get(host.id) === configuration)
+          configured.current.delete(host.id);
+        if (current)
+          setError(
+            `Keyboard shortcuts for ${host.label}: ${errorMessage(failure)}`,
+          );
+      });
+  }, []);
   const refreshSnapshot = useCallback(async (): Promise<
     HostSnapshot[] | undefined
   > => {
@@ -175,42 +257,7 @@ export function useWorkspace() {
         return;
       }
       inspectionGeneration.current++;
-      for (const host of nextHosts) {
-        if (!host.connected) {
-          configured.current.delete(host.id);
-          continue;
-        }
-        if (configured.current.get(host.id)?.endpoint === host.endpoint)
-          continue;
-        const configuration = { endpoint: host.endpoint };
-        configured.current.set(host.id, configuration);
-        const ownsKeymap = () =>
-          mounted.current &&
-          configured.current.get(host.id) === configuration &&
-          settingsRef.current?.hosts.some(
-            (current) =>
-              current.id === host.id && current.endpoint === host.endpoint,
-          );
-        void window.rex
-          .request("keymap", { hostId: host.id })
-          .then((keymap) => {
-            if (!ownsKeymap()) {
-              if (configured.current.get(host.id) === configuration)
-                configured.current.delete(host.id);
-              return;
-            }
-            setKeymaps((previous) => ({ ...previous, [host.id]: keymap }));
-          })
-          .catch((failure) => {
-            const current = ownsKeymap();
-            if (configured.current.get(host.id) === configuration)
-              configured.current.delete(host.id);
-            if (current)
-              setError(
-                `Keyboard shortcuts for ${host.label}: ${errorMessage(failure)}`,
-              );
-          });
-      }
+      for (const host of nextHosts) synchronizeHostKeymap(host);
       setHosts(nextHosts);
       setViews((previous) => {
         const next = { ...allViews };
@@ -232,9 +279,10 @@ export function useWorkspace() {
       if (mounted.current) setError(errorMessage(failure));
       throw failure;
     }
-  }, []);
+  }, [synchronizeHostKeymap]);
   const refreshHosts = useCallback((): Promise<HostSnapshot[]> => {
     if (!mounted.current || !settingsRef.current) return Promise.resolve([]);
+    if (contextNeedsRetry.current) publishContext();
     if (inFlight.current) {
       refreshQueued.current = true;
       return inFlight.current;
@@ -255,7 +303,7 @@ export function useWorkspace() {
     };
     void work.then(finish, finish);
     return work;
-  }, [refreshSnapshot]);
+  }, [publishContext, refreshSnapshot]);
   const refresh = useCallback(async (): Promise<void> => {
     await refreshHosts();
   }, [refreshHosts]);
@@ -563,22 +611,11 @@ export function useWorkspace() {
   }, [selection, saveSettings]);
   useEffect(() => {
     if (!window.rex) return;
-    void window.rex
-      .request("setContext", {
-        selection: selection ? { ...selection, blockId: focusedPane } : null,
-        visible: !document.hidden,
-      })
-      .catch(() => {});
-    const visibility = () =>
-      void window.rex
-        .request("setContext", {
-          selection: selection ? { ...selection, blockId: focusedPane } : null,
-          visible: !document.hidden,
-        })
-        .catch(() => {});
+    publishContext();
+    const visibility = () => publishContext();
     document.addEventListener("visibilitychange", visibility);
     return () => document.removeEventListener("visibilitychange", visibility);
-  }, [selection, focusedPane]);
+  }, [selection, focusedPane, settings?.hosts, publishContext]);
   useEffect(() => {
     if (!notices.length) return;
     const timer = setTimeout(
@@ -617,6 +654,7 @@ export function useWorkspace() {
     setFocusedPane,
     setSelection,
     setNotices,
+    publishUiBusy,
     saveSettings,
     refresh,
     reloadSession,
