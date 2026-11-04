@@ -9,6 +9,7 @@ import { registerTerminalInput, type TerminalMenu } from './input';
 import { terminalOptions, terminalServerTheme } from './themes';
 import { applicationLinks, linkProtocol } from './links';
 import { TerminalVisuals } from './visuals';
+import { terminalCommands } from './commands';
 import '@xterm/xterm/css/xterm.css';
 import './terminal.css';
 
@@ -18,27 +19,7 @@ export interface TerminalPaneProps {
   onNotification?(title: string, body?: string): void;
 }
 
-export function dispatchTerminalCommand(command: string, target?: TerminalRef): void {
-  window.dispatchEvent(new CustomEvent('rex-terminal-command', { detail: target ? { command, target } : command }));
-}
-interface TerminalCommandRequest {
-  command: string;
-  target?: TerminalRef;
-  acknowledge?(completion: Promise<void>): void;
-}
-/** Resolves when a ready pane accepts the command, without waiting behind its current key RPC. */
-export function dispatchTerminalCommandAsync(command: string, target?: TerminalRef): Promise<void> {
-  return new Promise((resolve, reject) => {
-    let accepted = false;
-    const detail: TerminalCommandRequest = { command, target, acknowledge(completion) {
-      if (accepted) return;
-      accepted = true;
-      void completion.then(resolve, reject);
-    } };
-    window.dispatchEvent(new CustomEvent('rex-terminal-command', { detail }));
-    if (!accepted) reject(new Error('The target terminal pane is not visible or is no longer available.'));
-  });
-}
+export { dispatchTerminalCommand, dispatchTerminalCommandAsync } from './commands';
 function currentSelection(term: Terminal) {
   const position = term.getSelectionPosition();
   return position && { position, text: term.getSelection() };
@@ -111,16 +92,25 @@ export function TerminalPane(props: TerminalPaneProps) {
       for (const waiter of commandWaiters) { clearTimeout(waiter.timer); waiter.reject(new Error(message)); }
       commandWaiters.clear();
     };
-    const waitForCommands = (): Promise<number> => {
+    const waitForCommands = (signal?: AbortSignal): Promise<number> => {
+      if (signal?.aborted) return Promise.reject(signal.reason);
       if (disposed || !isVisible()) return Promise.reject(new Error('The terminal pane is no longer visible.'));
       if (online && commandReady) return Promise.resolve(generation);
       if (disconnected) return Promise.reject(new Error('The terminal is disconnected; wait for it to reconnect.'));
       return new Promise((resolve, reject) => {
-        const waiter = { resolve, reject, timer: setTimeout(() => {
+        const cleanup = () => {
+          clearTimeout(waiter.timer);
           commandWaiters.delete(waiter);
-          reject(new Error('The terminal did not become ready within 10 seconds.'));
-        }, 10_000) };
+          signal?.removeEventListener('abort', abort);
+        };
+        const waiter = {
+          resolve(value: number) { cleanup(); resolve(value); },
+          reject(failure: Error) { cleanup(); reject(failure); },
+          timer: setTimeout(() => waiter.reject(new Error('The terminal did not become ready within 10 seconds.')), 10_000),
+        };
+        const abort = () => waiter.reject(signal?.reason);
         commandWaiters.add(waiter);
+        signal?.addEventListener('abort', abort, { once: true });
       });
     };
     const reportCommandError = (failure: unknown) => { if (!disposed) setError(displayError(failure)); };
@@ -209,9 +199,10 @@ export function TerminalPane(props: TerminalPaneProps) {
         };writePart(0);
       }else done();
     };
-    const paste = async (text?: string, commandGeneration?: number) => {
-      const readyGeneration = commandGeneration ?? await waitForCommands();
+    const paste = async (text?: string, commandGeneration?: number, signal?: AbortSignal) => {
+      const readyGeneration = commandGeneration ?? await waitForCommands(signal);
       const value = text ?? await window.rex.readClipboard();
+      signal?.throwIfAborted();
       if (new TextEncoder().encode(value).length > 1024 * 1024) throw new Error('Paste is larger than the 1 MiB input limit.');
       if (generation !== readyGeneration || !commandReady || !enqueue(() => window.rex.request('paste', { ...ref, text: value }))) {
         throw new Error('The terminal connection changed before paste could be accepted.');
@@ -266,10 +257,10 @@ export function TerminalPane(props: TerminalPaneProps) {
       const marker = direction === 'previous' ? markers.filter((item) => item.line < line).at(-1) : markers.find((item) => item.line > line);
       if (marker) { term.scrollToLine(marker.line); promptNavigationMarker = marker; promptNavigationViewport = term.buffer.active.viewportY; }
     };
-    const handleCommand = (command: string, commandGeneration: number) => {
+    const handleCommand = (command: string, commandGeneration: number, signal?: AbortSignal) => {
       switch (command) {
         case 'copy': input.copy(); break;
-        case 'paste': return paste(undefined, commandGeneration);
+        case 'paste': return paste(undefined, commandGeneration, signal);
         case 'select-all': term.selectAll(); break;
         case 'find': setSearchOpen(true); break;
         case 'find-next': setSearchOpen(true); searchOperation.current(false); break;
@@ -300,24 +291,19 @@ export function TerminalPane(props: TerminalPaneProps) {
         default: callbacks.current.onAction?.(command);
       }
     };
-    const executeCommand = async (command: string) => {
-      const commandGeneration = await waitForCommands();
+    const executeCommand = async (command: string, signal?: AbortSignal) => {
+      const commandGeneration = await waitForCommands(signal);
+      signal?.throwIfAborted();
       if (disposed || !online || !commandReady || commandGeneration !== generation) throw new Error('The terminal connection changed before the command could be accepted.');
-      await handleCommand(command, commandGeneration);
+      await handleCommand(command, commandGeneration, signal);
     };
     commandRef.current = (command) => { void executeCommand(command).catch(reportCommandError); };
-    const commandListener = (event: Event) => {
-      if (!isVisible() || !hostElement.isConnected) return;
-      const detail = (event as CustomEvent<string | TerminalCommandRequest>).detail;
-      const target = typeof detail === 'string' ? undefined : detail.target;
-      const matches = target ? target.hostId === hostId && target.sessionId === sessionId && target.blockId === blockId : callbacks.current.focused;
-      if (matches) {
-        const completion = executeCommand(typeof detail === 'string' ? detail : detail.command);
-        void completion.catch(reportCommandError);
-        if (typeof detail !== 'string') detail.acknowledge?.(completion);
-      }
-    };
-    window.addEventListener('rex-terminal-command', commandListener);
+    const commandRegistration = terminalCommands.register(ref, {
+      available: () => !disposed && isVisible() && hostElement.isConnected,
+      focused: () => callbacks.current.focused,
+      execute: executeCommand,
+      onError: reportCommandError,
+    });
     const cursorStyleListener = term.parser.registerCsiHandler({ intermediates: ' ', final: 'q' }, (params) => {
       const style = params[0];
       // DECSCUSR 0 clears any preceding program override and returns to the
@@ -369,7 +355,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     colorScheme.addEventListener('change', updateColorScheme);
     const visibilityChanged=(show:boolean)=>{
       if(!show){generation++;input.reset();rejectPendingCommands('The terminal pane was hidden before the command became ready.');clearTimeout(resizeTimer);void window.rex.request('releaseViewport',ref).catch(()=>{});}
-      else{lastSize='';sendSize();}
+      else{lastSize='';sendSize();commandRegistration.activate();}
     };
     runtime.visibilityChanged=visibilityChanged;
     sendSize(); startSubscription();
@@ -379,7 +365,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       clearTimeout(resizeTimer); clearTimeout(retryTimer); cancelAnimationFrame(resizeAnimation);
       observer.disconnect(); unsubscribe(); cursorStyleListener.dispose();
       input.dispose(); titleListener.dispose(); bellListener.dispose(); links.dispose(); appLinks.dispose(); resultsListener.dispose();
-      window.removeEventListener('rex-terminal-command', commandListener);
+      commandRegistration.dispose();
       document.removeEventListener('visibilitychange', visibility);
       window.removeEventListener('focus', windowFocus);
       colorScheme.removeEventListener('change', updateColorScheme);

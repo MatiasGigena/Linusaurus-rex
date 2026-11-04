@@ -1,4 +1,4 @@
-import { dispatchTerminalCommandAsync } from "../../terminal/TerminalPane";
+import { dispatchTerminalCommandAsync } from "../../terminal/commands";
 import { viewKey } from "../../core/workspace";
 import type { ClientEvent } from "../../shared/types";
 import {
@@ -107,13 +107,10 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
     const targetPane = currentWindow?.panes.find((pane) => pane.id === blockId);
     const localCommand = async (command: string) => {
       requirePane();
-      if (!currentWindow)
+      if (!currentWindow || !targetPane)
         throw new Error("The target pane is no longer available.");
       if (!displayedContext || focusedPane !== blockId) {
         ws.select(hostId, sessionId, currentWindow.id, blockId);
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-        );
       }
       await dispatchTerminalCommandAsync(command, terminalRef);
     };

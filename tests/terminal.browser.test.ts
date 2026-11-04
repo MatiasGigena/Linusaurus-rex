@@ -15,9 +15,9 @@ import {getCachedTerminal} from '/src/terminal/runtime.ts';
 import {DEFAULT_SETTINGS} from '/src/shared/types.ts';
 const ref={hostId:'test',sessionId:'test',blockId:'test'};
 const requests=[],listeners=new Set(); let currentSubscription; let first=true; let clipboard='PASTE_FROM_CLIPBOARD';
-window.rex={request:async(method,args)=>{requests.push({method,args,contentAtSend:window.fixture?.term()?.buffer.active.getLine(0)?.translateToString(true)}); if(method==='key' && window.fixture?.deferNextKey){window.fixture.deferNextKey=false;await new Promise(resolve=>{window.fixture.releaseKey=resolve})} if(method==='key' && window.fixture?.failNextKey){const message=window.fixture.failNextKey;window.fixture.failNextKey=undefined;throw new Error(message)} if(method==='subscribe'){currentSubscription=args.subscriptionId;if(first){first=false;if(!location.search.includes('deferSnapshot'))setTimeout(()=>emit({kind:'snapshot',data:'alpha alpha\\r\\nready> ',cols:80,rows:24}),10)}} return method==='key'?{handled:true}:undefined},onTerminal:cb=>{listeners.add(cb);return()=>listeners.delete(cb)},onCommand:()=>()=>{},readClipboard:async()=>clipboard,writeClipboard:async text=>{clipboard=text}};
+window.rex={request:async(method,args)=>{requests.push({method,args,contentAtSend:window.fixture?.term()?.buffer.active.getLine(0)?.translateToString(true)}); if(method==='key' && window.fixture?.deferNextKey){window.fixture.deferNextKey=false;await new Promise(resolve=>{window.fixture.releaseKey=resolve})} if(method==='key' && window.fixture?.failNextKey){const message=window.fixture.failNextKey;window.fixture.failNextKey=undefined;throw new Error(message)} if(method==='subscribe'){currentSubscription=args.subscriptionId;if(first){first=false;if(!location.search.includes('deferSnapshot'))setTimeout(()=>emit({kind:'snapshot',data:'alpha alpha\\r\\nready> ',cols:80,rows:24}),10)}} return method==='key'?{handled:true}:undefined},onTerminal:cb=>{listeners.add(cb);return()=>listeners.delete(cb)},onCommand:()=>()=>{},readClipboard:async()=>{if(window.fixture?.deferClipboard){window.fixture.deferClipboard=false;await new Promise(resolve=>{window.fixture.releaseClipboard=resolve})}return clipboard},writeClipboard:async text=>{clipboard=text}};
 function emit(frame){for(const fn of listeners)fn({subscriptionId:currentSubscription,...frame})}
-let update,show,mount; function Fixture(){const [settings,setSettings]=React.useState(DEFAULT_SETTINGS),[visible,setVisible]=React.useState(true),[mounted,setMounted]=React.useState(true);update=patch=>setSettings(s=>({...s,...patch}));show=setVisible;mount=setMounted;return mounted&&React.createElement(TerminalPane,{pane:{id:'test',label:'Test terminal',rect:[0,0,1,1]},terminalRef:ref,settings,visible,focused:true,showHeader:false,onFocus(){},onClose(){},onZoom(){}})}
+let update,show,mount; function Fixture(){const [settings,setSettings]=React.useState(DEFAULT_SETTINGS),[visible,setVisible]=React.useState(true),[mounted,setMounted]=React.useState(!location.search.includes('deferMount'));update=patch=>setSettings(s=>({...s,...patch}));show=setVisible;mount=setMounted;return mounted&&React.createElement(TerminalPane,{pane:{id:'test',label:'Test terminal',rect:[0,0,1,1]},terminalRef:ref,settings,visible,focused:true,showHeader:false,onFocus(){},onClose(){},onZoom(){}})}
 createRoot(document.getElementById('root')).render(React.createElement(Fixture));
 window.fixture={requests,emit,update:patch=>update(patch),show:value=>show(value),mount:value=>mount(value),subscribers:()=>listeners.size,term:()=>getCachedTerminal(ref)?.terminal,command:dispatchTerminalCommand,commandAsync:dispatchTerminalCommandAsync};
 </script></body></html>`;
@@ -39,12 +39,20 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
   try {
     const address = server.httpServer!.address() as { port: number };
     await page.addInitScript({ content: "Object.defineProperty(window, 'queryLocalFonts', { value: async function(){ return []; } });" });
-    await page.goto(`http://127.0.0.1:${address.port}/terminal-fixture?deferSnapshot`);
-    await page.waitForFunction(() => (window as any).fixture?.requests.some((request: any) => request.method === 'subscribe'));
+    await page.goto(`http://127.0.0.1:${address.port}/terminal-fixture?deferSnapshot&deferMount`);
+    await page.waitForFunction(() => typeof (window as any).fixture?.mount === 'function');
     await page.evaluate(async () => {
       const f = (window as any).fixture;
       f.initialCommand = 'waiting';
       void f.commandAsync('paste', { hostId: 'test', sessionId: 'test', blockId: 'test' }).then(() => { f.initialCommand = 'accepted'; }, (failure: Error) => { f.initialCommand = failure.message; });
+      for (let frame = 0; frame < 4; frame++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    });
+    assert.equal(await page.evaluate(() => (window as any).fixture.initialCommand), 'waiting', 'a target may register later than a fixed number of render frames');
+    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((request: any) => request.method === 'subscribe').length), 0);
+    await page.evaluate(() => (window as any).fixture.mount(true));
+    await page.waitForFunction(() => (window as any).fixture?.requests.some((request: any) => request.method === 'subscribe'));
+    await page.evaluate(async () => {
+      const f = (window as any).fixture;
       f.emit({ kind: 'resize', cols: 80, rows: 24 });
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     });
@@ -137,8 +145,19 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     await page.evaluate(() => (window as any).fixture.command('paste', {hostId:'test',sessionId:'test',blockId:'test'}));
     await page.waitForFunction((count) => (window as any).fixture.requests.filter((r: any) => r.method === 'paste').length === count+1, pasted);
     await page.evaluate(() => (window as any).fixture.show(false));
-    await page.waitForTimeout(100);
+    await page.locator('.terminal-pane[aria-hidden="true"]').waitFor({ state: 'attached' });
+    await page.evaluate(async () => {
+      const f = (window as any).fixture;
+      f.hiddenCommand = 'waiting';
+      void f.commandAsync('paste', { hostId: 'test', sessionId: 'test', blockId: 'test' }).then(() => { f.hiddenCommand = 'accepted'; }, (failure: Error) => { f.hiddenCommand = failure.message; });
+      for (let frame = 0; frame < 4; frame++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    });
+    assert.equal(await page.evaluate(() => (window as any).fixture.hiddenCommand), 'waiting');
+    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((request: any) => request.method === 'paste').length), pasted + 1);
     await page.evaluate(() => (window as any).fixture.show(true));
+    await page.waitForFunction(() => (window as any).fixture.hiddenCommand === 'accepted');
+    await page.waitForFunction((count) => (window as any).fixture.requests.filter((request: any) => request.method === 'paste').length === count + 2, pasted);
+    const pastedBeforeDisconnect = await page.evaluate(() => (window as any).fixture.requests.filter((request: any) => request.method === 'paste').length);
     await page.waitForFunction(() => (window as any).fixture.requests.filter((request: any) => request.method === 'subscribe').length === 1);
     await page.evaluate(() => {
       const f = (window as any).fixture;
@@ -152,9 +171,9 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     assert.match(rejectedWhileDisconnected, /disconnected/);
     await page.evaluate(() => (window as any).fixture.emit({ kind: 'snapshot', data: 'alpha alpha\r\nready> ' }));
     await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(1)?.translateToString(true) === 'ready> ');
-    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((request: any) => request.method === 'paste').length), pasted + 1, 'a disconnected pending paste must never replay after recovery');
+    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((request: any) => request.method === 'paste').length), pastedBeforeDisconnect, 'a disconnected pending paste must never replay after recovery');
     const missingTarget = await page.evaluate(() => (window as any).fixture.commandAsync('paste', { hostId: 'test', sessionId: 'test', blockId: 'missing' }).then(() => '', (failure: Error) => failure.message));
-    assert.match(missingTarget, /not visible|no longer available/);
+    assert.match(missingTarget, /within 10 seconds/);
     assert.equal(await page.evaluate(() => (window as any).fixture.savedTerminal === (window as any).fixture.term()), true, 'tab visibility must preserve the emulator');
     await page.evaluate(() => (window as any).fixture.update({ theme: 'system', appearance: 'dark', darkTheme: 'midnight', lightTheme: 'light', useExtendedPalette: true, customTheme: { palette16: '#123456', palette255: '#abcdef' } }));
     await page.waitForFunction(() => (window as any).fixture.term().options.theme.extendedAnsi?.[0] === '#123456');
@@ -246,13 +265,23 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     await page.mouse.move(remountScreen.x + 20, remountScreen.y + 20);
     await page.mouse.down();
     const beforeUnmount = await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'mouse').length);
+    const pasteBeforeUnmount = await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'paste').length);
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      f.deferClipboard = true;
+      f.closedCommand = 'waiting';
+      void f.commandAsync('paste', { hostId: 'test', sessionId: 'test', blockId: 'test' }).then(() => { f.closedCommand = 'accepted'; }, (failure: Error) => { f.closedCommand = failure.message; });
+    });
+    await page.waitForFunction(() => typeof (window as any).fixture.releaseClipboard === 'function');
     await page.evaluate(() => (window as any).fixture.mount(false));
     await page.locator('.terminal-container').waitFor({ state: 'detached' });
+    await page.waitForFunction(() => /closed/.test((window as any).fixture.closedCommand));
     assert.equal(await page.evaluate(() => (window as any).fixture.subscribers()), 0);
     await page.evaluate(() => (window as any).fixture.mount(true));
     await page.locator('.terminal-container .xterm').waitFor();
     await page.evaluate(() => (window as any).fixture.emit({ kind: 'snapshot', data: 'remounted> \x1b[?1000h\x1b[?1006h', cols: 80, rows: 24 }));
     await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(0)?.translateToString(true).trimEnd() === 'remounted>');
+    await page.evaluate(() => (window as any).fixture.releaseClipboard());
     await page.mouse.up();
     assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'mouse').length), beforeUnmount, 'a remounted pane must not release a pointer held by its previous input lifecycle');
     await page.locator('.xterm-helper-textarea').focus();
@@ -260,6 +289,7 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     await page.waitForFunction(() => (window as any).fixture.requests.some((r: any) => r.method === 'key' && r.args.event.key === 'key_z' && r.args.event.action === 'release'));
     assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'key' && r.args.event.key === 'key_z' && r.args.event.action === 'press').length), 1);
     assert.equal(await page.evaluate(() => (window as any).fixture.subscribers()), 1);
+    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'paste').length), pasteBeforeUnmount, 'an accepted paste must not send or retry after its original pane is disposed');
     assert.deepEqual(errors, []);
   } finally { await browser.close(); await server.close(); }
 });
