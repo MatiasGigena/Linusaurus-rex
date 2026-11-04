@@ -1,6 +1,5 @@
 import { DEFAULT_SETTINGS, type Settings } from "../../shared/types";
 import { saveLibraryTheme, uniqueThemeName } from "../../core/themeLibrary";
-import type { SettingsTab } from "../../components/preferences/types";
 import type { WorkspaceOperations } from "../../core/workspaceOperations";
 import {
   UNHANDLED,
@@ -45,17 +44,18 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
       case "client.settings":
         dialogs.open({
           kind: "settings",
-          tab: [
-            "appearance",
-            "terminal",
-            "notifications",
-            "hosts",
-            "integrations",
-            "shortcuts",
-            "server",
-          ].includes(String(args.tab))
-            ? (args.tab as SettingsTab)
-            : "appearance",
+          tab:
+            (
+              [
+                "appearance",
+                "terminal",
+                "notifications",
+                "hosts",
+                "integrations",
+                "shortcuts",
+                "server",
+              ] as const
+            ).find((tab) => tab === args.tab) ?? "appearance",
         });
         return;
       case "client.shortcuts.edit":
