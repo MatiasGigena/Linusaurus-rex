@@ -303,6 +303,7 @@ try {
   );
   watcher = setInterval(() => {
     if (active?.pid) void remember(active.pid);
+    if (rexServer?.pid) void remember(rexServer.pid);
   }, 100);
   for (const name of names) {
     if (interrupted) break;
