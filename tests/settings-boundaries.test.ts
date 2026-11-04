@@ -89,7 +89,7 @@ test("legacy notification choices migrate to desktop channels without disabling 
 test("history and shortcut boundaries preserve disabled bindings and keep arbitrary host keys as data", () => {
   assert.deepEqual(
     validateShortcuts({ "command-palette": "", "new-window": "Ctrl+Shift+T" }),
-    { "command-palette": "", "new-window": "Ctrl+Shift+T" },
+    { "client.palette.toggle": "", "client.tab.new": "Ctrl+Shift+T" },
   );
   assert.throws(
     () => validateShortcuts({ "new-window": "bad\0shortcut" }),
