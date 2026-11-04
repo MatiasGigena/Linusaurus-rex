@@ -1,3 +1,4 @@
+import type { WorkspaceOperations } from "../src/core/workspaceOperations";
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import type { Dispatch, SetStateAction } from "react";
@@ -121,31 +122,8 @@ function fixture(t: TestContext) {
     return respond(args);
   };
   const discard = (_value: unknown) => {};
-  const ws: WorkspaceActionOptions["ws"] = {
-    get settings() {
-      return settings.get();
-    },
-    hosts,
-    views,
-    get selection() {
-      return selection.get();
-    },
-    get focusedPane() {
-      return focusedPane.get();
-    },
-    metadata: {},
-    keymaps,
-    keyHints: undefined,
-    notices: [],
-    error: undefined,
-    busy: false,
-    loading: false,
-    settingsRef: { current: initial },
-    actionHandler: { current: async () => undefined },
-    setError: discard,
-    setFocusedPane: focusedPane.set,
-    setSelection: selection.set,
-    setNotices: discard,
+  const workspace: WorkspaceOperations = {
+    getSettings: () => settings.get(),
     saveSettings: async (next) => {
       const copy = structuredClone(next);
       saved.push(copy);
@@ -154,14 +132,23 @@ function fixture(t: TestContext) {
       return copy;
     },
     refresh: async () => {},
-    reloadSession: async (hostId, sessionId) => {
-      const view = Object.entries(views).find(
-        ([key]) => key === `${hostId}/${sessionId}`,
-      )?.[1];
-      if (!view) throw new Error("Unexpected session reload");
-      return view;
-    },
     run: async (operation) => operation(),
+    mutateSession: async (plan, operation) => {
+      const result = await operation();
+      const sessionId =
+        typeof plan.sessionId === "function"
+          ? plan.sessionId(result)
+          : plan.sessionId;
+      inspections.push({
+        hostId: plan.hostId,
+        sessionId,
+        selectActive: plan.selectActive,
+      });
+      const view = session(sessionId, "Created");
+      if (plan.selectActive)
+        workspace.select(plan.hostId, sessionId, view.activeWindowId);
+      return { result, view };
+    },
     select: (hostId, sessionId, windowId, blockId) => {
       const next = {
         hostId,
@@ -173,6 +160,21 @@ function fixture(t: TestContext) {
       selection.set(next);
       focusedPane.set(blockId);
     },
+    focusPane: async (target) => {
+      const view = Object.entries(views).find(
+        ([key]) => key === `${target.hostId}/${target.sessionId}`,
+      )?.[1];
+      const window = view?.windows.find((window) =>
+        window.panes.some((pane) => pane.id === target.blockId),
+      );
+      workspace.select(
+        target.hostId,
+        target.sessionId,
+        window?.id,
+        target.blockId,
+      );
+    },
+    dismissNotices: () => {},
   };
   const bridge: RexBridge = {
     request,
@@ -183,7 +185,7 @@ function fixture(t: TestContext) {
     readClipboard: async () => "",
     writeClipboard: async () => {},
     getSettings: async () => settings.get(),
-    setSettings: ws.saveSettings,
+    setSettings: workspace.saveSettings,
     windowControl: () => {},
   };
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -197,7 +199,7 @@ function fixture(t: TestContext) {
     else Reflect.deleteProperty(globalThis, "window");
   });
   const options: WorkspaceActionOptions = {
-    ws,
+    workspace,
     hosts,
     views,
     keymaps,
@@ -209,27 +211,6 @@ function fixture(t: TestContext) {
     },
     get focusedPane() {
       return focusedPane.get();
-    },
-    get activeHost() {
-      return (
-        settings
-          .get()
-          .hosts.find((host) => host.id === selection.get()?.hostId) ??
-        settings.get().hosts[0]
-      );
-    },
-    get activePane() {
-      const current = selection.get();
-      const view = Object.entries(views).find(
-        ([key]) => key === `${current?.hostId}/${current?.sessionId}`,
-      )?.[1];
-      const window = view?.windows.find(
-        (window) => window.id === current?.windowId,
-      );
-      return (
-        window?.panes.find((pane) => pane.id === focusedPane.get()) ??
-        window?.panes[0]
-      );
     },
     interfaceTheme: "macos",
     workspaceElement: { current: null },
@@ -246,24 +227,7 @@ function fixture(t: TestContext) {
     setActivityGroup: discard,
     setDirectoryBrowser: discard,
     setReport: discard,
-    requestClose: (title, description, action) =>
-      confirmation.set({
-        title,
-        description,
-        submit: async () => {
-          await action();
-        },
-      }),
-    inspectAfter: async (hostId, sessionId, selectActive) => {
-      inspections.push({ hostId, sessionId, selectActive });
-      const view = session(sessionId, "Created");
-      if (selectActive) ws.select(hostId, sessionId, view.activeWindowId);
-      return view;
-    },
-    focusPane: async (pane, where) => {
-      assert.ok(where);
-      ws.select(where.hostId, where.sessionId, where.windowId, pane.id);
-    },
+    onError: discard,
   };
   return {
     initial,

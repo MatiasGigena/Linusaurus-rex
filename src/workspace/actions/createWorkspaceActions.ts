@@ -1,39 +1,19 @@
 import { dispatchTerminalCommandAsync } from "../../terminal/commands";
-import { viewKey } from "../../core/workspace";
+import { errorMessage } from "../../core/workspace";
 import type { ClientEvent } from "../../shared/types";
 import {
   UNHANDLED,
   type WorkspaceActionOptions,
-  type ActionContext,
+  type ResolvedCommand,
+  type RequestClose,
 } from "./context";
-import { sessionActions } from "./sessionActions";
-import { tabActions } from "./tabActions";
-import { paneLayoutActions } from "./paneLayoutActions";
-import { paneActions } from "./paneActions";
-import { clientActions } from "./clientActions";
-export const aliases: Record<string, string> = {
-  "new-session": "session.new",
-  "session-switcher": "session.switch",
-  "new-window": "client.tab.new",
-  "close-window": "client.tab.close",
-  "close-pane": "pane.close",
-  "toggle-sidebar": "client.sidebar.toggle",
-  "command-palette": "client.palette.toggle",
-  settings: "client.settings",
-  "split-right": "pane.split.right",
-  "split-below": "pane.split.down",
-  zoom: "pane.zoom",
-  find: "client.find.open",
-  "font-increase": "client.font.increase",
-  "font-decrease": "client.font.decrease",
-  "font-reset": "client.font.reset",
-  "next-tab": "client.tab.next",
-  "previous-tab": "client.tab.previous",
-  "focus-left": "pane.focus.left",
-  "focus-right": "pane.focus.right",
-  "focus-up": "pane.focus.up",
-  "focus-down": "pane.focus.down",
-};
+import { aliases } from "./aliases";
+import { resolveCommandTarget } from "./resolveCommandTarget";
+import { createSessionActions } from "./sessionActions";
+import { createTabActions } from "./tabActions";
+import { createPaneActions } from "./paneActions";
+import { createPaneLayoutActions } from "./paneLayoutActions";
+import { createClientActions } from "./clientActions";
 const nativeActions = new Set([
   "client.window.new",
   "client.window.close",
@@ -44,85 +24,116 @@ const nativeActions = new Set([
 ]);
 
 export function createWorkspaceActions(options: WorkspaceActionOptions) {
-  const {
-    ws,
-    settings,
-    views,
-    selection,
-    focusedPane,
-    keymaps,
-    activeHost,
-    activePane,
-  } = options;
+  const { workspace, settings } = options;
+  if (!settings) return async () => undefined;
+  const requestClose: RequestClose = (title, description, action) => {
+    if (settings.confirmClose)
+      options.setConfirmation({
+        title,
+        description,
+        submit: async () => {
+          await workspace.run(action);
+        },
+      });
+    else
+      void workspace
+        .run(action)
+        .catch((failure) => options.onError(errorMessage(failure)));
+  };
+  const handlers = [
+    createSessionActions({
+      workspace: {
+        mutateSession: workspace.mutateSession,
+        select: workspace.select,
+        run: workspace.run,
+        refresh: workspace.refresh,
+      },
+      hosts: options.hosts,
+      setPalette: options.setPalette,
+      setForm: options.setForm,
+      setCollapsedSessions: options.setCollapsedSessions,
+      requestClose,
+    }),
+    createTabActions({
+      workspace: {
+        mutateSession: workspace.mutateSession,
+        run: workspace.run,
+        select: workspace.select,
+      },
+      setForm: options.setForm,
+      requestClose,
+    }),
+    createPaneActions({
+      workspace: { run: workspace.run },
+      settings,
+      setConfirmation: options.setConfirmation,
+      setForm: options.setForm,
+      setDirectoryBrowser: options.setDirectoryBrowser,
+      setReport: options.setReport,
+      requestClose,
+    }),
+    createPaneLayoutActions({
+      workspace: {
+        mutateSession: workspace.mutateSession,
+        focusPane: workspace.focusPane,
+        run: workspace.run,
+        refresh: workspace.refresh,
+      },
+      settings,
+      workspaceElement: options.workspaceElement,
+      setForm: options.setForm,
+    }),
+    createClientActions({
+      workspace: {
+        mutateSession: workspace.mutateSession,
+        select: workspace.select,
+        run: workspace.run,
+        dismissNotices: workspace.dismissNotices,
+        saveSettings: workspace.saveSettings,
+        refresh: workspace.refresh,
+      },
+      settings,
+      hosts: options.hosts,
+      interfaceTheme: options.interfaceTheme,
+      setPalette: options.setPalette,
+      setSettingsTab: options.setSettingsTab,
+      setDiagnostics: options.setDiagnostics,
+      setPairing: options.setPairing,
+      setEditingHost: options.setEditingHost,
+      setConfirmation: options.setConfirmation,
+      setForm: options.setForm,
+      setActivityOnly: options.setActivityOnly,
+      setActivityOpen: options.setActivityOpen,
+      setActivityGroup: options.setActivityGroup,
+    }),
+  ];
   const execute = async (
     inputName: string,
     args: Record<string, unknown> = {},
     event?: ClientEvent,
   ): Promise<unknown> => {
-    if (!settings) return;
     const name = aliases[inputName] || inputName;
-    const hostId = String(
-      args.host_id ||
-        (event && "hostId" in event ? event.hostId : undefined) ||
-        selection?.hostId ||
-        activeHost?.id ||
-        "local",
-    );
-    const selectionMatchesHost = selection?.hostId === hostId;
-    const sessionId = String(
-      args.session_id ||
-        (event && "sessionId" in event ? event.sessionId : undefined) ||
-        (selectionMatchesHost ? selection?.sessionId : undefined) ||
-        "",
-    );
-    const selectionMatchesSession =
-      selectionMatchesHost && selection?.sessionId === sessionId;
-    const currentView = views[viewKey(hostId, sessionId)];
-    const requestedBlock =
-      args.block_id ||
-      (event && "blockId" in event ? event.blockId : undefined);
-    const currentWindow =
-      (requestedBlock
-        ? currentView?.windows.find((window) =>
-            window.panes.some((pane) => pane.id === requestedBlock),
-          )
-        : undefined) ||
-      currentView?.windows.find(
-        (window) =>
-          window.id ===
-          String(
-            args.window_id ||
-              (selectionMatchesSession ? selection?.windowId : undefined),
-          ),
-      ) ||
-      currentView?.windows.find(
-        (window) => window.id === currentView.activeWindowId,
-      ) ||
-      currentView?.windows[0];
-    const displayedContext =
-      selectionMatchesSession && selection?.windowId === currentWindow?.id;
-    const blockId = String(
-      args.block_id ||
-        (event && "blockId" in event ? event.blockId : undefined) ||
-        (displayedContext ? activePane?.id : undefined) ||
-        currentWindow?.focusedBlockId ||
-        currentWindow?.panes[0]?.id ||
-        "",
-    );
-    const terminalRef = { hostId, sessionId, blockId };
-    const targetPane = currentWindow?.panes.find((pane) => pane.id === blockId);
+    const target = resolveCommandTarget(name, args, event, options);
+    const {
+      hostId,
+      sessionId,
+      currentWindow,
+      displayedContext,
+      blockId,
+      terminalRef,
+      targetPane,
+    } = target;
+    const requirePane = () => {
+      if (!sessionId || !blockId)
+        throw new Error("Select a terminal pane first.");
+    };
     const localCommand = async (command: string) => {
       requirePane();
       if (!currentWindow || !targetPane)
         throw new Error("The target pane is no longer available.");
-      if (!displayedContext || focusedPane !== blockId) {
-        ws.select(hostId, sessionId, currentWindow.id, blockId);
-      }
+      if (!displayedContext || options.focusedPane !== blockId)
+        workspace.select(hostId, sessionId, currentWindow.id, blockId);
       await dispatchTerminalCommandAsync(command, terminalRef);
-    };
-    const requirePane = () => {
-      if (!sessionId || !blockId)
-        throw new Error("Select a terminal pane first.");
     };
     if (nativeActions.has(name))
       return window.rex.request("invokeAction", {
@@ -144,50 +155,28 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
         "prompt-previous",
         "prompt-next",
       ].includes(name)
-    ) {
+    )
       return localCommand(name);
-    }
-
-    const context: ActionContext = {
-      ...options,
-      settings,
-      name,
-      args,
-      event,
-      hostId,
-      sessionId,
-      currentView,
-      currentWindow,
-      displayedContext,
-      blockId,
-      terminalRef,
-      targetPane,
+    const command: ResolvedCommand = {
+      ...target,
       localCommand,
       requirePane,
       execute,
     };
-    for (const handler of [
-      sessionActions,
-      tabActions,
-      paneLayoutActions,
-      paneActions,
-      clientActions,
-    ]) {
-      const result = await handler(context);
+    for (const handler of handlers) {
+      const result = await handler(command);
       if (result !== UNHANDLED) return result;
     }
-    {
-      const action = keymaps[hostId]?.actions.find(
-        (action) => action.name === name,
-      );
-      if (action && action.kind !== "client")
-        return window.rex.request("invokeAction", {
-          ...terminalRef,
-          action: name,
-          args,
-        });
-      throw new Error(`This action is not available on this client: ${name}`);
-    }
+    const action = options.keymaps[hostId]?.actions.find(
+      (action) => action.name === name,
+    );
+    if (action && action.kind !== "client")
+      return window.rex.request("invokeAction", {
+        ...terminalRef,
+        action: name,
+        args,
+      });
+    throw new Error(`This action is not available on this client: ${name}`);
   };
   return execute;
 }

@@ -1,8 +1,10 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { SettingsTab } from "../../components/preferences/types";
-import type { useWorkspace } from "../../hooks/useWorkspace";
+import type { HostState } from "../../core/workspaceSnapshot";
+import type { WorkspaceOperations } from "../../core/workspaceOperations";
 import type {
   ClientEvent,
+  KeymapResult,
   Host,
   RexPane,
   RexWindow,
@@ -34,15 +36,13 @@ export interface Confirmation {
 }
 type StateSetter<T> = Dispatch<SetStateAction<T>>;
 export interface WorkspaceActionOptions {
-  ws: ReturnType<typeof useWorkspace>;
+  workspace: WorkspaceOperations;
   settings: Settings | undefined;
-  hosts: ReturnType<typeof useWorkspace>["hosts"];
+  hosts: HostState[];
   views: Record<string, SessionView>;
   selection: Selection | undefined;
-  keymaps: ReturnType<typeof useWorkspace>["keymaps"];
+  keymaps: Record<string, KeymapResult>;
   focusedPane: string | undefined;
-  activeHost: Host | undefined;
-  activePane: RexPane | undefined;
   interfaceTheme: string | undefined;
   workspaceElement: RefObject<HTMLDivElement | null>;
   setPalette: StateSetter<"all" | "sessions" | undefined>;
@@ -60,20 +60,9 @@ export interface WorkspaceActionOptions {
     { mode: "insert" | "directory"; ref: TerminalRef } | undefined
   >;
   setReport: StateSetter<{ title: string; body: string } | undefined>;
-  requestClose(
-    title: string,
-    description: string,
-    action: () => Promise<unknown>,
-  ): void;
-  inspectAfter(
-    hostId: string,
-    sessionId: string,
-    selectActive?: boolean,
-  ): Promise<SessionView>;
-  focusPane(pane: RexPane, where?: Selection): Promise<void>;
+  onError(message: string): void;
 }
-export interface ActionContext extends WorkspaceActionOptions {
-  settings: Settings;
+export interface ResolvedCommand {
   name: string;
   args: Record<string, unknown>;
   event?: ClientEvent;
@@ -81,7 +70,6 @@ export interface ActionContext extends WorkspaceActionOptions {
   sessionId: string;
   currentView: SessionView | undefined;
   currentWindow: RexWindow | undefined;
-  displayedContext: boolean;
   blockId: string;
   terminalRef: TerminalRef;
   targetPane: RexPane | undefined;
@@ -94,3 +82,119 @@ export interface ActionContext extends WorkspaceActionOptions {
   ): Promise<unknown>;
 }
 export const UNHANDLED = Symbol("unhandled workspace action");
+
+export type SessionActionsTarget = Pick<
+  ResolvedCommand,
+  "name" | "args" | "hostId" | "sessionId" | "currentView"
+>;
+export type SessionActionsDependencies = Pick<
+  WorkspaceActionOptions,
+  "hosts" | "setPalette" | "setForm" | "setCollapsedSessions"
+> & {
+  workspace: Pick<
+    WorkspaceOperations,
+    "mutateSession" | "select" | "run" | "refresh"
+  >;
+  requestClose: RequestClose;
+};
+
+export type TabActionsTarget = Pick<
+  ResolvedCommand,
+  | "name"
+  | "args"
+  | "event"
+  | "hostId"
+  | "sessionId"
+  | "currentView"
+  | "currentWindow"
+  | "terminalRef"
+  | "execute"
+>;
+export type TabActionsDependencies = Pick<WorkspaceActionOptions, "setForm"> & {
+  workspace: Pick<WorkspaceOperations, "mutateSession" | "run" | "select">;
+  requestClose: RequestClose;
+};
+
+export type PaneActionsTarget = Pick<
+  ResolvedCommand,
+  | "name"
+  | "args"
+  | "hostId"
+  | "sessionId"
+  | "currentWindow"
+  | "blockId"
+  | "terminalRef"
+  | "targetPane"
+  | "localCommand"
+  | "requirePane"
+>;
+export type PaneActionsDependencies = Pick<
+  WorkspaceActionOptions,
+  "setConfirmation" | "setForm" | "setDirectoryBrowser" | "setReport"
+> & {
+  workspace: Pick<WorkspaceOperations, "run">;
+  settings: Settings;
+  requestClose: RequestClose;
+};
+
+export type PaneLayoutActionsTarget = Pick<
+  ResolvedCommand,
+  | "name"
+  | "args"
+  | "event"
+  | "hostId"
+  | "sessionId"
+  | "currentWindow"
+  | "blockId"
+  | "terminalRef"
+  | "targetPane"
+  | "requirePane"
+  | "execute"
+>;
+export type PaneLayoutActionsDependencies = Pick<
+  WorkspaceActionOptions,
+  "workspaceElement" | "setForm"
+> & {
+  workspace: Pick<
+    WorkspaceOperations,
+    "mutateSession" | "focusPane" | "run" | "refresh"
+  >;
+  settings: Settings;
+};
+
+export type ClientActionsTarget = Pick<
+  ResolvedCommand,
+  "name" | "args" | "hostId"
+>;
+export type ClientActionsDependencies = Pick<
+  WorkspaceActionOptions,
+  | "hosts"
+  | "interfaceTheme"
+  | "setPalette"
+  | "setSettingsTab"
+  | "setDiagnostics"
+  | "setPairing"
+  | "setEditingHost"
+  | "setConfirmation"
+  | "setForm"
+  | "setActivityOnly"
+  | "setActivityOpen"
+  | "setActivityGroup"
+> & {
+  workspace: Pick<
+    WorkspaceOperations,
+    | "mutateSession"
+    | "select"
+    | "run"
+    | "dismissNotices"
+    | "saveSettings"
+    | "refresh"
+  >;
+  settings: Settings;
+};
+
+export type RequestClose = (
+  title: string,
+  description: string,
+  action: () => Promise<unknown>,
+) => void;

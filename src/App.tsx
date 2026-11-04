@@ -1,3 +1,9 @@
+import { buildPaletteCommands } from "./workspace/palette";
+import { sessionMenuItems, tabMenuItems } from "./workspace/contextMenus";
+import { useWorkspaceGestures } from "./hooks/useWorkspaceGestures";
+import { createHostSaver } from "./workspace/actions/hostActions";
+import { createServerActions } from "./workspace/actions/serverActions";
+import { pickDirectoryPath } from "./workspace/actions/directoryActions";
 import {
   buildNavigationHosts,
   buildActivityFeed,
@@ -7,10 +13,7 @@ import { WorkspacePane } from "./components/WorkspacePane";
 import { FormDialog, ConfirmDialog } from "./components/WorkspaceDialogs";
 import { useInterfaceAppearance } from "./hooks/useInterfaceAppearance";
 import { usePaneGeometry } from "./hooks/usePaneGeometry";
-import {
-  createWorkspaceActions,
-  aliases,
-} from "./workspace/actions/createWorkspaceActions";
+import { createWorkspaceActions } from "./workspace/actions/createWorkspaceActions";
 import type { Form, Confirmation } from "./workspace/actions/context";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -28,14 +31,11 @@ import {
 import { Sidebar } from "./components/Sidebar";
 import { Toolbar } from "./components/Toolbar";
 import { Dialog } from "./components/Dialog";
-import {
-  CommandPalette,
-  type PaletteCommand,
-} from "./components/CommandPalette";
+import { CommandPalette } from "./components/CommandPalette";
 import { ContextMenu, type ContextItem } from "./components/ContextMenu";
 import { SettingsDialog } from "./components/preferences/SettingsDialog";
 import type { SettingsTab } from "./components/preferences/types";
-import { HostDialog, type Credentials } from "./components/HostDialog";
+import { HostDialog } from "./components/HostDialog";
 import { ConfigurationDialog } from "./components/ConfigurationDialog";
 import { DiagnosticsDialog } from "./components/DiagnosticsDialog";
 import { PairDeviceDialog } from "./components/PairDeviceDialog";
@@ -53,13 +53,7 @@ import {
   windowTitle,
   viewKey,
 } from "./core/workspace";
-import { CLIENT_ACTIONS } from "./shared/actions";
-import {
-  type ClientEvent,
-  type Host,
-  type RexPane,
-  type Selection,
-} from "./shared/types";
+import { type ClientEvent, type Host, type Selection } from "./shared/types";
 
 type Menu = { x: number; y: number; items: (ContextItem | null)[] };
 export default function App() {
@@ -104,7 +98,6 @@ export default function App() {
   const [collapsedSessions, setCollapsedSessions] = useState(new Set<string>());
   const [nativeFocused, setNativeFocused] = useState(document.hasFocus());
   const [sidebarPreviewWidth, setSidebarPreviewWidth] = useState<number>();
-  const gesture = useRef({ at: 0, handled: false, x: 0, y: 0 });
   const [visited, setVisited] = useState<Selection[]>([]);
   const workspaceElement = useRef<HTMLDivElement>(null);
   const executeRef = useRef<
@@ -153,21 +146,6 @@ export default function App() {
     void action().catch((failure) => ws.setError(errorMessage(failure)));
   const dispatch = (name: string, args: Record<string, unknown> = {}) =>
     safely(() => executeRef.current(name, args));
-  const requestClose = (
-    title: string,
-    description: string,
-    action: () => Promise<unknown>,
-  ) => {
-    if (settings?.confirmClose)
-      setConfirmation({
-        title,
-        description,
-        submit: async () => {
-          await ws.run(action);
-        },
-      });
-    else safely(() => ws.run(action));
-  };
 
   useEffect(() => {
     if (selection && activeWindow)
@@ -197,42 +175,7 @@ export default function App() {
         .request("focusWindow", selection)
         .catch((failure) => ws.setError(errorMessage(failure)));
   }, [selection?.hostId, selection?.sessionId, selection?.windowId]);
-  useEffect(() => {
-    const element = workspaceElement.current;
-    if (!element || !settings) return;
-    const wheel = (event: WheelEvent) => {
-      const pinch =
-        settings.trackpadGestures && event.ctrlKey && !!activeWindow;
-      const swipe =
-        settings.sidebarGesture !== "off" &&
-        Math.abs(event.deltaX) > Math.abs(event.deltaY) &&
-        (settings.sidebarGesture === "swipe" || event.altKey);
-      if (!pinch && !swipe) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      const now = performance.now();
-      if (now - gesture.current.at > 300)
-        gesture.current = { at: now, handled: false, x: 0, y: 0 };
-      const state = gesture.current;
-      state.at = now;
-      state.x += event.deltaX;
-      state.y += event.deltaY;
-      if (state.handled) return;
-      if (pinch && Math.abs(state.y) > 15) {
-        state.handled = true;
-        const wantsZoom = state.y < 0;
-        if (wantsZoom !== !!activeWindow?.zoomedBlockId) dispatch("pane.zoom");
-      } else if (swipe && Math.abs(state.x) > 90) {
-        state.handled = true;
-        const wantsCollapsed =
-          settings.tabStyle === "right" ? state.x < 0 : state.x > 0;
-        if (wantsCollapsed !== settings.sidebarCollapsed)
-          dispatch("client.sidebar.toggle");
-      }
-    };
-    element.addEventListener("wheel", wheel, { passive: false, capture: true });
-    return () => element.removeEventListener("wheel", wheel, { capture: true });
-  }, [settings, activeWindow?.id, activeWindow?.zoomedBlockId]);
+  useWorkspaceGestures(workspaceElement, settings, activeWindow, dispatch);
   useEffect(() => {
     const focus = () => setNativeFocused(true);
     const blur = () => setNativeFocused(false);
@@ -259,37 +202,14 @@ export default function App() {
       if (event.type === "update") setUpdateState(event.state);
     });
   }, []);
-  const focusPane = async (pane: RexPane, where = selection) => {
-    if (!where) return;
-    ws.setFocusedPane(pane.id);
-    await ws.run(() =>
-      window.rex.request("focus", {
-        hostId: where.hostId,
-        sessionId: where.sessionId,
-        blockId: pane.id,
-      }),
-    );
-  };
-  const inspectAfter = async (
-    hostId: string,
-    sessionId: string,
-    selectActive = false,
-  ) => {
-    const next = await ws.reloadSession(hostId, sessionId);
-    if (selectActive) ws.select(hostId, sessionId, next.activeWindowId);
-    return next;
-  };
-
   const execute = createWorkspaceActions({
-    ws,
+    workspace: ws.operations,
     settings,
     hosts,
     views,
     selection,
     focusedPane,
     keymaps,
-    activeHost,
-    activePane,
     interfaceTheme,
     workspaceElement,
     setPalette,
@@ -305,9 +225,7 @@ export default function App() {
     setActivityGroup,
     setDirectoryBrowser,
     setReport,
-    requestClose,
-    inspectAfter,
-    focusPane,
+    onError: ws.setError,
   });
 
   executeRef.current = execute;
@@ -358,96 +276,17 @@ export default function App() {
     settings,
     activityGroup,
   );
-  const paletteCommands: PaletteCommand[] = [
-    ...(palette === "sessions"
-      ? []
-      : CLIENT_ACTIONS.filter(
-          (action) => !["client.window.close"].includes(action.name),
-        ).map((action) => ({
-          id: action.name,
-          label: action.title || action.name,
-          description: action.name,
-          shortcut: Object.entries(aliases).find(
-            ([, name]) => name === action.name,
-          )?.[0]
-            ? settings?.shortcuts[
-                Object.entries(aliases).find(
-                  ([, name]) => name === action.name,
-                )![0]
-              ]
-            : undefined,
-          run: () => dispatch(action.name),
-        }))),
-    ...(palette === "sessions"
-      ? []
-      : [
-          {
-            id: "pane.new_block",
-            label: "Create block from server plugin…",
-            description: "Discover available block types",
-            run: () => dispatch("pane.new_block"),
-          },
-        ]),
-    ...(palette === "sessions"
-      ? []
-      : (keymaps[activeHost?.id || ""]?.actions || [])
-          .filter(
-            (action) =>
-              action.kind !== "client" &&
-              !CLIENT_ACTIONS.some((client) => client.name === action.name),
-          )
-          .map((action) => ({
-            id: `server:${action.name}`,
-            label: action.title || action.name,
-            description: "Server action · " + action.name,
-            run: () => {
-              const required = action.args?.required as string[] | undefined;
-              if (required?.length)
-                setForm({
-                  title: action.title || action.name,
-                  description: "Arguments for this server-defined action.",
-                  fields: [
-                    {
-                      name: "args",
-                      label: "Arguments (JSON)",
-                      value: JSON.stringify(
-                        Object.fromEntries(required.map((key) => [key, ""])),
-                        null,
-                        2,
-                      ),
-                      multiline: true,
-                    },
-                  ],
-                  submit: async (values) => {
-                    await execute(action.name, JSON.parse(values.args));
-                  },
-                });
-              else dispatch(action.name);
-            },
-          }))),
-    ...(palette === "sessions"
-      ? []
-      : navHosts.flatMap((host) =>
-          host.sessions.flatMap((session) =>
-            session.windows.map((window) => ({
-              id: `tab:${host.id}/${session.id}/${window.id}`,
-              label: window.label,
-              description: `${host.label} · ${session.label} · Tab`,
-              icon: <TerminalSquare size={17} />,
-              run: () => ws.select(host.id, session.id, window.id),
-            })),
-          ),
-        )),
-    ...navHosts.flatMap((host) =>
-      host.sessions.map((session) => ({
-        id: `session:${host.id}/${session.id}`,
-        label: session.label,
-        description: host.label,
-        icon: <TerminalSquare size={17} />,
-        run: () => ws.select(host.id, session.id),
-      })),
-    ),
-  ];
+  const paletteCommands = buildPaletteCommands({
+    palette,
+    settings,
+    keymaps,
+    activeHostId: activeHost?.id,
+    navHosts,
+    dispatch,
+    execute,
+    select: ws.operations.select,
+    setForm,
+  });
   const openSessionMenu = (
     event: React.MouseEvent,
     hostId: string,
@@ -456,40 +295,13 @@ export default function App() {
     setMenu({
       x: event.clientX,
       y: event.clientY,
-      items: [
-        {
-          label: "New terminal tab",
-          run: () =>
-            dispatch("client.tab.new", {
-              host_id: hostId,
-              session_id: sessionId,
-            }),
-        },
-        {
-          label: "Rename session…",
-          run: () =>
-            dispatch("session.rename", {
-              host_id: hostId,
-              session_id: sessionId,
-            }),
-        },
-        {
-          label: collapsedSessions.has(sessionId)
-            ? "Expand session"
-            : "Collapse session",
-          run: () => toggleCollapse(sessionId),
-        },
-        null,
-        {
-          label: "Close session…",
-          danger: true,
-          run: () =>
-            dispatch("session.close", {
-              host_id: hostId,
-              session_id: sessionId,
-            }),
-        },
-      ],
+      items: sessionMenuItems({
+        hostId,
+        sessionId,
+        collapsedSessions,
+        toggleCollapse,
+        dispatch,
+      }),
     });
   const openTabMenu = (
     event: React.MouseEvent,
@@ -500,56 +312,7 @@ export default function App() {
     setMenu({
       x: event.clientX,
       y: event.clientY,
-      items: [
-        {
-          label: "Rename tab…",
-          run: () =>
-            dispatch("client.tab.rename", {
-              host_id: hostId,
-              session_id: sessionId,
-              window_id: windowId,
-            }),
-        },
-        {
-          label: "Move tab backward",
-          run: () =>
-            dispatch("client.tab.move.backward", {
-              host_id: hostId,
-              session_id: sessionId,
-              window_id: windowId,
-            }),
-        },
-        {
-          label: "Move tab forward",
-          run: () =>
-            dispatch("client.tab.move.forward", {
-              host_id: hostId,
-              session_id: sessionId,
-              window_id: windowId,
-            }),
-        },
-        {
-          label: "Show in a new window",
-          run: () =>
-            dispatch("client.tab.move_to_new_window", {
-              host_id: hostId,
-              session_id: sessionId,
-              window_id: windowId,
-            }),
-        },
-        null,
-        {
-          label: "Close tab…",
-          danger: true,
-          shortcut: "Ctrl Shift W",
-          run: () =>
-            dispatch("client.tab.close", {
-              host_id: hostId,
-              session_id: sessionId,
-              window_id: windowId,
-            }),
-        },
-      ],
+      items: tabMenuItems({ hostId, sessionId, windowId, dispatch }),
     });
   const reorder = (
     hostId: string,
@@ -573,65 +336,18 @@ export default function App() {
     ws,
     safely,
   );
-  const saveHost = async (host: Host, credentials?: Credentials) => {
-    const current = ws.settingsRef.current!;
-    await ws.saveSettings({
-      ...current,
-      hosts: current.hosts.some((item) => item.id === host.id)
-        ? current.hosts.map((item) => (item.id === host.id ? host : item))
-        : [...current.hosts, host],
-    });
-    if (credentials)
-      await window.rex.request("setCredentials", {
-        hostId: host.id,
-        ...credentials,
-      });
+  const saveHost = createHostSaver(ws.operations, (hostId) =>
     setConnectionRevisions((previous) => ({
       ...previous,
-      [host.id]: (previous[host.id] || 0) + 1,
-    }));
-    await ws.refresh();
-  };
-  const serverAction = (action: string, args: Record<string, unknown> = {}) => {
-    if (action === "tailscale.rename") {
-      setDiagnostics(false);
-      setForm({
-        title: "Change Tailscale hostname",
-        description:
-          "This changes the selected Rex server’s advertised hostname.",
-        fields: [{ name: "hostname", label: "Hostname", required: true }],
-        submit: async (values) => {
-          await window.rex.request("serverAction", {
-            hostId: activeHost?.id || "local",
-            action: "tailscale.rename",
-            args: { hostname: values.hostname },
-          });
-        },
-      });
-      return;
-    }
-    setDiagnostics(false);
-    setConfirmation({
-      title: `Apply ${action.replace("tailscale.", "Tailscale ")}?`,
-      description:
-        "This changes remote access on the selected server. Existing terminal programs are retained.",
-      label: "Apply change",
-      submit: async () => {
-        const result = await window.rex.request("serverAction", {
-          hostId: activeHost?.id || "local",
-          action: action as "tailscale.enable",
-          args:
-            action === "tailscale.enable"
-              ? { allow_tailnet_members: false, ...args }
-              : args,
-        });
-        setReport({
-          title: "Server response",
-          body: JSON.stringify(result, null, 2),
-        });
-      },
-    });
-  };
+      [hostId]: (previous[hostId] || 0) + 1,
+    })),
+  );
+  const serverAction = createServerActions(activeHost?.id || "local", {
+    setDiagnostics,
+    setForm,
+    setConfirmation,
+    setReport,
+  });
 
   if (!settings && loading)
     return (
@@ -909,7 +625,13 @@ export default function App() {
                             settings.focusFollowsMouse &&
                             pane.id !== activePane?.id
                           )
-                            safely(() => focusPane(pane, where));
+                            safely(() =>
+                              ws.operations.focusPane({
+                                hostId: where.hostId,
+                                sessionId: where.sessionId,
+                                blockId: pane.id,
+                              }),
+                            );
                         }}
                       >
                         {pane.layerKind === "floating" && (
@@ -941,7 +663,13 @@ export default function App() {
                           }
                           onFocus={() => {
                             if (visible && pane.id !== activePane?.id)
-                              safely(() => focusPane(pane, where));
+                              safely(() =>
+                                ws.operations.focusPane({
+                                  hostId: where.hostId,
+                                  sessionId: where.sessionId,
+                                  blockId: pane.id,
+                                }),
+                              );
                           }}
                           onZoom={() =>
                             dispatch("pane.zoom", {
@@ -1335,7 +1063,11 @@ export default function App() {
       {directoryBrowser && (
         <DirectoryDialog
           terminalRef={directoryBrowser.ref}
-          endpoint={settings.hosts.find((host) => host.id === directoryBrowser.ref.hostId)?.endpoint}
+          endpoint={
+            settings.hosts.find(
+              (host) => host.id === directoryBrowser.ref.hostId,
+            )?.endpoint
+          }
           mode={directoryBrowser.mode}
           recent={
             settings.showRecentPaths
@@ -1343,38 +1075,9 @@ export default function App() {
               : []
           }
           onClose={() => setDirectoryBrowser(undefined)}
-          onPick={async (path) => {
-            const target = directoryBrowser.ref;
-            if (directoryBrowser.mode === "insert")
-              await window.rex.request("paste", {
-                ...target,
-                text: `'${path.replaceAll("'", "'\\''")}'`,
-              });
-            else {
-              await ws.run(() =>
-                window.rex.request("newWindow", {
-                  hostId: target.hostId,
-                  sessionId: target.sessionId,
-                  label: path.split("/").filter(Boolean).at(-1) || "Shell",
-                  cwd: path,
-                }),
-              );
-              await inspectAfter(target.hostId, target.sessionId, true);
-            }
-            const current = ws.settingsRef.current!;
-            await ws.saveSettings({
-              ...current,
-              recentPaths: {
-                ...current.recentPaths,
-                [target.hostId]: [
-                  path,
-                  ...(current.recentPaths[target.hostId] || []).filter(
-                    (value) => value !== path,
-                  ),
-                ].slice(0, 20),
-              },
-            });
-          }}
+          onPick={(path) =>
+            pickDirectoryPath(ws.operations, directoryBrowser, path)
+          }
         />
       )}
       {form && (
@@ -1396,7 +1099,9 @@ export default function App() {
           <div className="dialog-actions">
             <button
               className="button"
-              onClick={() => safely(() => window.rex.writeClipboard(report.body))}
+              onClick={() =>
+                safely(() => window.rex.writeClipboard(report.body))
+              }
             >
               Copy
             </button>

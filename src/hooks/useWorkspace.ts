@@ -1,3 +1,8 @@
+import {
+  activeSessionSelection,
+  type SessionMutationPlan,
+  type WorkspaceOperations,
+} from "../core/workspaceOperations";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ClientEvent,
@@ -6,6 +11,7 @@ import type {
   Selection,
   SessionView,
   Settings,
+  TerminalRef,
 } from "../shared/types";
 import { errorMessage, paneKey, viewKey } from "../core/workspace";
 import {
@@ -42,7 +48,7 @@ export function useWorkspace() {
       event?: ClientEvent,
     ) => Promise<unknown>
   >(async () => {});
-  const inFlight = useRef(false);
+  const inFlight = useRef<Promise<void> | undefined>(undefined);
   const refreshQueued = useRef(false);
   const viewEpoch = useRef(0);
   const mounted = useRef(true);
@@ -53,12 +59,47 @@ export function useWorkspace() {
 
   const reloadSession = useCallback(
     async (hostId: string, sessionId: string) => {
+      if (!mounted.current)
+        throw new Error(
+          "The workspace closed before the session could be refreshed.",
+        );
+      const configuration = settingsRef.current?.hosts.find(
+        (host) => host.id === hostId,
+      );
+      if (!configuration)
+        throw new Error("The selected host is no longer configured.");
       const view = await window.rex.request("inspectSession", {
         hostId,
         sessionId,
       });
       viewEpoch.current++;
-      if (mounted.current) {
+      if (
+        mounted.current &&
+        settingsRef.current?.hosts.some(
+          (host) =>
+            host.id === hostId && host.endpoint === configuration.endpoint,
+        )
+      ) {
+        setHosts((previous) => {
+          const existing = previous.find((host) => host.id === hostId);
+          const host = existing || configuration;
+          if (!host) return previous;
+          const sessions = existing?.sessions || [];
+          const summary = { id: view.id, label: view.label };
+          const next = {
+            ...host,
+            connected: true,
+            error: undefined,
+            sessions: sessions.some((session) => session.id === view.id)
+              ? sessions.map((session) =>
+                  session.id === view.id ? summary : session,
+                )
+              : [...sessions, summary],
+          };
+          return existing
+            ? previous.map((item) => (item.id === hostId ? next : item))
+            : [...previous, next];
+        });
         setViews((previous) => ({
           ...previous,
           [viewKey(hostId, sessionId)]: view,
@@ -74,15 +115,10 @@ export function useWorkspace() {
     },
     [],
   );
-  const refresh = useCallback(async () => {
+  const refreshSnapshot = useCallback(async () => {
     if (!mounted.current) return;
     const config = settingsRef.current;
     if (!config) return;
-    if (inFlight.current) {
-      refreshQueued.current = true;
-      return;
-    }
-    inFlight.current = true;
     const startingEpoch = viewEpoch.current;
     const request: RexBridge["request"] = (method, args) => {
       if (!mounted.current || startingEpoch !== viewEpoch.current)
@@ -149,17 +185,28 @@ export function useWorkspace() {
       if (reconciled.updateFocus) setFocusedPane(reconciled.focusedPane);
     } catch (failure) {
       if (mounted.current) setError(errorMessage(failure));
-    } finally {
-      inFlight.current = false;
-      if (mounted.current) {
-        setLoading(false);
-        if (refreshQueued.current) {
-          refreshQueued.current = false;
-          setTimeout(() => void refresh(), 0);
-        }
-      }
     }
   }, []);
+  const refresh = useCallback((): Promise<void> => {
+    if (!mounted.current || !settingsRef.current) return Promise.resolve();
+    if (inFlight.current) {
+      refreshQueued.current = true;
+      return inFlight.current;
+    }
+    const work = (async () => {
+      do {
+        refreshQueued.current = false;
+        await refreshSnapshot();
+      } while (mounted.current && refreshQueued.current);
+    })();
+    inFlight.current = work;
+    const finish = () => {
+      if (inFlight.current === work) inFlight.current = undefined;
+      if (mounted.current) setLoading(false);
+    };
+    void work.then(finish, finish);
+    return work;
+  }, [refreshSnapshot]);
   const scheduleRefresh = useCallback(() => {
     clearTimeout(delayedRefresh.current);
     delayedRefresh.current = setTimeout(() => void refresh(), 80);
@@ -177,27 +224,98 @@ export function useWorkspace() {
     }
     return saved;
   }, []);
-  const run = useCallback(
-    async <T>(action: () => Promise<T>): Promise<T> => {
+  const pendingMutations = useRef(0);
+  const completeMutation = useCallback(
+    async <T, R>(
+      action: () => Promise<T>,
+      reconcile: (result: T) => Promise<R>,
+    ): Promise<{ result: T; reconciled: R }> => {
+      pendingMutations.current++;
       setBusy(true);
       setError(undefined);
       viewEpoch.current++;
       try {
         const result = await action();
-        await refresh();
-        return result;
-      } catch (failure) {
-        setError(errorMessage(failure));
-        throw failure;
-      } finally {
         viewEpoch.current++;
+        if (!mounted.current)
+          throw new Error(
+            "The workspace closed before the change could be refreshed.",
+          );
+        return { result, reconciled: await reconcile(result) };
+      } catch (failure) {
         if (mounted.current) {
-          setBusy(false);
+          setError(errorMessage(failure));
           scheduleRefresh();
         }
+        throw failure;
+      } finally {
+        pendingMutations.current--;
+        if (mounted.current) setBusy(pendingMutations.current > 0);
       }
     },
-    [refresh, scheduleRefresh],
+    [scheduleRefresh],
+  );
+  const run = useCallback(
+    async <T>(action: () => Promise<T>): Promise<T> => {
+      const completed = await completeMutation(action, () => refresh());
+      return completed.result;
+    },
+    [completeMutation, refresh],
+  );
+  const mutateSession = useCallback(
+    async <T>(
+      plan: SessionMutationPlan<T>,
+      action: () => Promise<T>,
+    ): Promise<{ result: T; view: SessionView }> => {
+      const endpoint = settingsRef.current?.hosts.find(
+        (host) => host.id === plan.hostId,
+      )?.endpoint;
+      const requireCurrentTarget = () => {
+        if (!mounted.current)
+          throw new Error(
+            "The workspace closed before the change could be refreshed.",
+          );
+        if (
+          !settingsRef.current?.hosts.some(
+            (host) => host.id === plan.hostId && host.endpoint === endpoint,
+          )
+        )
+          throw new Error(
+            "The host configuration changed before the session could be refreshed.",
+          );
+      };
+      const completed = await completeMutation(action, async (result) => {
+        requireCurrentTarget();
+        const sessionId =
+          typeof plan.sessionId === "function"
+            ? plan.sessionId(result)
+            : plan.sessionId;
+        const view = await reloadSession(plan.hostId, sessionId);
+        requireCurrentTarget();
+        if (plan.selectActive) {
+          const next = activeSessionSelection(plan.hostId, view);
+          selectionRef.current = next;
+          setSelection(next);
+          setFocusedPane(
+            view.windows.find((window) => window.id === next.windowId)
+              ?.focusedBlockId,
+          );
+        }
+        return view;
+      });
+      return { result: completed.result, view: completed.reconciled };
+    },
+    [completeMutation, reloadSession],
+  );
+  const focusPane = useCallback(
+    async (target: TerminalRef): Promise<void> => {
+      setFocusedPane(target.blockId);
+      await mutateSession(
+        { hostId: target.hostId, sessionId: target.sessionId },
+        () => window.rex.request("focus", target),
+      );
+    },
+    [mutateSession],
   );
   const select = useCallback(
     (
@@ -351,7 +469,18 @@ export function useWorkspace() {
     );
     return () => clearTimeout(timer);
   }, [notices]);
+  const operations: WorkspaceOperations = {
+    run,
+    mutateSession,
+    refresh,
+    getSettings: () => settingsRef.current,
+    saveSettings,
+    select,
+    focusPane,
+    dismissNotices: () => setNotices([]),
+  };
   return {
+    operations,
     settings,
     hosts,
     views,
