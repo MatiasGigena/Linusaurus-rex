@@ -157,6 +157,7 @@ export type ClientActionsDependencies = Pick<
     | "select"
     | "mutateHostAndRefresh"
     | "dismissNotices"
+    | "getSettings"
     | "saveSettings"
     | "refresh"
   >;

@@ -15,6 +15,7 @@ test("settings actions accept only actual tab strings and default malformed valu
     interfaceTheme: "linux",
     settings: DEFAULT_SETTINGS,
     workspace: {
+      getSettings: unexpected,
       mutateHostAndRefresh: unexpected,
       mutateSession: unexpected,
       select: unexpected,

@@ -88,6 +88,7 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
     createClientActions({
       dialogs: options.dialogs,
       workspace: {
+        getSettings: workspace.getSettings,
         mutateSession: workspace.mutateSession,
         select: workspace.select,
         mutateHostAndRefresh: workspace.mutateHostAndRefresh,

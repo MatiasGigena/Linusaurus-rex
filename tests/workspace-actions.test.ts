@@ -1165,3 +1165,103 @@ test("settings actions preserve unrelated state and unknown commands require an 
     },
   ]);
 });
+
+test("a held theme import preserves external settings and themes while retaining its intended appearance", async (t) => {
+  const current = fixture(t);
+  current.settings.set({ ...current.initial, appearance: "dark" });
+  const entered = gate(),
+    release = gate();
+  const colors = { background: "#112233", foreground: "#ddeeff" };
+  current.responders.importTheme = async () => {
+    entered.open();
+    await release.promise;
+    return colors;
+  };
+  const importing = current.execute("client.theme.import");
+  await entered.promise;
+  const externallySaved = {
+    ...current.settings.get(),
+    fontSize: 21,
+    sidebarWidth: 417,
+    appearance: "light" as const,
+    themeLibrary: [
+      {
+        id: "external",
+        name: "Imported dark",
+        colors: { background: "#010203" },
+      },
+    ],
+    lightThemeId: "external",
+  };
+  current.settings.set(externallySaved);
+  release.open();
+  await importing;
+  const saved = current.settings.get();
+  assert.equal(saved.fontSize, 21);
+  assert.equal(saved.sidebarWidth, 417);
+  assert.equal(saved.appearance, "light");
+  assert.equal(saved.lightThemeId, "external");
+  assert.deepEqual(saved.themeLibrary[0], externallySaved.themeLibrary[0]);
+  const imported = saved.themeLibrary.find((theme) => theme.id !== "external");
+  assert.ok(imported);
+  assert.equal(imported.name, "Imported dark 2");
+  assert.deepEqual(imported.colors, colors);
+  assert.equal(saved.darkThemeId, imported.id);
+});
+
+test("a held theme import validates the latest library capacity before saving", async (t) => {
+  const current = fixture(t);
+  current.settings.set({ ...current.initial, appearance: "dark" });
+  const entered = gate(),
+    release = gate();
+  current.responders.importTheme = async () => {
+    entered.open();
+    await release.promise;
+    return { background: "#112233" };
+  };
+  const importing = current.execute("client.theme.import");
+  const result = importing.then(
+    () => undefined,
+    (failure) => failure,
+  );
+  await entered.promise;
+  const latest = {
+    ...current.settings.get(),
+    themeLibrary: Array.from({ length: 64 }, (_, i) => ({
+      id: `external-${i}`,
+      name: `External ${i}`,
+      colors: { background: "#010203" },
+    })),
+  };
+  current.settings.set(latest);
+  release.open();
+  const failure = await result;
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, /64 themes/);
+  assert.equal(current.settings.get(), latest);
+  assert.deepEqual(current.saved, []);
+});
+
+test("theme import preserves settings persistence rejection identity and cancellation performs no write", async (t) => {
+  const current = fixture(t);
+  current.settings.set({ ...current.initial, appearance: "dark" });
+  const original = Object.assign(new Error("Theme persistence denied"), {
+    code: "DENIED",
+    method: "saveSettings",
+  });
+  let writes = 0;
+  current.workspace.saveSettings = async () => {
+    writes++;
+    throw original;
+  };
+  current.responders.importTheme = async () => ({ background: "#112233" });
+  await assert.rejects(
+    current.execute("client.theme.import"),
+    (failure) => failure === original,
+  );
+  assert.equal(writes, 1);
+  current.responders.importTheme = async () => null;
+  current.workspace.getSettings = () => undefined;
+  await current.execute("client.theme.import");
+  assert.equal(writes, 1);
+});

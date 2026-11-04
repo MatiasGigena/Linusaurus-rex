@@ -205,17 +205,20 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
         dialogs.open({ kind: "settings", tab: "appearance" });
         return;
       case "client.theme.import": {
+        const light =
+          settings.appearance === "light" ||
+          (settings.appearance === "system" &&
+            matchMedia("(prefers-color-scheme: light)").matches);
         const imported = await window.rex.request("importTheme", {});
         if (imported) {
-          const light =
-            settings.appearance === "light" ||
-            (settings.appearance === "system" &&
-              matchMedia("(prefers-color-scheme: light)").matches);
+          const current = workspace.getSettings();
+          if (!current)
+            throw new Error("Workspace settings are not available.");
           return workspace.saveSettings(
             saveLibraryTheme(
-              settings,
+              current,
               uniqueThemeName(
-                settings.themeLibrary,
+                current.themeLibrary,
                 `Imported ${light ? "light" : "dark"}`,
               ),
               imported,
