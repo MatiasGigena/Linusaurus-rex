@@ -4,7 +4,8 @@ import { join } from 'node:path';
 
 export interface RexCredentials { username?: string; password?: string; token?: string; headers?: Record<string, string> }
 export interface RexWelcome { protocol: string; api_revision: number; api_server_revision?: number; limits?: { max_message_bytes?: number }; client?: { id: string; reconnect_token?: string; resumed?: boolean }; features?: string[] }
-export type RexEvent = { type: string; seq?: number; payload?: Record<string, unknown>; [key: string]: unknown };
+export type RexEvent = { type: string; seq?: unknown; payload?: unknown; [key: string]: unknown };
+type ClientRequest = { id: string; method: string; payload: Record<string, unknown> };
 type Pending = { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -12,7 +13,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 function controlMessage(value: unknown): RexEvent {
   if (!isRecord(value) || typeof value.type !== 'string' || !value.type) throw new Error('Invalid Rex control message envelope.');
-  return value as RexEvent;
+  return { ...value, type: value.type };
+}
+function responseError(value: unknown): { message?: string; code?: string } | undefined {
+  if (value === undefined || value === null) return;
+  if (!isRecord(value)) throw new Error('Rex sent an invalid response error.');
+  const { message, code } = value;
+  if ((message !== undefined && typeof message !== 'string') || (code !== undefined && typeof code !== 'string')) throw new Error('Rex sent an invalid response error.');
+  return { message, code };
+}
+function clientRequest(message: RexEvent): ClientRequest {
+  if (typeof message.id !== 'string' || !message.id || typeof message.method !== 'string' || !message.method || (message.payload !== undefined && !isRecord(message.payload))) throw new Error('Rex sent an invalid client request.');
+  return { id: message.id, method: message.method, payload: message.payload === undefined ? {} : message.payload };
 }
 function invalidWelcome(): never { throw new Error('Rex sent an invalid control welcome.'); }
 function validateWelcome(message: RexEvent, revisions: { min: number; max: number }): asserts message is RexEvent & RexWelcome {
@@ -127,12 +139,12 @@ export class RexControl {
           } else if (message.type === 'response') {
             const pending = this.pending.get(String(message.id));
             if (!pending) return;
+            const error = responseError(message.error);
             this.pending.delete(String(message.id)); clearTimeout(pending.timer);
-            const error = message.error as { message?: string; code?: string } | undefined;
             if (error) pending.reject(new RexRequestError(error.message || error.code || 'Rex rejected the request.', error.code, pending.method));
             else pending.resolve(message.payload);
-          } else if (message.type === 'request' && typeof message.id === 'string' && typeof message.method === 'string') {
-            void this.handleRequest(message);
+          } else if (message.type === 'request') {
+            void this.handleRequest(clientRequest(message));
           } else this.emit(message);
         } catch (error) { fail(error instanceof Error ? error : new Error('Invalid Rex control response.')); this.socket.terminate(); }
       });
@@ -147,10 +159,10 @@ export class RexControl {
   onEvent(callback: (event: RexEvent) => void): () => void { this.listeners.add(callback); return () => this.listeners.delete(callback); }
   setRequestHandler(handler: (method: string, payload: Record<string, unknown>) => Promise<unknown>) { this.requestHandler = handler; }
   private emit(event: RexEvent) { for (const listener of this.listeners) { try { listener(event); } catch { /* One observer must not destroy the transport. */ } } }
-  private async handleRequest(message: RexEvent) {
+  private async handleRequest(message: ClientRequest) {
     try {
       if (!this.requestHandler) throw new Error('This client operation is not supported.');
-      const payload = await this.requestHandler(message.method as string, message.payload || {});
+      const payload = await this.requestHandler(message.method, message.payload);
       if (this.connected) this.socket.send(JSON.stringify({ type: 'response', id: message.id, payload: payload ?? null }));
     } catch (error) {
       if (this.connected) this.socket.send(JSON.stringify({ type: 'response', id: message.id, error: { code: 'not_supported', message: error instanceof Error ? error.message : 'Client operation failed.' } }));
