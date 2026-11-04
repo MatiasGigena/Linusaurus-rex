@@ -3,7 +3,7 @@ import type {
   PathPickerArgs,
   RendererContext,
 } from "../src/shared/types.js";
-import { identifier, record, string } from "./settings.js";
+import { identifier, record, string } from "./validation.js";
 
 /** Validate the same operation-dependent requirements exposed by the preload types. */
 export function parseLayoutAction(

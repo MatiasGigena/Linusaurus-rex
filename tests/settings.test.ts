@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SettingsStore, validateSettings } from '../electron/settings.js';
+import { SettingsStore } from '../electron/settings.js';
+import { validateSettings } from '../electron/settings/validation.js';
 import { DEFAULT_SETTINGS } from '../src/shared/types.js';
 
 test('preferences survive restart and returned objects cannot mutate saved settings', async (t) => {

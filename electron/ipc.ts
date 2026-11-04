@@ -32,13 +32,8 @@ import type {
   Settings,
   TerminalFrame,
 } from "../src/shared/types.js";
-import {
-  SettingsStore,
-  record,
-  string,
-  identifier,
-  integer,
-} from "./settings.js";
+import { SettingsStore } from "./settings.js";
+import { record, string, identifier, integer } from "./validation.js";
 import { ClientFeatures } from "./client/client.js";
 import { CredentialsStoreCache } from "./features/credentials.js";
 import {

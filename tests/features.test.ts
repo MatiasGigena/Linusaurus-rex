@@ -29,7 +29,7 @@ import {
   linkDecision,
   validateTrustedLink,
 } from "../electron/features/links.js";
-import { validateSettings } from "../electron/settings.js";
+import { validateSettings } from "../electron/settings/validation.js";
 import { serverShortcut } from "../src/shared/actions.js";
 
 test("program activity seeds silently, notifies only live changes, and respects visibility and preferences", () => {

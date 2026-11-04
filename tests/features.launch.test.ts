@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {applicationLaunchArgs,parseLaunchArgs,prepareLaunchSettings,resolveLaunchSelection,type LaunchBackend} from '../electron/features/launch.js';
-import {validateSettings} from '../electron/settings.js';
+import {validateSettings} from '../electron/settings/validation.js';
 import {DEFAULT_SETTINGS,type Host,type SessionView} from '../src/shared/types.js';
 
 test('launch options validate values, conflicts, separate profiles, and Electron switches',()=>{
