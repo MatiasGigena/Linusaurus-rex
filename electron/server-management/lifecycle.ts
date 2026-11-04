@@ -98,9 +98,10 @@ export class LinuxServerManager {
   private async profile(endpoint: string) {
     let profile = this.profiles.get(endpoint);
     if (profile) return profile;
+    const path = this.path(endpoint);
     try {
       const parsed = parseSavedProfile(
-        JSON.parse(await readFile(this.path(endpoint), "utf8")),
+        JSON.parse(await readFile(path, "utf8")),
         endpoint,
       );
       if (!parsed) throw new Error("Invalid saved launch metadata.");
@@ -110,7 +111,7 @@ export class LinuxServerManager {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
       throw new Error(
-        "The saved launch profile could not be loaded. Repair or remove it before managing this server.",
+        `The saved launch profile ${path} could not be loaded. Repair or remove it before managing this server.`,
         { cause: error },
       );
     }
