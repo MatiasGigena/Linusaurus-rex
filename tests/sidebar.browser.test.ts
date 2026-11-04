@@ -5,7 +5,7 @@ import { withBrowserFixture } from "./browser-fixture";
 const source = `
 import React from 'react';import {createRoot} from 'react-dom/client';
 import {flushSync} from 'react-dom';
-import {Sidebar} from '/src/components/Sidebar.tsx';import {DEFAULT_SETTINGS} from '/src/shared/types.ts';
+import {Sidebar} from '/src/components/sidebar/Sidebar.tsx';import {DEFAULT_SETTINGS} from '/src/shared/types.ts';
 import '/src/styles.css';import '/src/advanced.css';import '/src/macos.css';
 const fixture=window.fixture={calls:[]};const log=(...args)=>fixture.calls.push(args);
 const hosts=[{id:'h1',label:'Local',connected:true,sessions:[{id:'s1',label:'Work',windows:[{id:'w1',label:'Shell',program:'bash',activity:{id:'idle',state:'idle'}},{id:'w2',label:'Build',program:'codex',activity:{id:'build',state:'blocked',kind:'permission'}}]}]},{id:'h2',label:'Remote',connected:true,sessions:[{id:'s2',label:'Remote work',windows:[{id:'r1',label:'Remote shell',program:'fish',activity:{id:'work',state:'working'}}]}]}];

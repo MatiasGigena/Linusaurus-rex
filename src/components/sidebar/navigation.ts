@@ -7,7 +7,7 @@ export type NavigationPreferences = Pick<
   notifications: Pick<Settings["notifications"], "includeIdle" | "showInTabs">;
 };
 
-import type { SidebarProps } from "../Sidebar";
+import type { SidebarProps } from "./Sidebar";
 export type NavigationContext = Pick<
   SidebarProps,
   | "activeHostId"

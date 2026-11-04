@@ -7,7 +7,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { IconButton } from "../IconButton";
-import type { NavigationHost } from "../Sidebar";
+import type { NavigationHost } from "./Sidebar";
 import type { NavigationContext } from "./navigation";
 import { SessionNavigation } from "./SessionNavigation";
 export function HostNavigation({

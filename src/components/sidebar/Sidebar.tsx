@@ -1,12 +1,12 @@
-import type { NavigationPreferences } from "./sidebar/navigation";
-import { HostNavigation } from "./sidebar/HostNavigation";
-import { SidebarResizer } from "./sidebar/SidebarResizer";
-import { SidebarFooter } from "./sidebar/SidebarFooter";
+import type { NavigationPreferences } from "./navigation";
+import { HostNavigation } from "./HostNavigation";
+import { SidebarResizer } from "./SidebarResizer";
+import { SidebarFooter } from "./SidebarFooter";
 import { PanelLeftClose, Search, Terminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { ProgramActivity } from "../shared/types";
-import { IconButton } from "./IconButton";
-import { WindowControls, type WindowControlAction } from "./WindowControls";
+import type { ProgramActivity } from "../../shared/types";
+import { IconButton } from "../IconButton";
+import { WindowControls, type WindowControlAction } from "../WindowControls";
 
 export interface NavigationWindow {
   id: string;
@@ -45,7 +45,6 @@ export interface SidebarProps {
   onToggle: () => void;
   onPalette: () => void;
   onAddHost?: () => void;
-  onDeleteHost?: (hostId: string) => void;
   preferences?: NavigationPreferences;
   collapsedSessions?: Set<string>;
   onToggleSession?: (sessionId: string) => void;

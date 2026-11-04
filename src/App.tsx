@@ -28,7 +28,7 @@ import {
   TerminalSquare,
   X,
 } from "lucide-react";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar } from "./components/sidebar/Sidebar";
 import { Toolbar } from "./components/Toolbar";
 import { Dialog } from "./components/Dialog";
 import { CommandPalette } from "./components/CommandPalette";
@@ -41,7 +41,7 @@ import { DiagnosticsDialog } from "./components/DiagnosticsDialog";
 import { PairDeviceDialog } from "./components/PairDeviceDialog";
 import { DirectoryDialog } from "./components/DirectoryDialog";
 import { TabStrip } from "./components/TabStrip";
-import { NativeServicesDialog } from "./components/NativeServicesDialog";
+import { NativeServicesDialog } from "./components/services/NativeServicesDialog";
 import type { UpdateState } from "./shared/types";
 import "./linux.css";
 import { useWorkspace } from "./hooks/useWorkspace";

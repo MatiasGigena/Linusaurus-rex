@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight, Plus, Terminal } from "lucide-react";
 import { IconButton } from "../IconButton";
-import type { NavigationSession } from "../Sidebar";
+import type { NavigationSession } from "./Sidebar";
 import type { NavigationContext } from "./navigation";
 import { WindowNavigationItem } from "./WindowNavigationItem";
 export function SessionNavigation({

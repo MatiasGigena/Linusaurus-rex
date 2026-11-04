@@ -8,7 +8,7 @@ import {
   Command,
   Settings2,
 } from "lucide-react";
-import type { SidebarProps } from "../Sidebar";
+import type { SidebarProps } from "./Sidebar";
 import { IconButton } from "../IconButton";
 import { ContextMenu, type ContextItem } from "../ContextMenu";
 export function SidebarFooter(

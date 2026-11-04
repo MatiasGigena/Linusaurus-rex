@@ -1,9 +1,9 @@
 import { useId, useState } from "react";
 import { Download, Server } from "lucide-react";
-import { Dialog } from "./Dialog";
-import type { Settings } from "../shared/types";
-import { ServerManagementPanel } from "./services/ServerManagementPanel";
-import { ClientUpdatesPanel } from "./services/ClientUpdatesPanel";
+import { Dialog } from "../Dialog";
+import type { Settings } from "../../shared/types";
+import { ServerManagementPanel } from "./ServerManagementPanel";
+import { ClientUpdatesPanel } from "./ClientUpdatesPanel";
 export function NativeServicesDialog({
   settings,
   hostId,

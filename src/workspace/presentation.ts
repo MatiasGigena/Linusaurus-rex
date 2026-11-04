@@ -1,4 +1,4 @@
-import type { NavigationHost } from "../components/Sidebar";
+import type { NavigationHost } from "../components/sidebar/Sidebar";
 import type { HostState } from "../core/workspaceSnapshot";
 import type { PaneMetadata } from "../core/workspaceSnapshot";
 import type { RexWindow, SessionView, Settings } from "../shared/types";

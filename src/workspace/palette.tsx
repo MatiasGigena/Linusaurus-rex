@@ -1,6 +1,6 @@
 import { TerminalSquare } from "lucide-react";
 import type { PaletteCommand } from "../components/CommandPalette";
-import type { NavigationHost } from "../components/Sidebar";
+import type { NavigationHost } from "../components/sidebar/Sidebar";
 import type { KeymapResult, Settings } from "../shared/types";
 import { CLIENT_ACTIONS, configuredShortcut } from "../shared/actions";
 import type { Form } from "./actions/context";

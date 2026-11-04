@@ -1,4 +1,4 @@
-import type { NavigationWindow, SidebarProps } from "../Sidebar";
+import type { NavigationWindow, SidebarProps } from "./Sidebar";
 import { ProgramIcon } from "../ProgramIcon";
 import { activityLabel } from "../../core/workspace";
 type Props = Pick<

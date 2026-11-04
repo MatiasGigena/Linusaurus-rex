@@ -9,7 +9,7 @@ const source = ({
   initialTab = "server",
 } = {}) => `
 import React from 'react';import {createRoot} from 'react-dom/client';
-import {NativeServicesDialog} from '/src/components/NativeServicesDialog.tsx';import {DEFAULT_SETTINGS} from '/src/shared/types.ts';
+import {NativeServicesDialog} from '/src/components/services/NativeServicesDialog.tsx';import {DEFAULT_SETTINGS} from '/src/shared/types.ts';
 import '/src/styles.css';import '/src/advanced.css';import '/src/dialogs.css';
 const fixture=window.fixture={calls:[],serverError:${JSON.stringify(serverError)},deferPreview:${deferPreview},deferStatus:${deferStatus}};
 let server={local:true,running:true,canManage:true,pid:123,sessionCount:4,endpoint:'unix:///owned.sock',arguments:[],origins:['old.example'],service:{unit:'owned-rex.service',scope:'user',activeState:'active',restart:'always',dropInPaths:[],configuredOrigins:['old.example'],canManage:true}};
