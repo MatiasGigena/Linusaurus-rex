@@ -1,5 +1,5 @@
 import type { Settings } from "../../src/shared/types.js";
-import { string } from "../validation.js";
+import { hexColor, string } from "../validation.js";
 
 type KeysOfType<T, V> = {
   [K in keyof T]-?: T[K] extends V ? K : never;
@@ -108,9 +108,6 @@ function clientLabel(value: string) {
       "Client label must be at most 64 bytes without control characters.",
     );
 }
-function color(value: string, key: string) {
-  if (!/^#[0-9a-f]{3,8}$/i.test(value)) throw new Error(`Invalid ${key}`);
-}
 const textRules: Record<
   TextKey,
   { max?: number; check?(value: string, key: string): void }
@@ -118,10 +115,10 @@ const textRules: Record<
   fontFamily: { check: nonemptyFont },
   globalShortcut: {},
   clientLabel: { check: clientLabel },
-  highlightColor: { check: color },
+  highlightColor: { check: hexColor },
   startupCommand: { max: 4096 },
-  selectionForeground: { check: color },
-  selectionBackground: { check: color },
+  selectionForeground: { check: hexColor },
+  selectionBackground: { check: hexColor },
   lightThemeId: {},
   darkThemeId: {},
 };

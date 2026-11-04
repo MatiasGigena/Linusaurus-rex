@@ -1,5 +1,5 @@
 import type { Settings } from "../../src/shared/types.js";
-import { identifier, record, string } from "../validation.js";
+import { hexColor, identifier, record, string } from "../validation.js";
 
 export function validateTheme(value: unknown): Record<string, string> {
   const theme = record(value);
@@ -7,13 +7,9 @@ export function validateTheme(value: unknown): Record<string, string> {
     throw new Error("Theme has too many colors");
   return Object.fromEntries(
     Object.entries(theme).map(([key, value]) => {
-      if (
-        !/^[a-zA-Z][a-zA-Z0-9]{0,39}$/.test(key) ||
-        typeof value !== "string" ||
-        !/^#[0-9a-f]{3,8}$/i.test(value)
-      )
+      if (!/^[a-zA-Z][a-zA-Z0-9]{0,39}$/.test(key))
         throw new Error("Invalid custom theme color");
-      return [key, value];
+      return [key, hexColor(value, "custom theme color")];
     }),
   );
 }

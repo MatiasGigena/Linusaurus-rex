@@ -22,6 +22,12 @@ export function identifier(value: unknown, name: string): string {
   if (!result) throw new Error(`Missing ${name}`);
   return result;
 }
+export function hexColor(value: unknown, name: string): string {
+  const color = string(value, name, 9);
+  if (!/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color))
+    throw new Error(`Invalid ${name}`);
+  return color;
+}
 export function integer(
   value: unknown,
   name: string,
