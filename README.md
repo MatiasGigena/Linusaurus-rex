@@ -128,6 +128,7 @@ npm run build
 npm run test:integration
 npm run test:terminal
 npm run test:ui
+npm run test:boundary
 npm run test:actions
 npm run test:services
 npm run test:graphics
@@ -136,7 +137,9 @@ npm run test:systemd
 npm run test:accessibility
 ```
 
-Native desktop tests require `Xvfb` and `xauth` (on Debian/Ubuntu: `sudo apt install xvfb xauth`). Every `test:ui`, `test:actions`, `test:services`, `test:graphics`, `test:layers`, `test:systemd`, `test:accessibility` and `test:update-live` run uses a private, authenticated X11 display and clipboard. They never open windows on your desktop. Set `XVFB=/absolute/path/to/Xvfb` to use a local executable; missing Xvfb is an error. After building once, run several fixtures in sequence with `node scripts/test-desktop.mjs smoke actions services graphics layers systemd accessibility`. The existing user D-Bus connection is retained for owned systemd and AT-SPI checks. Live update verification additionally requires `LIVE_UPDATE_FROM=/absolute/path/to/published.AppImage` and a newer published stable release; it updates only a temporary copy.
+Native desktop tests require `Xvfb` and `xauth` (on Debian/Ubuntu: `sudo apt install xvfb xauth`). Every `test:ui`, `test:boundary`, `test:actions`, `test:services`, `test:graphics`, `test:layers`, `test:systemd`, `test:accessibility` and `test:update-live` run uses a private, authenticated X11 display and clipboard. They never open windows on your desktop. Set `XVFB=/absolute/path/to/Xvfb` to use a local executable; missing Xvfb is an error. After building once, run several fixtures in sequence with `node scripts/test-desktop.mjs smoke boundary actions services graphics layers systemd accessibility`. Add `--isolated-rex` before the fixture names to create a temporary Rex server and runtime directory with persistence disabled; the runner cleans up its owned processes and files. `REX_EXECUTABLE=/absolute/path/to/rex` selects that server binary. `npm run test:boundary` builds and runs the IPC authorization checks with this isolation. The existing D-Bus connection is retained for owned systemd and AT-SPI checks. Live update verification additionally requires `LIVE_UPDATE_FROM=/absolute/path/to/published.AppImage` and a newer published stable release; it updates only a temporary copy.
+
+Release validation runs the browser behavior and pixel suites, then private Electron smoke and IPC authorization fixtures against a pinned Rex archive verified by SHA-256. These gates must pass before release assets are published.
 
 The 0.4.1 source run passed **113/113 tests with zero skips or failures**, with integration, browser pixel tests and public-release verification enabled. All seven native fixtures passed against the published 0.4.1 AppImage on private Xvfb displays: smoke, actions, services, graphics, layers, systemd and accessibility. Accessibility covered 15 views with zero axe violations and terminal input/output in Chromium and native AT-SPI (233 owned nodes); incomplete/manual-review checks remain in the report. The Debian metadata and extracted services/systemd runtime passed, including foreign-APPIMAGE handling; no system-wide Debian installation was performed. All four original sessions, windows and blocks and the original Rex process were preserved. A real update from a temporary copy of the published 0.3 AppImage to 0.4.1 verified the download, backup, replacement, relaunch and input in the same Rex session/pane without changing the Rex process. These checks do not claim universal WCAG or physical-device/compositor conformance.
 
