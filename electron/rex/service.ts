@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
 import { normalizeView } from './normalize.js';
 import { parseServerVersion } from './server-version.js';
+import { parseSavedHosts, type SavedHost } from './saved-hosts.js';
+export type { SavedHost } from './saved-hosts.js';
 import { parseCreatedSession, parseSessionList } from './session-summary.js';
 import { RexControl, localEndpoint, type RexCredentials } from './control.js';
 import { RexTerminalStream, type FrameKind, type FrameSize } from './stream.js';
@@ -312,7 +314,7 @@ export class RexService {
     // running local server, and this temporary discovery client owns no pane.
     if (existsSync(localEndpoint().slice(7))) {
       const discovery = this.options.controlFactory ? this.options.controlFactory(localEndpoint(), undefined, undefined, this.options.apiRevisions) : new RexControl(localEndpoint(), undefined, undefined, this.options.apiRevisions);
-      try { await discovery.readyPublic(); aliases = (await discovery.call<{ hosts?: SavedHost[] }>('hosts.list', {})).hosts || []; }
+      try { await discovery.readyPublic(); aliases = parseSavedHosts(await discovery.call('hosts.list', {})); }
       catch { /* Try the documented remote hostname addresses below. */ }
       finally { discovery.dispose(); }
     }
@@ -338,7 +340,6 @@ export class RexService {
   }
 }
 
-export interface SavedHost { label: string; endpoints?: string[]; endpoint?: string; address?: string; url?: string }
 /** An explicit saved endpoint takes precedence over the process-wide default. */
 export function effectiveEndpoint(endpoint: string): string {
   return endpoint || process.env.REX_SERVER?.trim() || '';
