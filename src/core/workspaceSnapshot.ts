@@ -1,6 +1,26 @@
-import type { Host, RexBridge, Selection, SessionView } from "../shared/types";
-import type { HostState } from "../hooks/useWorkspace";
+import type {
+  Host,
+  ProgramActivity,
+  RexBridge,
+  Selection,
+  SessionView,
+  ServerStatus,
+  SessionSummary,
+} from "../shared/types";
 import { errorMessage, viewKey } from "./workspace";
+
+export interface HostState extends Host {
+  connected: boolean;
+  error?: string;
+  status?: ServerStatus;
+  sessions: SessionSummary[];
+}
+export interface PaneMetadata {
+  activities: ProgramActivity[];
+  title?: string;
+  program?: string;
+  cwd?: string;
+}
 
 /** Missing sessions are expected when another client closes one during a refresh. */
 function isMissingSession(failure: unknown): boolean {
@@ -94,11 +114,15 @@ export function reconcileSelection(
       (pane) => pane.id === current.blockId,
     );
     return {
-      selection: {
-        hostId: current.hostId,
-        sessionId: current.sessionId,
-        windowId: selectedWindow?.id || "",
-      },
+      selection:
+        current.windowId === (selectedWindow?.id || "") &&
+        current.blockId === undefined
+          ? current
+          : {
+              hostId: current.hostId,
+              sessionId: current.sessionId,
+              windowId: selectedWindow?.id || "",
+            },
       updateFocus: true,
       focusedPane: requestedPane?.id || selectedWindow?.focusedBlockId,
     };

@@ -1,33 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ClientEvent,
-  Host,
   KeymapResult,
-  ProgramActivity,
   Selection,
-  ServerStatus,
-  SessionSummary,
   SessionView,
   Settings,
 } from "../shared/types";
 import { errorMessage, paneKey, viewKey } from "../core/workspace";
 import {
+  type HostState,
+  type PaneMetadata,
   collectHostSnapshot,
   reconcileSelection,
 } from "../core/workspaceSnapshot";
-
-export interface HostState extends Host {
-  connected: boolean;
-  error?: string;
-  status?: ServerStatus;
-  sessions: SessionSummary[];
-}
-export interface PaneMetadata {
-  activities: ProgramActivity[];
-  title?: string;
-  program?: string;
-  cwd?: string;
-}
 
 export function useWorkspace() {
   const [settings, setSettings] = useState<Settings>();

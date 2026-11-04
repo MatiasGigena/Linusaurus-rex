@@ -4,7 +4,7 @@ import {
   collectHostSnapshot,
   reconcileSelection,
 } from "../src/core/workspaceSnapshot";
-import type { HostState } from "../src/hooks/useWorkspace";
+import type { HostState } from "../src/core/workspaceSnapshot";
 import type { RexBridge, SessionView } from "../src/shared/types";
 
 const host = { id: "local", label: "Local", endpoint: "" };
