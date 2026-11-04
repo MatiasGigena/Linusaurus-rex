@@ -15,7 +15,7 @@ import {
   CLIENT_ACTIONS,
   SHORTCUT_ACTIONS,
   serverShortcut,
-} from "../features/actions.js";
+} from "../../src/shared/actions.js";
 import { ActivityRegistry } from "./activity.js";
 import { KeymapRouter } from "./keymap.js";
 import { normalizeKeymap } from "./keymap-data.js";
