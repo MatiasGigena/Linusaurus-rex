@@ -10,7 +10,10 @@ import {
   type WorkspaceOperations,
 } from "../core/workspaceOperations";
 
-export type PaneGeometryOperations = Pick<WorkspaceOperations, "run"> & {
+export type PaneGeometryOperations = Pick<
+  WorkspaceOperations,
+  "run"
+> & {
   reloadSession(hostId: string, sessionId: string): Promise<SessionView>;
 };
 
@@ -148,8 +151,8 @@ export function usePaneGeometry(
           ? [
               start.rect[0],
               start.rect[1],
-              Math.max(0.15, Math.min(1 - start.rect[0], start.rect[2] + dx)),
-              Math.max(0.15, Math.min(1 - start.rect[1], start.rect[3] + dy)),
+              Math.min(1 - start.rect[0], Math.max(0.15, start.rect[2] + dx)),
+              Math.min(1 - start.rect[1], Math.max(0.15, start.rect[3] + dy)),
             ]
           : [
               Math.max(0, Math.min(1 - start.rect[2], start.rect[0] + dx)),

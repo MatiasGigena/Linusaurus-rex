@@ -13,6 +13,7 @@ import'/src/styles.css';import'/src/advanced.css';
 const listeners=new Set(),calls=[],actions=[],events=[];let select,setHosts,setModal,setWindows;
 const ref={hostId:'host',sessionId:'session',blockId:'left'};
 window.fixture={calls,actions,events,select:id=>select(id),hosts:value=>setHosts(value),modal:value=>setModal(value),
+ floating(rect){setWindows(previous=>previous.map(window=>({...window,panes:window.panes.map(pane=>pane.layerId==='layer'?{...pane,rect}:pane)})));},
  command(){window.fixture.commandStatus='pending';void dispatchTerminalCommandAsync('plugin.example.refresh',ref).then(()=>{window.fixture.commandStatus='complete';},error=>{window.fixture.commandStatus=error.message;});},
  release(){window.fixture.releaseAction();},reject(){window.fixture.rejectAction(new Error('Action refused'));},
  many(){setWindows(Array.from({length:13},(_,index)=>({id:'empty-'+index,label:'Empty '+index,focusedBlockId:'',panes:[]})));},
@@ -34,6 +35,7 @@ interface LayoutFixtureWindow {
   fixture: {
     calls: { method: string; args: Record<string, unknown> }[];
     select(id: string): void;
+    floating(rect: [number, number, number, number]): void;
   };
 }
 async function requests(page: Page, method: string) {
@@ -325,6 +327,100 @@ test(
             ),
           )
           .toBe(true);
+      },
+    );
+  },
+);
+
+test(
+  "floating resize preserves available space when the preferred minimum cannot fit",
+  options,
+  async () => {
+    await withBrowserFixture(
+      "workspace-floating-edge-resize",
+      source,
+      async (page) => {
+        await page.evaluate(() =>
+          (window as unknown as LayoutFixtureWindow).fixture.floating([
+            0.9, 0.9, 0.1, 0.1,
+          ]),
+        );
+        const floating = page.locator("[data-floating-block=float]");
+        const body = await page.locator(".workspace-body").boundingBox();
+        assert.ok(body);
+        const handle = await floating
+          .locator(".floating-resize-handle")
+          .boundingBox();
+        assert.ok(handle);
+        await page.mouse.move(
+          handle.x + handle.width / 2,
+          handle.y + handle.height / 2,
+        );
+        await page.mouse.down();
+        await page.mouse.move(
+          handle.x + handle.width / 2 + 100,
+          handle.y + handle.height / 2 + 70,
+        );
+        const preview = await floating.boundingBox();
+        assert.ok(preview);
+        assert.equal(
+          (await requests(page, "resizeLayer")).length,
+          0,
+          "Resizing previews locally until pointer release",
+        );
+        await page.mouse.up();
+        await expect
+          .poll(async () => (await requests(page, "resizeLayer")).length)
+          .toBe(1);
+        const bounds = (await requests(page, "resizeLayer"))[0].args
+          .bounds as number[];
+        assert.deepEqual(bounds.slice(0, 2), [0.9, 0.9]);
+        assert.ok(
+          bounds[0] + bounds[2] <= 1.000001,
+          "Submitted width must fit the remaining workspace",
+        );
+        assert.ok(
+          bounds[1] + bounds[3] <= 1.000001,
+          "Submitted height must fit the remaining workspace",
+        );
+        assert.ok(Math.abs(bounds[2] - 0.1) < 0.000001);
+        assert.ok(Math.abs(bounds[3] - 0.1) < 0.000001);
+        assert.ok(
+          preview.x + preview.width <= body.x + body.width + 0.5,
+          "Pointer preview stays inside the right edge",
+        );
+        assert.ok(
+          preview.y + preview.height <= body.y + body.height + 0.5,
+          "Pointer preview stays inside the bottom edge",
+        );
+        await page.evaluate(() =>
+          (window as unknown as LayoutFixtureWindow).fixture.floating([
+            0.2, 0.2, 0.3, 0.3,
+          ]),
+        );
+        await expect(floating).toHaveCSS("left", `${body.width * 0.2}px`);
+        const centered = await floating
+          .locator(".floating-resize-handle")
+          .boundingBox();
+        assert.ok(centered);
+        await page.mouse.move(
+          centered.x + centered.width / 2,
+          centered.y + centered.height / 2,
+        );
+        await page.mouse.down();
+        await page.mouse.move(
+          centered.x + centered.width / 2 - body.width * 0.5,
+          centered.y + centered.height / 2 - body.height * 0.5,
+        );
+        await page.mouse.up();
+        await expect
+          .poll(async () => (await requests(page, "resizeLayer")).length)
+          .toBe(2);
+        assert.deepEqual(
+          (await requests(page, "resizeLayer"))[1].args.bounds,
+          [0.2, 0.2, 0.15, 0.15],
+          "The preferred minimum still applies when the workspace has room",
+        );
       },
     );
   },
