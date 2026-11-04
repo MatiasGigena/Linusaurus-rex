@@ -109,3 +109,69 @@ test('integration command runner bounds lifetime and reports timeout', async () 
   try { await assert.rejects(runner.run(['-e', 'setInterval(() => {}, 1000)']), /did not respond in time/); }
   finally { runner.dispose(); }
 });
+
+
+test('session lists validate every record before publishing identifiers', async () => {
+  let response: unknown;
+  const { service } = mock(async () => response);
+  try {
+    for (const value of [null, [], {}, { sessions: null }, { sessions: [null] }, { sessions: [{}] }, { sessions: [{ session_id: '' }] }, { sessions: [{ session_id: 42 }] }, { sessions: [{ session_id: 's', label: {} }] }]) {
+      response = value;
+      await assert.rejects(service.sessions(local), /invalid session list/);
+    }
+    response = { sessions: [{ session_id: 'one', label: '', future: 1 }, { session_id: 'two', label: 'Named' }, { session_id: 'three' }], future: {} };
+    assert.deepEqual(await service.sessions(local), [{ id: 'one', label: 'Untitled session' }, { id: 'two', label: 'Named' }, { id: 'three', label: 'Untitled session' }]);
+  } finally { service.dispose(); }
+});
+
+test('session creation rejects missing or malformed identifiers without poisoning later responses', async () => {
+  let response: unknown;
+  const { service } = mock(async () => response);
+  try {
+    for (const value of [null, [], {}, { session_id: null }, { session_id: '' }, { session_id: 42 }, { session_id: 's', label: false }]) {
+      response = value;
+      await assert.rejects(service.createSession(local, 'New session'), /invalid session creation response/);
+    }
+    response = { session_id: 'created', label: '', future: { flag: true } };
+    assert.equal(await service.createSession(local, 'New session'), 'created');
+  } finally { service.dispose(); }
+});
+
+test('server status validates published version strings and accepts future fields', async () => {
+  let response: unknown;
+  const { service } = mock(async () => response);
+  try {
+    for (const value of [null, [], { version: 1 }, { version: {} }, { rex_version: false }, { version: 'valid', rex_version: [] }]) {
+      response = value;
+      const status = await service.status(local);
+      assert.equal(status.connected, false);
+      assert.match(status.error ?? '', /invalid server version/);
+      assert.equal(status.version, undefined);
+    }
+    response = { version: '', rex_version: 'fallback-version', future: { enabled: true } };
+    assert.equal((await service.status(local)).version, 'fallback-version');
+    response = { version: 'current-version' };
+    assert.equal((await service.status(local)).version, 'current-version');
+    response = { future: true };
+    assert.equal((await service.status(local)).connected, true);
+  } finally { service.dispose(); }
+});
+
+test('snapshot pagination rejects malformed counters and completion markers', async () => {
+  let response: unknown;
+  let page: unknown;
+  const { service } = mock(async call => call.method.endsWith('.format') ? response : page);
+  try {
+    for (const value of [null, [], { content: 'partial', id: {} }, { content: 'partial', id: -1 }, { content: 'partial', total: NaN }, { content: 'partial', total: -1 }, { content: 'partial', total: 'ten' }]) {
+      response = value;
+      await assert.rejects(service.capture(local, 's', 'b'), /invalid terminal snapshot/);
+    }
+    response = { content: 'first', id: 12, total: 10 };
+    for (const value of [null, { data: 'last', eof: 'false' }, { data: 'last', eof: 0 }, { data: [], eof: true }]) {
+      page = value;
+      await assert.rejects(service.capture(local, 's', 'b'), /invalid terminal snapshot page/);
+    }
+    page = { data: 'last!', eof: true, future: true };
+    assert.equal(await service.capture(local, 's', 'b'), 'firstlast!');
+  } finally { service.dispose(); }
+});

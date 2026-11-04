@@ -1,16 +1,45 @@
 import { existsSync } from 'node:fs';
 import { normalizeView } from './normalize.js';
+import { parseCreatedSession, parseSessionList } from './session-summary.js';
 import { RexControl, localEndpoint, type RexCredentials } from './control.js';
 import { RexTerminalStream, type FrameKind, type FrameSize } from './stream.js';
 import type { Host as RexHost, SessionSummary, SessionView, ServerStatus } from '../../src/shared/types.js';
 
 export type { Host as RexHost } from '../../src/shared/types.js';
 type Ref = { host: RexHost; sessionId: string; blockId: string };
-type Capture = { content: string; id?: number; total?: number; eof?: boolean };
+type Capture = { content: string; id?: number; total?: number };
 type InputQueue = { tail: Promise<void>; generation: number };
 type Dimensions = Ref & { columns: number; rows: number };
 
 const MAX_SNAPSHOT = 256 * 1024 * 1024;
+
+function replyRecord(value: unknown, message: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(message);
+  return value as Record<string, unknown>;
+}
+function optionalCount(value: unknown, message: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error(message);
+  return value;
+}
+function serverVersion(value: unknown): string | undefined {
+  const message = 'Rex returned an invalid server version.';
+  const result = replyRecord(value, message);
+  if ((result.version !== undefined && typeof result.version !== 'string') || (result.rex_version !== undefined && typeof result.rex_version !== 'string')) throw new Error(message);
+  return result.version || result.rex_version;
+}
+function captureReply(value: unknown): Capture {
+  const message = 'Rex returned an invalid terminal snapshot.';
+  const result = replyRecord(value, message);
+  if (typeof result.content !== 'string') throw new Error(message);
+  return { content: result.content, id: optionalCount(result.id, message), total: optionalCount(result.total, message) };
+}
+function capturePage(value: unknown): { data: string; eof: boolean } {
+  const message = 'Rex returned an invalid terminal snapshot page.';
+  const result = replyRecord(value, message);
+  if (typeof result.data !== 'string' || (result.eof !== undefined && typeof result.eof !== 'boolean')) throw new Error(message);
+  return { data: result.data, eof: result.eof ?? false };
+}
 
 export interface RexServiceOptions { apiRevisions?: { min: number; max: number }; controlFactory?: (endpoint: string, credentials?: RexCredentials, reconnectToken?: string, revisions?: { min: number; max: number }) => RexControl; credentials?: (host: RexHost) => Promise<RexCredentials | undefined>; onControl?: (host: RexHost, control: RexControl) => void | Promise<void>; onMetadata?: (host: RexHost, sessionId: string, blockId: string, metadata: Record<string, unknown>) => void }
 
@@ -48,15 +77,13 @@ export class RexService {
   async status(host: RexHost): Promise<ServerStatus> {
     try {
       const control = await this.control(host);
-      const result = await control.call<{ version?: string; rex_version?: string }>('server.version', {});
-      return { connected: true, endpoint: control.endpoint, version: result.version || result.rex_version };
+      const version = serverVersion(await control.call('server.version', {}));
+      return { connected: true, endpoint: control.endpoint, version };
     } catch (error) { return { connected: false, endpoint: effectiveEndpoint(host.endpoint) || localEndpoint(), error: errorMessage(error) }; }
   }
 
   async sessions(host: RexHost): Promise<SessionSummary[]> {
-    const result = await this.call<{ sessions?: { session_id: string; label?: string }[] }>(host, 'session.list', {});
-    if (!Array.isArray(result.sessions)) throw new Error('Rex returned an invalid session list.');
-    return result.sessions.map(session => ({ id: session.session_id, label: session.label || 'Untitled session' }));
+    return parseSessionList(await this.call(host, 'session.list', {}));
   }
 
   async inspect(host: RexHost, sessionId: string): Promise<SessionView> {
@@ -64,10 +91,10 @@ export class RexService {
   }
 
   async createSession(host: RexHost, label: string, cwd?: string, command?: string): Promise<string> {
-    const response = await this.call<{ session_id: string }>(host, 'session.create', {
+    const response = await this.call(host, 'session.create', {
       label, initial_windows: [{ window_label: 'Shell', layout: shellLayout(cwd, command) }],
     });
-    return response.session_id;
+    return parseCreatedSession(response);
   }
 
   async renameSession(host: RexHost, sessionId: string, label: string) {
@@ -154,17 +181,17 @@ export class RexService {
   }
 
   async capture(host: RexHost, sessionId: string, blockId: string): Promise<string> {
-    const capture = await this.block<Capture>(host, sessionId, blockId, 'format', {
+    const capture = captureReply(await this.block(host, sessionId, blockId, 'format', {
       format: 'vt', max_bytes: 983040, extra_cursor: true, extra_modes: true,
       extra_style: true, extra_scrolling_region: true, extra_tabstops: true,
-    });
-    if (typeof capture.content !== 'string') throw new Error('Rex returned an invalid terminal snapshot.');
+    }));
     if ((capture.total ?? 0) > MAX_SNAPSHOT) throw new Error('Terminal scrollback exceeds the 256 MiB snapshot limit. Clear its scrollback in Rex before reconnecting.');
     let content = capture.content;
     let offset = Buffer.byteLength(content);
+    if (offset > MAX_SNAPSHOT) throw new Error('Terminal scrollback exceeds the 256 MiB snapshot limit.');
     while (capture.id !== undefined && offset < (capture.total ?? Infinity)) {
-      const part = await this.block<{ data: string; eof: boolean }>(host, sessionId, blockId, 'blob_read', { id: capture.id, offset, max_bytes: 983040 });
-      if (typeof part.data !== 'string' || !part.data.length) throw new Error('Rex returned an incomplete terminal snapshot.');
+      const part = capturePage(await this.block(host, sessionId, blockId, 'blob_read', { id: capture.id, offset, max_bytes: 983040 }));
+      if (!part.data.length) throw new Error('Rex returned an incomplete terminal snapshot.');
       content += part.data;
       offset += Buffer.byteLength(part.data);
       if (offset > MAX_SNAPSHOT) throw new Error('Terminal scrollback exceeds the 256 MiB snapshot limit.');
