@@ -4,6 +4,7 @@ import type { Host, Selection } from "../shared/types";
 
 // Live readers revoke old requests even before a selection/settings change commits.
 interface WorkspaceContextInputs {
+  initialized(): boolean;
   selection(): Selection | undefined;
   focusedPane(): string | undefined;
   hosts(): readonly Pick<Host, "id" | "endpoint">[] | undefined;
@@ -28,7 +29,10 @@ export function useWorkspaceContext(inputs: WorkspaceContextInputs) {
   }, []);
 
   const publishContext = useCallback(() => {
-    if (!window.rex || !mounted.current) return;
+    // Until native window settings arrive, absent selection means uninitialized,
+    // not an explicit clear of the window's launch target.
+    if (!window.rex || !mounted.current || !latest.current.initialized())
+      return;
     const requestedRevision = ++revision.current;
     const configuredEndpoints = () =>
       JSON.stringify(
@@ -74,6 +78,7 @@ export function useWorkspaceContext(inputs: WorkspaceContextInputs) {
     if (needsRetry.current) publishContext();
   }, [publishContext]);
 
+  const initialized = inputs.initialized();
   const selection = inputs.selection();
   const focusedPane = inputs.focusedPane();
   const hosts = inputs.hosts();
@@ -83,7 +88,7 @@ export function useWorkspaceContext(inputs: WorkspaceContextInputs) {
     const visibility = () => publishContext();
     document.addEventListener("visibilitychange", visibility);
     return () => document.removeEventListener("visibilitychange", visibility);
-  }, [selection, focusedPane, hosts, publishContext]);
+  }, [initialized, selection, focusedPane, hosts, publishContext]);
 
   return { publishUiBusy, retryContext };
 }

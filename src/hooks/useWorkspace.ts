@@ -49,6 +49,7 @@ export function useWorkspace() {
   const [loading, setLoading] = useState(true);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const initialized = useRef(false);
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
   const actionHandler = useRef<
@@ -70,6 +71,7 @@ export function useWorkspace() {
   );
 
   const { publishUiBusy, retryContext } = useWorkspaceContext({
+    initialized: () => initialized.current,
     selection: () => selectionRef.current,
     focusedPane: () => focusedPane,
     hosts: () => settingsRef.current?.hosts,
@@ -495,6 +497,7 @@ export function useWorkspace() {
         selectionRef.current = saved.lastSelection;
         setSelection(saved.lastSelection);
         setFocusedPane(saved.lastSelection?.blockId);
+        initialized.current = true;
         refreshInBackground();
       })
       .catch((failure) => {
