@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { StringDecoder } from 'node:string_decoder';
 import { WebSocketServer } from 'ws';
 import { Terminal } from 'khostty-libghostty-vt-wasm/api';
-import { MetadataParser, SnapshotAssembler, snapshotToVt } from '../electron/rex/stream.js';
+import { MetadataParser, RexTerminalStream, SnapshotAssembler, snapshotToVt } from '../electron/rex/stream.js';
 import { RexControl, socketAddress } from '../electron/rex/control.js';
 
 const fragmented = (bytes: Buffer, size = 1) => Array.from({ length: Math.ceil(bytes.length / size) }, (_, index) => bytes.subarray(index * size, (index + 1) * size));
@@ -66,6 +66,94 @@ test('canonical decoder rejects corrupt CRCs and retains unfinished UTF-8 contin
     const corrupt = Buffer.from(bytes); corrupt[25] ^= 1;
     await assert.rejects(snapshotToVt(corrupt), /snapshot decode/);
   } finally { terminal.close(); display.close(); }
+});
+
+test('malformed metadata closes the data socket and recovers through a fresh ticket and snapshot', { timeout: 10_000 }, async () => {
+  const source = await Terminal.open({ cols: 30, rows: 4 });
+  let initial: Buffer, recovered: Buffer;
+  try {
+    source.write('INITIAL_SNAPSHOT');
+    initial = Buffer.from(source.snapshot().bytes);
+    source.write('\x1b[2J\x1b[HFRESH_SNAPSHOT');
+    recovered = Buffer.from(source.snapshot().bytes);
+  } finally { source.close(); }
+  const server = new WebSocketServer({
+    port: 0, host: '127.0.0.1',
+    handleProtocols: protocols => protocols.has('rex.control.v1') ? 'rex.control.v1' : protocols.has('rex.data.terminal.v1') ? 'rex.data.terminal.v1' : false,
+  });
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address();
+  assert.ok(typeof address === 'object' && address);
+  let tickets = 0, dataConnections = 0;
+  const helloTags: number[] = [], closed: number[] = [], failures: string[] = [];
+  const snapshots: string[] = [], metadata: Record<string, unknown>[] = [];
+  let output = '', finish: () => void = () => {};
+  const recoveredOutput = new Promise<void>(resolve => { finish = resolve; });
+  server.on('connection', (socket, request) => {
+    if (request.url === '/api/control') {
+      socket.on('message', bytes => {
+        const message = JSON.parse(bytes.toString());
+        if (message.type === 'hello') {
+          socket.send(JSON.stringify({ type: 'welcome', protocol: 'rex.control.v1', api_revision: 10 }));
+        } else {
+          const payload = message.method === 'data.connect' ? { ticket: Buffer.alloc(16, ++tickets).toString('base64url') } : {};
+          socket.send(JSON.stringify({ type: 'response', id: message.id, payload }));
+        }
+      });
+      return;
+    }
+    const connection = ++dataConnections, nonce = BigInt(400 + connection);
+    socket.once('close', () => closed.push(connection));
+    socket.once('message', bytes => {
+      helloTags.push(Buffer.isBuffer(bytes) ? bytes[0] : -1);
+      const welcome = Buffer.alloc(32);
+      welcome[0] = 0x81;
+      Buffer.alloc(16, connection).copy(welcome, 1);
+      welcome.writeUInt32LE(5000, 20);
+      welcome.writeBigUInt64LE(nonce, 24);
+      socket.send(welcome);
+      socket.send(connection === 1 ? initial : recovered);
+      if (connection === 1) {
+        socket.send(Buffer.from('VALID_BEFORE_ERROR'));
+        socket.send(Buffer.from(`\x1b_rex1;${nonce};{\x1b\\`));
+      } else {
+        socket.send(Buffer.from(`VALID_AFTER_RECOVERY\x1b_rex1;${nonce};{"type":"resize","cols":64,"rows":18}\x1b\\AFTER_METADATA`));
+      }
+    });
+  });
+  const control = new RexControl(`http://127.0.0.1:${address.port}`);
+  const stream = new RexTerminalStream(async () => control, 'owned-session', 'owned-pane', {
+    frame(data, kind) {
+      if (kind === 'snapshot') snapshots.push(data);
+      if (kind === 'output') output += data;
+      if (output.includes('AFTER_METADATA')) finish();
+    },
+    error(message) { failures.push(message); },
+    metadata(value) { metadata.push(value); },
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      recoveredOutput,
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('The stream did not recover from malformed metadata.')), 5000); }),
+    ]);
+    assert.ok(failures.some(message => /JSON/.test(message)), 'the parse failure must be surfaced to the stream owner');
+    assert.ok(closed.includes(1), 'a malformed metadata channel must be closed');
+    assert.equal(tickets, 2, 'recovery must obtain a fresh data ticket');
+    assert.deepEqual(helloTags, [1, 1], 'recovery must attach fresh rather than resume the corrupted metadata parser');
+    assert.equal(snapshots.length, 2);
+    assert.match(snapshots[0], /INITIAL_SNAPSHOT/);
+    assert.match(snapshots[1], /FRESH_SNAPSHOT/);
+    assert.match(output, /VALID_BEFORE_ERROR/);
+    assert.match(output, /VALID_AFTER_RECOVERY/);
+    assert.deepEqual(metadata, [{ type: 'resize', cols: 64, rows: 18 }], 'only valid metadata from the recovered channel may be published');
+  } finally {
+    clearTimeout(timer);
+    stream.dispose();
+    control.dispose();
+    for (const socket of server.clients) socket.terminate();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });
 
 test('remote control negotiates revision 7 and carries authentication without exposing secrets in events', async () => {
