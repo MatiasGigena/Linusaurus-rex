@@ -43,6 +43,12 @@ function deferred() {
   });
   return { promise, complete };
 }
+function serverSettings(hostId: string) {
+  return () => ({
+    ...DEFAULT_SETTINGS,
+    hosts: [{ id: hostId, label: hostId, endpoint: `unix:///${hostId}.sock` }],
+  });
+}
 const target = { hostId: "remote", sessionId: "session", blockId: "pane" };
 const unexpectedMutation: WorkspaceOperations["mutateSession"] = async () => {
   throw new Error("Unexpected session mutation");
@@ -206,7 +212,12 @@ test("server changes remain deferred until confirmation and retain the confirmed
   });
   const dialogs = new WorkspaceDialogController();
   const origin = dialogs.open({ kind: "diagnostics", hostId: "selected-host" });
-  const selected = createServerActions("selected-host", dialogs, origin);
+  const selected = createServerActions(
+    "selected-host",
+    dialogs,
+    serverSettings("selected-host"),
+    origin,
+  );
   selected("tailscale.enable", { hostname: "workstation" });
   assert.deepEqual(
     requests,
@@ -218,7 +229,11 @@ test("server changes remain deferred until confirmation and retain the confirmed
   assert.ok(confirmed);
   assert.equal(confirmed.label, "Apply change");
   // Creating commands for another selection must not retarget an existing confirmation.
-  createServerActions("different-host", dialogs);
+  createServerActions(
+    "different-host",
+    dialogs,
+    serverSettings("different-host"),
+  );
   const sending = confirmed.submit();
   assert.deepEqual(requests, [
     {
@@ -251,7 +266,12 @@ test("server rename waits for form submission and confirmation errors preserve t
   });
   const dialogs = new WorkspaceDialogController();
   const origin = dialogs.open({ kind: "diagnostics", hostId: "rename-host" });
-  const invoke = createServerActions("rename-host", dialogs, origin);
+  const invoke = createServerActions(
+    "rename-host",
+    dialogs,
+    serverSettings("rename-host"),
+    origin,
+  );
   invoke("tailscale.rename");
   assert.deepEqual(requests, []);
   const form = dialogs.snapshot.form?.dialog.form;
@@ -266,7 +286,11 @@ test("server rename waits for form submission and confirmation errors preserve t
       args: { hostname: "new-hostname" },
     },
   ]);
-  createServerActions("rename-host", dialogs)("tailscale.disable");
+  createServerActions(
+    "rename-host",
+    dialogs,
+    serverSettings("rename-host"),
+  )("tailscale.disable");
   assert.equal(requests.length, 1);
   const confirmation = dialogs.snapshot.confirmation?.dialog.confirmation;
   assert.ok(confirmation);
@@ -286,7 +310,11 @@ for (const disposition of ["closed", "replaced"] as const) {
       },
     });
     const dialogs = new WorkspaceDialogController();
-    createServerActions("confirmed-host", dialogs)("tailscale.disable");
+    createServerActions(
+      "confirmed-host",
+      dialogs,
+      serverSettings("confirmed-host"),
+    )("tailscale.disable");
     const owner = dialogs.snapshot.confirmation;
     assert.ok(owner);
     const sending = owner.dialog.confirmation.submit();
@@ -326,7 +354,12 @@ test("a pending server response cannot replace a newly opened primary dialog", a
     kind: "diagnostics",
     hostId: "confirmed-host",
   });
-  createServerActions("confirmed-host", dialogs, origin)("tailscale.disable");
+  createServerActions(
+    "confirmed-host",
+    dialogs,
+    serverSettings("confirmed-host"),
+    origin,
+  )("tailscale.disable");
   const confirmation = dialogs.snapshot.confirmation;
   assert.ok(confirmation);
   const sending = confirmation.dialog.confirmation.submit();
@@ -347,7 +380,12 @@ test("stale originating diagnostics cannot open server-action forms or confirmat
   });
   const dialogs = new WorkspaceDialogController();
   const origin = dialogs.open({ kind: "diagnostics", hostId: "old-host" });
-  const stale = createServerActions("old-host", dialogs, origin);
+  const stale = createServerActions(
+    "old-host",
+    dialogs,
+    serverSettings("old-host"),
+    origin,
+  );
   const replacement = dialogs.open({ kind: "diagnostics", hostId: "new-host" });
   stale("tailscale.rename");
   stale("tailscale.enable", { hostname: "old-hostname" });
@@ -360,7 +398,11 @@ test("stale originating diagnostics cannot open server-action forms or confirmat
 test("an empty successful server result produces a string report body", async (t) => {
   installBridge(t, { serverAction: async () => undefined });
   const dialogs = new WorkspaceDialogController();
-  createServerActions("host", dialogs)("tailscale.disable");
+  createServerActions(
+    "host",
+    dialogs,
+    serverSettings("host"),
+  )("tailscale.disable");
   const confirmation = dialogs.snapshot.confirmation;
   assert.ok(confirmation);
   await confirmation.dialog.confirmation.submit();

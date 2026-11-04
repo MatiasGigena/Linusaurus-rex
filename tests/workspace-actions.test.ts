@@ -129,6 +129,9 @@ function fixture(t: TestContext) {
     destroySession: async () => {},
     createSession: async () => ({ sessionId: "created" }),
     renameSession: async () => {},
+    renameWindow: async () => {},
+    renamePane: async () => {},
+    keyMode: async () => {},
     newWindow: async () => {},
     resizeWindow: async () => {},
     movePane: async () => {},
@@ -861,6 +864,91 @@ test("a deferred form refuses an endpoint replacement even when the new server h
     /host configuration changed|selected host changed/i,
   );
   assert.deepEqual(current.requests, []);
+});
+
+for (const [action, values] of [
+  ["session.new", { label: "New" }],
+  ["session.rename", { label: "Renamed" }],
+  ["client.tab.rename", { label: "Renamed" }],
+  ["pane.rename", { label: "Renamed" }],
+  ["pane.send_key", { key: "enter", mods: "" }],
+  ["pane.new_block", { flavor: "example.block", options: "{}" }],
+  ["pane.move", { anchor: "local-session-left", direction: "right" }],
+  ["pane.move_to_tab", { windowId: "local-session-last" }],
+  ["client.mode.enter", { name: "main" }],
+] satisfies [string, Record<string, string>][]) {
+  test(`${action} form cannot write to a replacement endpoint with the same target IDs`, async (t) => {
+    const current = fixture(t);
+    await current.execute(action);
+    const form = current.form.get();
+    assert.ok(form);
+    const before = current.requests.length;
+    const settings = current.settings.get();
+    current.settings.set({
+      ...settings,
+      hosts: settings.hosts.map((host) =>
+        host.id === "local"
+          ? { ...host, endpoint: "https://replacement.example" }
+          : host,
+      ),
+    });
+    await assert.rejects(form.submit(values), /host configuration changed/i);
+    assert.equal(
+      current.requests.length,
+      before,
+      "rejection must happen before any mutation reaches the new endpoint",
+    );
+  });
+}
+
+for (const action of [
+  "session.close",
+  "client.tab.close",
+  "pane.close",
+  "pane.reset_terminal",
+  "client.host.remove",
+]) {
+  test(`${action} confirmation cannot mutate a same-ID replacement server`, async (t) => {
+    const current = fixture(t);
+    const targetHost = action === "client.host.remove" ? "remote" : "local";
+    await current.execute(action, { host_id: targetHost });
+    const confirmation = current.confirmation.get();
+    assert.ok(confirmation);
+    assert.deepEqual(current.requests, []);
+    const settings = current.settings.get();
+    current.settings.set({
+      ...settings,
+      hosts: settings.hosts.map((host) =>
+        host.id === targetHost
+          ? { ...host, endpoint: "https://replacement.example" }
+          : host,
+      ),
+    });
+    await assert.rejects(confirmation.submit(), /host configuration changed/i);
+    assert.deepEqual(current.requests, []);
+  });
+}
+
+test("deferred host removal preserves settings and hosts added after confirmation opened", async (t) => {
+  const current = fixture(t);
+  await current.execute("client.host.remove", { host_id: "remote" });
+  const confirmation = current.confirmation.get();
+  assert.ok(confirmation);
+  const latest = {
+    ...current.settings.get(),
+    fontSize: 23,
+    hosts: [
+      ...current.settings.get().hosts,
+      { id: "new-host", label: "New host", endpoint: "https://new.example" },
+    ],
+  };
+  current.settings.set(latest);
+  await confirmation.submit();
+  assert.equal(current.settings.get().fontSize, 23);
+  assert.deepEqual(
+    current.settings.get().hosts.map((host) => host.id),
+    ["local", "new-host"],
+  );
 });
 
 test("a source-bound deferred pane choice finds new panes without adopting the newly displayed host", async (t) => {

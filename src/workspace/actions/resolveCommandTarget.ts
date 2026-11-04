@@ -3,7 +3,7 @@ import { viewKey } from "../../core/workspace";
 import type { WorkspaceActionOptions, ResolvedCommand } from "./context";
 type ResolvedCommandTarget = Omit<
   ResolvedCommand,
-  "localCommand" | "requirePane" | "execute"
+  "localCommand" | "requirePane" | "execute" | "assertCurrentHost"
 > & { displayedContext: boolean };
 export function resolveCommandTarget(
   name: string,

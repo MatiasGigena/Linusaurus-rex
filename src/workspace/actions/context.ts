@@ -46,6 +46,8 @@ export interface ResolvedCommand {
   targetPane: RexPane | undefined;
   localCommand(command: string): Promise<void>;
   requirePane(): void;
+  /** Refuse deferred work if its captured saved-host endpoint was replaced. */
+  assertCurrentHost(): void;
   execute(
     name: string,
     args?: Record<string, unknown>,
@@ -56,7 +58,13 @@ export const UNHANDLED = Symbol("unhandled workspace action");
 
 export type SessionActionsTarget = Pick<
   ResolvedCommand,
-  "name" | "args" | "hostId" | "sourceHostId" | "sessionId" | "currentView"
+  | "name"
+  | "args"
+  | "hostId"
+  | "sourceHostId"
+  | "sessionId"
+  | "currentView"
+  | "assertCurrentHost"
 >;
 export type SessionActionsDependencies = Pick<
   WorkspaceActionOptions,
@@ -80,6 +88,7 @@ export type TabActionsTarget = Pick<
   | "currentWindow"
   | "terminalRef"
   | "execute"
+  | "assertCurrentHost"
 >;
 export type TabActionsDependencies = Pick<WorkspaceActionOptions, "dialogs"> & {
   workspace: Pick<
@@ -103,6 +112,7 @@ export type PaneActionsTarget = Pick<
   | "localCommand"
   | "requirePane"
   | "execute"
+  | "assertCurrentHost"
 >;
 export type PaneActionsDependencies = Pick<
   WorkspaceActionOptions,
@@ -126,6 +136,7 @@ export type PaneLayoutActionsTarget = Pick<
   | "targetPane"
   | "requirePane"
   | "execute"
+  | "assertCurrentHost"
 >;
 export type PaneLayoutActionsDependencies = Pick<
   WorkspaceActionOptions,
@@ -140,7 +151,7 @@ export type PaneLayoutActionsDependencies = Pick<
 
 export type ClientActionsTarget = Pick<
   ResolvedCommand,
-  "name" | "args" | "hostId" | "sourceHostId"
+  "name" | "args" | "hostId" | "sourceHostId" | "assertCurrentHost"
 >;
 export type ClientActionsDependencies = Pick<
   WorkspaceActionOptions,

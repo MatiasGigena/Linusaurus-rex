@@ -139,7 +139,12 @@ function PrimaryDialogView({
             settings.hosts.find((host) => host.id === dialog.hostId)?.endpoint
           }
           onClose={close}
-          onServerAction={createServerActions(dialog.hostId, dialogs, owner)}
+          onServerAction={createServerActions(
+            dialog.hostId,
+            dialogs,
+            operations.getSettings,
+            owner,
+          )}
         />
       );
     case "pairing": {

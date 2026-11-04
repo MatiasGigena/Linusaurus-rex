@@ -26,7 +26,7 @@ const f=window.fixture={calls,history,formWrites:[],confirmationWrites:0,errors:
  unmount(){show(false);},
  openAfterUnmount(){return controller.open({kind:'report',title:'After unmount',body:'Must never appear'})?.id;}
 };
-window.rex={onClientEvent:()=>()=>{},getSettings:async()=>settings,setSettings:async value=>value,writeClipboard:async()=>{},readClipboard:async()=>'',async request(method,args){calls.push({method,args});
+window.rex={onClientEvent:()=>()=>{},getSettings:async()=>settings,setSettings:async value=>value,writeClipboard:async()=>{},readClipboard:async()=>'',async request(method,args){calls.push({method,args,endpoint:settings.hosts.find(host=>host.id===args?.hostId)?.endpoint});
  if(method==='credentialStatus')return{stored:false,secureStorageAvailable:true};
  if(method==='configInfo')return{path:'/config/'+args.hostId+'.lua',content:'-- '+settings.hosts.find(host=>host.id===args.hostId).endpoint,editable:true};
  if(method==='diagnostics')return{client:'Fixture',host:args.hostId};
@@ -84,6 +84,79 @@ async function frame(page: Page) {
   await page.evaluate(
     () =>
       new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+  );
+}
+
+for (const kind of ["rename", "confirmation"] as const) {
+  test(
+    `a server ${kind} opened from diagnostics rejects a replacement endpoint before mutation`,
+    options,
+    async () => {
+      await withBrowserFixture(
+        `server-${kind}-endpoint-owner`,
+        source,
+        async (page) => {
+          await open(page, { kind: "diagnostics", hostId: "remote" });
+          await page
+            .getByRole("button", {
+              name: kind === "rename" ? "Rename host…" : "Disable serving…",
+              exact: true,
+            })
+            .click();
+          assert.equal(
+            (await state(page)).primary,
+            undefined,
+            "the originating diagnostics is replaced by its deferred action",
+          );
+          const owner =
+            kind === "rename"
+              ? (await state(page)).formId
+              : (await state(page)).confirmationId;
+          await page.evaluate(() =>
+            (window as unknown as { fixture: DialogFixture }).fixture.endpoint(
+              "remote",
+              "wss://replacement.example",
+            ),
+          );
+          await frame(page);
+          assert.equal(
+            kind === "rename"
+              ? (await state(page)).formId
+              : (await state(page)).confirmationId,
+            owner,
+            "the independent action slot survives the primary view's endpoint change",
+          );
+          if (kind === "rename")
+            await page
+              .getByRole("textbox", { name: "Hostname", exact: true })
+              .fill("original-server-name");
+          await page
+            .getByRole("button", {
+              name: kind === "rename" ? "Save" : "Apply change",
+              exact: true,
+            })
+            .click();
+          await frame(page);
+          const writes = await page.evaluate(() =>
+            (
+              window as unknown as { fixture: DialogFixture }
+            ).fixture.calls.filter(
+              (call) =>
+                call.method === "serverAction" &&
+                call.args?.action !== "status",
+            ),
+          );
+          assert.deepEqual(
+            writes,
+            [],
+            "the original diagnostic action cannot be sent to the replacement server",
+          );
+          await expect(page.getByRole("alert")).toContainText(
+            "host configuration changed",
+          );
+        },
+      );
+    },
   );
 }
 

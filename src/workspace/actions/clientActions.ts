@@ -33,7 +33,7 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
       setActivityGroup,
       dialogs,
     } = dependencies;
-    const { name, args, hostId, sourceHostId } = context;
+    const { name, args, hostId, sourceHostId, assertCurrentHost } = context;
     switch (name) {
       case "client.palette.toggle": {
         const current = dialogs.snapshot.primary;
@@ -114,10 +114,15 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
               "The saved connection and its stored credentials will be removed. Server sessions keep running.",
             label: "Forget host",
             submit: async () => {
+              assertCurrentHost();
               await window.rex.request("removeCredentials", { hostId });
+              assertCurrentHost();
+              const current = workspace.getSettings();
+              if (!current)
+                throw new Error("Workspace settings are not available.");
               await workspace.saveSettings({
-                ...settings,
-                hosts: settings.hosts.filter((item) => item.id !== hostId),
+                ...current,
+                hosts: current.hosts.filter((item) => item.id !== hostId),
               });
               await workspace.refresh();
             },
@@ -258,6 +263,7 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
               description: "Choose a mode declared in the resolved Rex keymap.",
               fields: [{ name: "name", label: "Mode name", required: true }],
               submit: async (values) => {
+                assertCurrentHost();
                 await window.rex.request("keyMode", {
                   hostId,
                   operation: "enter",

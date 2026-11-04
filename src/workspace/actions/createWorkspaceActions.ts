@@ -25,12 +25,27 @@ const nativeActions = new Set([
 export function createWorkspaceActions(options: WorkspaceActionOptions) {
   const { workspace, settings } = options;
   if (!settings) return async () => undefined;
+  const captureHostGuard = (hostId: string) => {
+    const endpoint = settings.hosts.find(
+      (host) => host.id === hostId,
+    )?.endpoint;
+    return () => {
+      const current = workspace
+        .getSettings()
+        ?.hosts.find((host) => host.id === hostId);
+      if (endpoint === undefined || !current || current.endpoint !== endpoint)
+        throw new Error(
+          "The host configuration changed before this action could be submitted. Reopen the form for the current server.",
+        );
+    };
+  };
   const requestClose: RequestClose = async (
     hostId,
     title,
     description,
     action,
   ) => {
+    const assertCurrentHost = captureHostGuard(hostId);
     if (settings.confirmClose) {
       options.dialogs.open({
         kind: "confirmation",
@@ -38,12 +53,14 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
           title,
           description,
           submit: async () => {
+            assertCurrentHost();
             await workspace.mutateHostAndRefresh(hostId, action);
           },
         },
       });
       return { status: "confirmation_required" };
     }
+    assertCurrentHost();
     await workspace.mutateHostAndRefresh(hostId, action);
   };
   const handlers = [
@@ -160,25 +177,14 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
       ].includes(name)
     )
       return localCommand(name);
-    const intendedEndpoint = settings.hosts.find(
-      (host) => host.id === hostId,
-    )?.endpoint;
+    const assertCurrentHost = captureHostGuard(hostId);
     const command: ResolvedCommand = {
       ...target,
       localCommand,
       requirePane,
+      assertCurrentHost,
       execute: async (name, args, event) => {
-        const currentHost = workspace
-          .getSettings()
-          ?.hosts.find((host) => host.id === hostId);
-        if (
-          intendedEndpoint === undefined ||
-          !currentHost ||
-          currentHost.endpoint !== intendedEndpoint
-        )
-          throw new Error(
-            "The host configuration changed before this action could be submitted. Reopen the form for the current server.",
-          );
+        assertCurrentHost();
         return options.executeCurrent(name, args, event);
       },
     };

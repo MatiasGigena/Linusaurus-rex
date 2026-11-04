@@ -52,6 +52,7 @@ export function createPaneLayoutActions(
       targetPane,
       requirePane,
       execute,
+      assertCurrentHost,
     } = context;
     switch (name) {
       case "pane.split":
@@ -227,6 +228,7 @@ export function createPaneLayoutActions(
                 },
               ],
               submit: async (values) => {
+                assertCurrentHost();
                 const direction = moveDirection(values.direction);
                 await workspace.mutateHostAndRefresh(hostId, () =>
                   window.rex.request("movePane", {
@@ -295,6 +297,7 @@ export function createPaneLayoutActions(
                 },
               ],
               submit: async (values) => {
+                assertCurrentHost();
                 await workspace.mutateHostAndRefresh(hostId, () =>
                   window.rex.request("layoutAction", {
                     ...terminalRef,

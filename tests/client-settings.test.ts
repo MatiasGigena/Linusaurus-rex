@@ -52,6 +52,7 @@ test("settings actions accept only actual tab strings and default malformed valu
       args: { tab },
       hostId: "local",
       sourceHostId: undefined,
+      assertCurrentHost: unexpected,
     });
     assert.deepEqual(dialogs.snapshot.primary?.dialog, {
       kind: "settings",

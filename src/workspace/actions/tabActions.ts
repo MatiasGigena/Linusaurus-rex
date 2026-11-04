@@ -31,6 +31,7 @@ export function createTabActions(dependencies: TabActionsDependencies) {
       currentWindow,
       terminalRef,
       execute,
+      assertCurrentHost,
     } = context;
     switch (name) {
       case "client.tab.new": {
@@ -63,6 +64,7 @@ export function createTabActions(dependencies: TabActionsDependencies) {
       case "client.tab.rename": {
         if (!currentWindow) return;
         const rename = async (label: string) => {
+          assertCurrentHost();
           await workspace.mutateHostAndRefresh(hostId, () =>
             window.rex.request("renameWindow", {
               hostId,

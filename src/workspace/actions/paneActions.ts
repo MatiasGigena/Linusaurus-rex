@@ -26,6 +26,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
       localCommand,
       requirePane,
       execute,
+      assertCurrentHost,
     } = context;
     switch (name) {
       case "pane.close":
@@ -167,6 +168,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
               },
             ],
             submit: async (values) => {
+              assertCurrentHost();
               await workspace.mutateHostAndRefresh(hostId, () =>
                 window.rex.request("renamePane", {
                   ...terminalRef,
@@ -211,6 +213,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
                 { name: "mods", label: "Modifiers", placeholder: "ctrl+shift" },
               ],
               submit: async (values) => {
+                assertCurrentHost();
                 await send(values.key, values.mods || "");
               },
             },
@@ -250,6 +253,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
               "Reset the terminal emulator and clear its screen and scrollback. The program keeps running.",
             label: "Reset terminal",
             submit: async () => {
+              assertCurrentHost();
               await window.rex.request("invokeAction", {
                 ...terminalRef,
                 action: "com.superlogical.terminal.reset",
@@ -303,6 +307,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
               },
             ],
             submit: async (values) => {
+              assertCurrentHost();
               await workspace.mutateHostAndRefresh(hostId, () =>
                 window.rex.request("createBlock", {
                   hostId,

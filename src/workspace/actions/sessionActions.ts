@@ -10,8 +10,15 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
   ): Promise<unknown> {
     const { workspace, hosts, setCollapsedSessions, requestClose, dialogs } =
       dependencies;
-    const { name, args, hostId, sourceHostId, sessionId, currentView } =
-      context;
+    const {
+      name,
+      args,
+      hostId,
+      sourceHostId,
+      sessionId,
+      currentView,
+      assertCurrentHost,
+    } = context;
     const navigationHosts =
       sourceHostId === undefined
         ? hosts
@@ -22,6 +29,7 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
         return;
       case "session.new": {
         const create = async (label: string, cwd?: string) => {
+          assertCurrentHost();
           await workspace.mutateSession(
             {
               hostId,
@@ -111,6 +119,7 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
       case "session.rename": {
         if (!sessionId) throw new Error("Choose a session first.");
         const rename = async (label: string) => {
+          assertCurrentHost();
           await workspace.mutateHostAndRefresh(hostId, () =>
             window.rex.request("renameSession", { hostId, sessionId, label }),
           );
