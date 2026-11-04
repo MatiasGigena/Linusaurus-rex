@@ -1,39 +1,88 @@
-import { useEffect, useRef, useState } from 'react';
-import { WebLinksAddon } from '@xterm/addon-web-links';
-import { LigaturesAddon } from '@xterm/addon-ligatures';
-import { AlertCircle, ArrowDown, ArrowUp, CaseSensitive, ChevronDown, ChevronUp, Copy, Maximize2, Regex, Search, TerminalSquare, X } from 'lucide-react';
-import type { RexPane, Settings, TerminalRef } from '../shared/types';
-import { canonicalActionName } from '../shared/actions';
-import { acquireTerminal, releaseTerminal, type TerminalRuntime } from './runtime';
-import { registerTerminalInput, type TerminalMenu } from './input';
-import { terminalOptions, terminalServerTheme } from './themes';
-import { applicationLinks, linkProtocol } from './links';
-import { TerminalVisuals } from './visuals';
-import { terminalCommands, type TerminalCommandCompletion, type TerminalCommandRequest } from './commands';
-import { TerminalFrameWriter } from './frame-writer';
-import { TerminalCommandSession, terminalErrorMessage as displayError } from './command-session';
-import { registerTerminalViewport } from './viewport';
-import '@xterm/xterm/css/xterm.css';
-import './terminal.css';
+import { useEffect, useRef, useState } from "react";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { LigaturesAddon } from "@xterm/addon-ligatures";
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  CaseSensitive,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Maximize2,
+  Regex,
+  Search,
+  TerminalSquare,
+  X,
+} from "lucide-react";
+import type { RexPane, Settings, TerminalRef } from "../shared/types";
+import { canonicalActionName } from "../shared/actions";
+import {
+  acquireTerminal,
+  releaseTerminal,
+  type TerminalRuntime,
+} from "./runtime";
+import { registerTerminalInput, type TerminalMenu } from "./input";
+import { terminalOptions, terminalServerTheme } from "./themes";
+import { applicationLinks, linkProtocol } from "./links";
+import { TerminalVisuals } from "./visuals";
+import {
+  terminalCommands,
+  type TerminalCommandCompletion,
+  type TerminalCommandRequest,
+} from "./commands";
+import { TerminalFrameWriter } from "./frame-writer";
+import {
+  TerminalCommandSession,
+  terminalErrorMessage as displayError,
+} from "./command-session";
+import { registerTerminalViewport } from "./viewport";
+import "@xterm/xterm/css/xterm.css";
+import "./terminal.css";
 
 const MAX_PASTE_BYTES = 1024 * 1024;
 
 export interface TerminalPaneProps {
-  pane: RexPane; terminalRef: TerminalRef; settings: Settings; focused: boolean; visible?: boolean; showHeader: boolean;
-  onFocus(): void; onZoom(): void; onClose(): void; onAction?(command: string): Promise<unknown>; onTitle?(title: string): void; onBell?(): void;
+  pane: RexPane;
+  terminalRef: TerminalRef;
+  settings: Settings;
+  focused: boolean;
+  visible?: boolean;
+  showHeader: boolean;
+  onFocus(): void;
+  onZoom(): void;
+  onClose(): void;
+  onAction?(command: string): Promise<unknown>;
+  onTitle?(title: string): void;
+  onBell?(): void;
   onNotification?(title: string, body?: string): void;
 }
 
-export { dispatchTerminalCommand, dispatchTerminalCommandAsync } from './commands';
-function synchronizeTheme(runtime: TerminalRuntime, ref: TerminalRef, settings: Settings, onError: (message: string) => void) {
+export {
+  dispatchTerminalCommand,
+  dispatchTerminalCommandAsync,
+} from "./commands";
+function synchronizeTheme(
+  runtime: TerminalRuntime,
+  ref: TerminalRef,
+  settings: Settings,
+  onError: (message: string) => void,
+) {
   const theme = terminalServerTheme(settings);
   const signature = JSON.stringify(theme);
   if (runtime.serverThemeSignature === signature) return;
   runtime.serverThemeSignature = signature;
-  void window.rex.request('invokeAction', { ...ref, action: 'com.superlogical.terminal.set_theme', args: theme }).catch((failure: unknown) => {
-    if (runtime.serverThemeSignature === signature) runtime.serverThemeSignature = undefined;
-    onError(`Theme sync failed: ${displayError(failure)}`);
-  });
+  void window.rex
+    .request("invokeAction", {
+      ...ref,
+      action: "com.superlogical.terminal.set_theme",
+      args: theme,
+    })
+    .catch((failure: unknown) => {
+      if (runtime.serverThemeSignature === signature)
+        runtime.serverThemeSignature = undefined;
+      onError(`Theme sync failed: ${displayError(failure)}`);
+    });
 }
 
 function createPromptNavigator(runtime: TerminalRuntime) {
@@ -249,37 +298,54 @@ function createTerminalCommandExecutor(bindings: TerminalCommandBindings) {
     command: TerminalCommandRequest,
     signal?: AbortSignal,
     completion: TerminalCommandCompletion = "settled",
-  ) => session.executeCommand(
-    generation => typeof command === 'string'
-      ? handleCommand(command, generation, signal, completion)
-      : pasteCommand(command.text, generation, signal, completion),
-    signal,
-  );
-  const paste = (text?: string) => session.executeCommand(
-    generation => pasteCommand(text, generation),
-  );
+  ) =>
+    session.executeCommand(
+      (generation) =>
+        typeof command === "string"
+          ? handleCommand(command, generation, signal, completion)
+          : pasteCommand(command.text, generation, signal, completion),
+      signal,
+    );
+  const paste = (text?: string) =>
+    session.executeCommand((generation) => pasteCommand(text, generation));
   return { paste, execute };
 }
 
 export function TerminalPane(props: TerminalPaneProps) {
-  const { pane, terminalRef, settings, focused, showHeader, onZoom, onClose, visible = true } = props;
+  const {
+    pane,
+    terminalRef,
+    settings,
+    focused,
+    showHeader,
+    onZoom,
+    onClose,
+    visible = true,
+  } = props;
   const { hostId, sessionId, blockId } = terminalRef;
   const container = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<TerminalRuntime | undefined>(undefined);
   const visualsRef = useRef<TerminalVisuals | undefined>(undefined);
-  const viewportRef = useRef<ReturnType<typeof registerTerminalViewport> | undefined>(undefined);
-  const callbacks = useRef(props); callbacks.current = props;
-  const settingsRef = useRef(settings); settingsRef.current = settings;
+  const viewportRef = useRef<
+    ReturnType<typeof registerTerminalViewport> | undefined
+  >(undefined);
+  const callbacks = useRef(props);
+  callbacks.current = props;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const searchInput = useRef<HTMLInputElement>(null);
   const menuElement = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string>();
   const [connected, setConnected] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [regex, setRegex] = useState(false);
   const [searchError, setSearchError] = useState<string>();
-  const [searchResults, setSearchResults] = useState({ resultIndex: -1, resultCount: 0 });
+  const [searchResults, setSearchResults] = useState({
+    resultIndex: -1,
+    resultCount: 0,
+  });
   const [menu, setMenu] = useState<TerminalMenu>();
   const commandRef = useRef<(command: string) => void>(() => {});
   const searchOperation = useRef<(previous?: boolean) => void>(() => {});
@@ -288,19 +354,34 @@ export function TerminalPane(props: TerminalPaneProps) {
     if (!container.current) return;
     const hostElement = container.current;
     const isVisible = () => callbacks.current.visible !== false;
-    const runtime = acquireTerminal({ hostId, sessionId, blockId }, settingsRef.current, hostElement);
+    const runtime = acquireTerminal(
+      { hostId, sessionId, blockId },
+      settingsRef.current,
+      hostElement,
+    );
     const term = runtime.terminal;
     runtime.serverThemeSignature = undefined;
     hostElement.replaceChildren(runtime.element);
     runtimeRef.current = runtime;
-    const visuals = new TerminalVisuals(term, runtime.element, hostElement, settingsRef.current);
+    const visuals = new TerminalVisuals(
+      term,
+      runtime.element,
+      hostElement,
+      settingsRef.current,
+    );
     visualsRef.current = visuals;
-    const session = new TerminalCommandSession({ visible: isVisible, connected: setConnected, error: setError });
+    const session = new TerminalCommandSession({
+      visible: isVisible,
+      connected: setConnected,
+      error: setError,
+    });
     const viewport = registerTerminalViewport({
-      runtime, hostElement, ref: { hostId, sessionId, blockId },
+      runtime,
+      hostElement,
+      ref: { hostId, sessionId, blockId },
       settings: () => settingsRef.current,
       visible: isVisible,
-      onError: failure => setError(`Resize failed: ${displayError(failure)}`),
+      onError: (failure) => setError(`Resize failed: ${displayError(failure)}`),
     });
     viewportRef.current = viewport;
     let sawFrame = false;
@@ -309,35 +390,47 @@ export function TerminalPane(props: TerminalPaneProps) {
     const subscriptionId = crypto.randomUUID();
     const enqueue = (send: () => Promise<unknown>) => session.enqueue(send);
     const startSubscription = () => {
-      if (!session.isDisposed) void window.rex.request('subscribe', { ...ref, subscriptionId }).catch(session.fail);
+      if (!session.isDisposed)
+        void window.rex
+          .request("subscribe", { ...ref, subscriptionId })
+          .catch(session.fail);
     };
     const writer = new TerminalFrameWriter(runtime, {
       scrollOnOutput: () => settingsRef.current.scrollOnOutput,
       error: (failure, source) => {
-        if (!session.isDisposed) setError(`${source === 'image' ? 'Image: ' : ''}${displayError(failure)}`);
+        if (!session.isDisposed)
+          setError(
+            `${source === "image" ? "Image: " : ""}${displayError(failure)}`,
+          );
       },
       complete: (frame, frameGeneration) => {
         viewport.frameComplete(frame);
-        if (frame.kind !== 'resize') session.frameRendered(frameGeneration, writer.hasPendingSnapshot);
+        if (frame.kind !== "resize")
+          session.frameRendered(frameGeneration, writer.hasPendingSnapshot);
       },
     });
     const commands = createTerminalCommandExecutor({
-      runtime, ref, session,
+      runtime,
+      ref,
+      session,
       copy: () => input.copy(),
       openSearch: () => setSearchOpen(true),
-      find: previous => searchOperation.current(previous),
+      find: (previous) => searchOperation.current(previous),
       actionHandler: () => callbacks.current.onAction,
     });
     const input = registerTerminalInput({
-      runtime, hostElement, ref,
+      runtime,
+      hostElement,
+      ref,
       settings: () => settingsRef.current,
-      isVisible, isOnline: () => session.isOnline,
+      isVisible,
+      isOnline: () => session.isOnline,
       isFocused: () => callbacks.current.focused,
       isReplayingSnapshot: () => writer.replayingSnapshot,
       enqueue,
       // DOM paste has no awaiting caller. Its executor already reports failures
       // against the connection that accepted it, including clipboard reads.
-      paste: text => commands.paste(text).catch(() => {}),
+      paste: (text) => commands.paste(text).catch(() => {}),
       onFocus: () => callbacks.current.onFocus(),
       onCopied: () => visuals.copied(),
       onError: session.reportError,
@@ -349,62 +442,105 @@ export function TerminalPane(props: TerminalPaneProps) {
         session.fail(frame.error);
         return;
       }
-      if (frame.data === undefined && frame.kind !== 'resize') return;
+      if (frame.data === undefined && frame.kind !== "resize") return;
       const recovered = session.receiveFrame();
       if (recovered) input.reset();
-      if (recovered && callbacks.current.focused) enqueue(() => window.rex.request('focusEvent', { ...ref, focused: true }));
+      if (recovered && callbacks.current.focused)
+        enqueue(() =>
+          window.rex.request("focusEvent", { ...ref, focused: true }),
+        );
       if (recovered && isVisible()) {
         if (sawFrame) runtime.serverThemeSignature = undefined;
-        synchronizeTheme(runtime, ref, settingsRef.current, (message) => { if (!session.isDisposed) setError(message); });
+        synchronizeTheme(runtime, ref, settingsRef.current, (message) => {
+          if (!session.isDisposed) setError(message);
+        });
       }
       sawFrame = true;
-      if (!frame.kind || frame.kind === 'snapshot') session.beginSnapshot();
+      if (!frame.kind || frame.kind === "snapshot") session.beginSnapshot();
       if (!writer.enqueue(frame, session.frameGeneration)) {
-        session.fail('Output exceeded the rendering buffer; resynchronizing with Rex.');
-        void window.rex.request('unsubscribe', { subscriptionId }).catch(() => {}).finally(() => {
-          retryTimer = setTimeout(startSubscription, 250);
-        });
+        session.fail(
+          "Output exceeded the rendering buffer; resynchronizing with Rex.",
+        );
+        void window.rex
+          .request("unsubscribe", { subscriptionId })
+          .catch(() => {})
+          .finally(() => {
+            retryTimer = setTimeout(startSubscription, 250);
+          });
         return;
       }
-      if (callbacks.current.focused && isVisible() && document.activeElement === document.body) term.focus();
+      if (
+        callbacks.current.focused &&
+        isVisible() &&
+        document.activeElement === document.body
+      )
+        term.focus();
     });
-    commandRef.current = (command) => { void commands.execute(command).catch(() => {}); };
+    commandRef.current = (command) => {
+      void commands.execute(command).catch(() => {});
+    };
     const commandRegistration = terminalCommands.register(ref, {
-      available: () => !session.isDisposed && isVisible() && hostElement.isConnected,
+      available: () =>
+        !session.isDisposed && isVisible() && hostElement.isConnected,
       focused: () => callbacks.current.focused,
       execute: commands.execute,
       // Execution owns error reporting; the broker only settles its caller.
       onError: () => {},
     });
-    const cursorStyleListener = term.parser.registerCsiHandler({ intermediates: ' ', final: 'q' }, (params) => {
-      const style = params[0];
-      // DECSCUSR 0 clears any preceding program override and returns to the
-      // selected cursor. Other cursor visibility/mode sequences remain intact.
-      return settingsRef.current.forceCursorStyle && style !== 0;
-    });
-    const titleListener = term.onTitleChange((title) => callbacks.current.onTitle?.(title));
+    const cursorStyleListener = term.parser.registerCsiHandler(
+      { intermediates: " ", final: "q" },
+      (params) => {
+        const style = params[0];
+        // DECSCUSR 0 clears any preceding program override and returns to the
+        // selected cursor. Other cursor visibility/mode sequences remain intact.
+        return settingsRef.current.forceCursorStyle && style !== 0;
+      },
+    );
+    const titleListener = term.onTitleChange((title) =>
+      callbacks.current.onTitle?.(title),
+    );
     const bellListener = term.onBell(() => {
       if (writer.replayingSnapshot) return;
       callbacks.current.onBell?.();
       if (settingsRef.current.terminalBell && isVisible()) {
         try {
-          const audio = new AudioContext(), oscillator = audio.createOscillator(), gain = audio.createGain();
-          oscillator.frequency.value = 880; gain.gain.value = .05; oscillator.connect(gain); gain.connect(audio.destination); oscillator.start();
-          oscillator.stop(audio.currentTime + .08); oscillator.onended = () => { void audio.close(); };
-        } catch { /* A desktop may have no audio output. */ }
+          const audio = new AudioContext(),
+            oscillator = audio.createOscillator(),
+            gain = audio.createGain();
+          oscillator.frequency.value = 880;
+          gain.gain.value = 0.05;
+          oscillator.connect(gain);
+          gain.connect(audio.destination);
+          oscillator.start();
+          oscillator.stop(audio.currentTime + 0.08);
+          oscillator.onended = () => {
+            void audio.close();
+          };
+        } catch {
+          /* A desktop may have no audio output. */
+        }
       }
     });
-    const disposeLinks = registerTerminalLinks(runtime, () => settingsRef.current, session.reportError);
-    const resultsListener = runtime.search.onDidChangeResults((results) => { if (!session.isDisposed) setSearchResults(results); });
-    const colorScheme = matchMedia('(prefers-color-scheme: light)');
+    const disposeLinks = registerTerminalLinks(
+      runtime,
+      () => settingsRef.current,
+      session.reportError,
+    );
+    const resultsListener = runtime.search.onDidChangeResults((results) => {
+      if (!session.isDisposed) setSearchResults(results);
+    });
+    const colorScheme = matchMedia("(prefers-color-scheme: light)");
     const updateColorScheme = () => {
-      if (settingsRef.current.theme !== 'system') return;
+      if (settingsRef.current.theme !== "system") return;
       const options = terminalOptions(settingsRef.current);
       term.options = options;
-      hostElement.style.backgroundColor = options.theme?.background || '';
-      if (isVisible()) synchronizeTheme(runtime, ref, settingsRef.current, (message) => { if (!session.isDisposed) setError(message); });
+      hostElement.style.backgroundColor = options.theme?.background || "";
+      if (isVisible())
+        synchronizeTheme(runtime, ref, settingsRef.current, (message) => {
+          if (!session.isDisposed) setError(message);
+        });
     };
-    colorScheme.addEventListener('change', updateColorScheme);
+    colorScheme.addEventListener("change", updateColorScheme);
     const visibilityChanged = (show: boolean) => {
       if (!show) {
         session.hide();
@@ -429,120 +565,419 @@ export function TerminalPane(props: TerminalPaneProps) {
       resultsListener.dispose();
       commandRegistration.dispose();
       writer.dispose();
-      colorScheme.removeEventListener('change', updateColorScheme);
-      void window.rex.request('unsubscribe', { subscriptionId }).catch(() => {});
+      colorScheme.removeEventListener("change", updateColorScheme);
+      void window.rex
+        .request("unsubscribe", { subscriptionId })
+        .catch(() => {});
       releaseTerminal(runtime);
       if (runtimeRef.current === runtime) runtimeRef.current = undefined;
       if (viewportRef.current === viewport) viewportRef.current = undefined;
-      if (runtime.visibilityChanged === visibilityChanged) runtime.visibilityChanged = undefined;
+      if (runtime.visibilityChanged === visibilityChanged)
+        runtime.visibilityChanged = undefined;
       visuals.dispose();
       if (visualsRef.current === visuals) visualsRef.current = undefined;
     };
   }, [hostId, sessionId, blockId]);
 
-  useEffect(()=>{runtimeRef.current?.visibilityChanged?.(visible);},[visible]);
+  useEffect(() => {
+    runtimeRef.current?.visibilityChanged?.(visible);
+  }, [visible]);
   useEffect(() => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
     runtime.terminal.options = terminalOptions(settings);
     visualsRef.current?.apply(settings);
-    runtime.kitty.setEnabled(settings.graphicsEnabled);runtime.element.dataset.graphicsEnabled=String(settings.graphicsEnabled);
-    runtime.element.style.setProperty('--terminal-cursor-period', `${Math.max(100, settings.cursorBlinkInterval || 500) * 2}ms`);
-    runtime.element.style.fontStyle = settings.fontStyle || 'normal';
-    runtime.element.style.setProperty('-webkit-font-smoothing', settings.fontSmoothing ? 'antialiased' : 'auto');
+    runtime.kitty.setEnabled(settings.graphicsEnabled);
+    runtime.element.dataset.graphicsEnabled = String(settings.graphicsEnabled);
+    runtime.element.style.setProperty(
+      "--terminal-cursor-period",
+      `${Math.max(100, settings.cursorBlinkInterval || 500) * 2}ms`,
+    );
+    runtime.element.style.fontStyle = settings.fontStyle || "normal";
+    runtime.element.style.setProperty(
+      "-webkit-font-smoothing",
+      settings.fontSmoothing ? "antialiased" : "auto",
+    );
     if (settings.ligatures && !runtime.ligatures) {
       runtime.ligatures = new LigaturesAddon();
       runtime.terminal.loadAddon(runtime.ligatures);
     } else if (!settings.ligatures && runtime.ligatures) {
-      runtime.ligatures.dispose(); runtime.ligatures = undefined;
+      runtime.ligatures.dispose();
+      runtime.ligatures = undefined;
     }
-    runtime.element.style.fontVariantLigatures = settings.ligatures ? 'normal' : 'none';
-    if (!settings.ligatures && runtime.terminal.element) runtime.terminal.element.style.fontFeatureSettings = '"calt" off, "liga" off';
+    runtime.element.style.fontVariantLigatures = settings.ligatures
+      ? "normal"
+      : "none";
+    if (!settings.ligatures && runtime.terminal.element)
+      runtime.terminal.element.style.fontFeatureSettings =
+        '"calt" off, "liga" off';
     runtime.cursorResetPending = settings.forceCursorStyle;
     if (settings.forceCursorStyle) runtime.requestCursorReset?.();
     viewportRef.current?.settingsChanged();
-    if (visible) synchronizeTheme(runtime, { hostId, sessionId, blockId }, settings, setError);
+    if (visible)
+      synchronizeTheme(
+        runtime,
+        { hostId, sessionId, blockId },
+        settings,
+        setError,
+      );
   }, [settings, hostId, sessionId, blockId, visible]);
   useEffect(() => {
     if (focused && visible && !searchOpen) runtimeRef.current?.terminal.focus();
     else if (!focused || !visible) runtimeRef.current?.terminal.blur();
   }, [focused, visible, searchOpen]);
-  useEffect(() => { if (searchOpen && visible) searchInput.current?.focus(); }, [searchOpen, visible]);
+  useEffect(() => {
+    if (searchOpen && visible) searchInput.current?.focus();
+  }, [searchOpen, visible]);
   useEffect(() => {
     if (!menu) return;
-    menuElement.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+    menuElement.current
+      ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+      ?.focus();
     const close = () => setMenu(undefined);
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); close(); runtimeRef.current?.terminal.focus(); } };
-    window.addEventListener('mousedown', close); window.addEventListener('blur', close); window.addEventListener('keydown', key, true);
-    return () => { window.removeEventListener('mousedown', close); window.removeEventListener('blur', close); window.removeEventListener('keydown', key, true); };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+        runtimeRef.current?.terminal.focus();
+      }
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("keydown", key, true);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("keydown", key, true);
+    };
   }, [menu]);
 
   const search = (previous = false, incremental = false) => {
     const runtime = runtimeRef.current;
-    if (!runtime || !query) { runtime?.search.clearDecorations(); setSearchResults({ resultIndex: -1, resultCount: 0 }); setSearchError(undefined); return; }
+    if (!runtime || !query) {
+      runtime?.search.clearDecorations();
+      setSearchResults({ resultIndex: -1, resultCount: 0 });
+      setSearchError(undefined);
+      return;
+    }
     try {
       if (regex) new RegExp(query);
-      const options = { regex, caseSensitive, incremental, decorations: { matchBackground: '#637b4f', matchBorder: '#8cae70', matchOverviewRuler: '#8cae70', activeMatchBackground: '#c5a35c', activeMatchBorder: '#f2d793', activeMatchColorOverviewRuler: '#f2d793' } };
-      if (previous) runtime.search.findPrevious(query, options); else runtime.search.findNext(query, options);
+      const options = {
+        regex,
+        caseSensitive,
+        incremental,
+        decorations: {
+          matchBackground: "#637b4f",
+          matchBorder: "#8cae70",
+          matchOverviewRuler: "#8cae70",
+          activeMatchBackground: "#c5a35c",
+          activeMatchBorder: "#f2d793",
+          activeMatchColorOverviewRuler: "#f2d793",
+        },
+      };
+      if (previous) runtime.search.findPrevious(query, options);
+      else runtime.search.findNext(query, options);
       setSearchError(undefined);
-    } catch (failure) { setSearchError(displayError(failure)); }
+    } catch (failure) {
+      setSearchError(displayError(failure));
+    }
   };
-  useEffect(() => { if (searchOpen) search(false, true); }, [query, caseSensitive, regex, searchOpen]);
-  const closeSearch = () => { setSearchOpen(false); runtimeRef.current?.search.clearDecorations(); runtimeRef.current?.terminal.focus(); };
+  useEffect(() => {
+    if (searchOpen) search(false, true);
+  }, [query, caseSensitive, regex, searchOpen]);
+  const closeSearch = () => {
+    setSearchOpen(false);
+    runtimeRef.current?.search.clearDecorations();
+    runtimeRef.current?.terminal.focus();
+  };
   searchOperation.current = (previous) => search(previous);
-  const menuCommand = (command: string) => { setMenu(undefined); commandRef.current(command); if (command !== 'find') runtimeRef.current?.terminal.focus(); };
+  const menuCommand = (command: string) => {
+    setMenu(undefined);
+    commandRef.current(command);
+    if (command !== "find") runtimeRef.current?.terminal.focus();
+  };
 
-  return <section className={`terminal-pane ${focused ? 'is-focused' : ''}`} aria-label={`${pane.label} terminal`} aria-hidden={!visible} onPointerDown={() => callbacks.current.onFocus()} onPointerEnter={() => { if (settings.focusFollowsMouse && visible) callbacks.current.onFocus(); }}>
-    {showHeader && <div className="pane-header"><span><TerminalSquare size={13} /> {pane.title && settings.preferGeneratedTitles ? pane.title : pane.label}</span><div>
-      <button className="icon-button" title="Search terminal" aria-label="Search terminal" onClick={() => setSearchOpen(true)}><Search size={13} /></button>
-      <button className="icon-button" title="Maximize pane" aria-label="Maximize pane" onClick={(event) => { event.stopPropagation(); onZoom(); }}><Maximize2 size={13} /></button>
-      <button className="icon-button" title="Close pane" aria-label="Close pane" onClick={(event) => { event.stopPropagation(); onClose(); }}><X size={14} /></button>
-    </div></div>}
-    <div className="terminal-container" ref={container} style={{ padding: `${settings.paddingY ?? 12}px ${settings.paddingX ?? 18}px`, background: terminalOptions(settings).theme?.background }} />
-    {searchOpen && <form className="terminal-search" role="search" aria-label="Find in terminal" onSubmit={(event) => { event.preventDefault(); search(); }} onKeyDown={(event) => {
-      event.stopPropagation();
-      if (event.key === 'Escape') { event.preventDefault(); closeSearch(); }
-      if (event.key === 'Enter' && event.shiftKey) { event.preventDefault(); search(true); }
-    }}>
-      <Search size={14} /><input ref={searchInput} aria-label="Find terminal text" value={query} placeholder="Find in terminal…" onChange={(event) => setQuery(event.target.value)} />
-      <span className="terminal-search-count" role="status">{searchError ? 'Invalid regex' : `${Math.max(0, searchResults.resultIndex + 1)}/${searchResults.resultCount}`}</span>
-      <button type="button" className={`icon-button ${caseSensitive ? 'is-active' : ''}`} title="Match case" aria-label="Match case" aria-pressed={caseSensitive} onClick={() => setCaseSensitive(!caseSensitive)}><CaseSensitive size={15} /></button>
-      <button type="button" className={`icon-button ${regex ? 'is-active' : ''}`} title="Regular expression" aria-label="Regular expression" aria-pressed={regex} onClick={() => setRegex(!regex)}><Regex size={15} /></button>
-      <button type="button" className="icon-button" aria-label="Previous match" title="Previous match (Shift Enter)" onClick={() => search(true)}><ChevronUp size={15} /></button>
-      <button type="submit" className="icon-button" aria-label="Next match" title="Next match (Enter)"><ChevronDown size={15} /></button>
-      <button type="button" className="icon-button" aria-label="Close terminal search" onClick={closeSearch}><X size={14} /></button>
-    </form>}
-    {error && <div className="terminal-error" role="status"><AlertCircle size={14} /><span>{error}</span></div>}
-    {!connected && !error && visible && <div className="terminal-loading">Connecting terminal…</div>}
-    {menu && <div ref={menuElement} className="terminal-context-menu" role="menu" aria-label="Terminal actions" style={{ left: menu.x, top: menu.y, maxHeight: `calc(100vh - ${menu.y + 8}px)` }} onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => {
-      const buttons = [...(menuElement.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') || [])];
-      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-      if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-        event.preventDefault(); event.stopPropagation();
-        const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
-        buttons[next]?.focus();
-      }
-    }}>
-      <button role="menuitem" disabled={!menu.selection} onClick={() => menuCommand('copy')}><Copy size={14} /> Copy <kbd>Ctrl Shift C</kbd></button>
-      <button role="menuitem" onClick={() => menuCommand('paste')}>Paste <kbd>Ctrl Shift V</kbd></button>
-      <button role="menuitem" onClick={() => menuCommand('select-all')}>Select all</button>
-      <button role="menuitem" onClick={() => menuCommand('find')}><Search size={14} /> Find in terminal <kbd>Ctrl Shift F</kbd></button>
-      <div role="separator" />
-      <button role="menuitem" onClick={() => menuCommand('scroll-top')}><ArrowUp size={14} /> Scroll to top</button>
-      <button role="menuitem" onClick={() => menuCommand('scroll-bottom')}><ArrowDown size={14} /> Scroll to bottom</button>
-      <button role="menuitem" onClick={() => menuCommand('previous-prompt')}>Previous prompt</button>
-      <button role="menuitem" onClick={() => menuCommand('next-prompt')}>Next prompt</button>
-      <button role="menuitem" onClick={() => menuCommand('clear-terminal')}>Clear terminal and scrollback</button>
-      <button role="menuitem" onClick={() => menuCommand('pane.reset_terminal')}>Reset terminal…</button>
-      <div role="separator" />
-      <button role="menuitem" onClick={() => menuCommand('client.font.increase')}>Increase font size</button>
-      <button role="menuitem" onClick={() => menuCommand('client.font.decrease')}>Decrease font size</button>
-      <button role="menuitem" onClick={() => menuCommand('client.font.reset')}>Reset font size</button>
-      <div role="separator" />
-      <button role="menuitem" onClick={() => menuCommand('pane.split.right')}>Split right</button>
-      <button role="menuitem" onClick={() => menuCommand('pane.split.down')}>Split below</button>
-      <button role="menuitem" onClick={() => { setMenu(undefined); onZoom(); }}>Toggle pane zoom</button>
-      <button role="menuitem" className="terminal-menu-danger" onClick={() => { setMenu(undefined); onClose(); }}>Close pane</button>
-    </div>}
-  </section>;
+  return (
+    <section
+      className={`terminal-pane ${focused ? "is-focused" : ""}`}
+      aria-label={`${pane.label} terminal`}
+      aria-hidden={!visible}
+      onPointerDown={() => callbacks.current.onFocus()}
+      onPointerEnter={() => {
+        if (settings.focusFollowsMouse && visible) callbacks.current.onFocus();
+      }}
+    >
+      {showHeader && (
+        <div className="pane-header">
+          <span>
+            <TerminalSquare size={13} />{" "}
+            {pane.title && settings.preferGeneratedTitles
+              ? pane.title
+              : pane.label}
+          </span>
+          <div>
+            <button
+              className="icon-button"
+              title="Search terminal"
+              aria-label="Search terminal"
+              onClick={() => setSearchOpen(true)}
+            >
+              <Search size={13} />
+            </button>
+            <button
+              className="icon-button"
+              title="Maximize pane"
+              aria-label="Maximize pane"
+              onClick={(event) => {
+                event.stopPropagation();
+                onZoom();
+              }}
+            >
+              <Maximize2 size={13} />
+            </button>
+            <button
+              className="icon-button"
+              title="Close pane"
+              aria-label="Close pane"
+              onClick={(event) => {
+                event.stopPropagation();
+                onClose();
+              }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+      <div
+        className="terminal-container"
+        ref={container}
+        style={{
+          padding: `${settings.paddingY ?? 12}px ${settings.paddingX ?? 18}px`,
+          background: terminalOptions(settings).theme?.background,
+        }}
+      />
+      {searchOpen && (
+        <form
+          className="terminal-search"
+          role="search"
+          aria-label="Find in terminal"
+          onSubmit={(event) => {
+            event.preventDefault();
+            search();
+          }}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key === "Escape") {
+              event.preventDefault();
+              closeSearch();
+            }
+            if (event.key === "Enter" && event.shiftKey) {
+              event.preventDefault();
+              search(true);
+            }
+          }}
+        >
+          <Search size={14} />
+          <input
+            ref={searchInput}
+            aria-label="Find terminal text"
+            value={query}
+            placeholder="Find in terminal…"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <span className="terminal-search-count" role="status">
+            {searchError
+              ? "Invalid regex"
+              : `${Math.max(0, searchResults.resultIndex + 1)}/${searchResults.resultCount}`}
+          </span>
+          <button
+            type="button"
+            className={`icon-button ${caseSensitive ? "is-active" : ""}`}
+            title="Match case"
+            aria-label="Match case"
+            aria-pressed={caseSensitive}
+            onClick={() => setCaseSensitive(!caseSensitive)}
+          >
+            <CaseSensitive size={15} />
+          </button>
+          <button
+            type="button"
+            className={`icon-button ${regex ? "is-active" : ""}`}
+            title="Regular expression"
+            aria-label="Regular expression"
+            aria-pressed={regex}
+            onClick={() => setRegex(!regex)}
+          >
+            <Regex size={15} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Previous match"
+            title="Previous match (Shift Enter)"
+            onClick={() => search(true)}
+          >
+            <ChevronUp size={15} />
+          </button>
+          <button
+            type="submit"
+            className="icon-button"
+            aria-label="Next match"
+            title="Next match (Enter)"
+          >
+            <ChevronDown size={15} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Close terminal search"
+            onClick={closeSearch}
+          >
+            <X size={14} />
+          </button>
+        </form>
+      )}
+      {error && (
+        <div className="terminal-error" role="status">
+          <AlertCircle size={14} />
+          <span>{error}</span>
+        </div>
+      )}
+      {!connected && !error && visible && (
+        <div className="terminal-loading">Connecting terminal…</div>
+      )}
+      {menu && (
+        <div
+          ref={menuElement}
+          className="terminal-context-menu"
+          role="menu"
+          aria-label="Terminal actions"
+          style={{
+            left: menu.x,
+            top: menu.y,
+            maxHeight: `calc(100vh - ${menu.y + 8}px)`,
+          }}
+          onMouseDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            const buttons = [
+              ...(menuElement.current?.querySelectorAll<HTMLButtonElement>(
+                "button:not(:disabled)",
+              ) || []),
+            ];
+            const index = buttons.indexOf(
+              document.activeElement as HTMLButtonElement,
+            );
+            if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+              event.preventDefault();
+              event.stopPropagation();
+              const next =
+                event.key === "Home"
+                  ? 0
+                  : event.key === "End"
+                    ? buttons.length - 1
+                    : (index +
+                        (event.key === "ArrowDown" ? 1 : -1) +
+                        buttons.length) %
+                      buttons.length;
+              buttons[next]?.focus();
+            }
+          }}
+        >
+          <button
+            role="menuitem"
+            disabled={!menu.selection}
+            onClick={() => menuCommand("copy")}
+          >
+            <Copy size={14} /> Copy <kbd>Ctrl Shift C</kbd>
+          </button>
+          <button role="menuitem" onClick={() => menuCommand("paste")}>
+            Paste <kbd>Ctrl Shift V</kbd>
+          </button>
+          <button role="menuitem" onClick={() => menuCommand("select-all")}>
+            Select all
+          </button>
+          <button role="menuitem" onClick={() => menuCommand("find")}>
+            <Search size={14} /> Find in terminal <kbd>Ctrl Shift F</kbd>
+          </button>
+          <div role="separator" />
+          <button role="menuitem" onClick={() => menuCommand("scroll-top")}>
+            <ArrowUp size={14} /> Scroll to top
+          </button>
+          <button role="menuitem" onClick={() => menuCommand("scroll-bottom")}>
+            <ArrowDown size={14} /> Scroll to bottom
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => menuCommand("previous-prompt")}
+          >
+            Previous prompt
+          </button>
+          <button role="menuitem" onClick={() => menuCommand("next-prompt")}>
+            Next prompt
+          </button>
+          <button role="menuitem" onClick={() => menuCommand("clear-terminal")}>
+            Clear terminal and scrollback
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => menuCommand("pane.reset_terminal")}
+          >
+            Reset terminal…
+          </button>
+          <div role="separator" />
+          <button
+            role="menuitem"
+            onClick={() => menuCommand("client.font.increase")}
+          >
+            Increase font size
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => menuCommand("client.font.decrease")}
+          >
+            Decrease font size
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => menuCommand("client.font.reset")}
+          >
+            Reset font size
+          </button>
+          <div role="separator" />
+          <button
+            role="menuitem"
+            onClick={() => menuCommand("pane.split.right")}
+          >
+            Split right
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => menuCommand("pane.split.down")}
+          >
+            Split below
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => {
+              setMenu(undefined);
+              onZoom();
+            }}
+          >
+            Toggle pane zoom
+          </button>
+          <button
+            role="menuitem"
+            className="terminal-menu-danger"
+            onClick={() => {
+              setMenu(undefined);
+              onClose();
+            }}
+          >
+            Close pane
+          </button>
+        </div>
+      )}
+    </section>
+  );
 }
