@@ -20,6 +20,16 @@ import {
   originPatterns,
 } from "./server-origins.js";
 
+import {
+  decodeBusReply,
+  decodeUnitName,
+  decodeUnitObject,
+  decodeUnitPaths,
+  decodeSystemdInspection,
+  InvalidSystemdReplyError,
+  isServiceUnitName,
+} from "./systemd-replies.js";
+
 const execute = promisify(execFile),
   MARKER = "# Managed by Linusaurus Rex: web origins",
   IDLE_MARKER = "# Managed by Linusaurus Rex: idle shutdown guard";
@@ -75,7 +85,6 @@ type Pending = {
 };
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
-const scalar = (value: any) => (Array.isArray(value) ? value[0] : value);
 async function processStart(pid: number): Promise<string | undefined> {
   try {
     const text = await readFile(`/proc/${pid}/stat`, "utf8"),
@@ -88,15 +97,6 @@ async function processStart(pid: number): Promise<string | undefined> {
     throw error;
   }
 }
-const unitName = (value: string) =>
-  /^[a-zA-Z0-9_.:@\\-]+\.service$/.test(value) && !value.includes("..");
-const fields = (value: any) =>
-  Object.fromEntries(
-    Object.entries(value.data?.[0] || {}).map(([key, value]) => [
-      key,
-      (value as any).data,
-    ]),
-  );
 const signature = (unit: ServiceSnapshot) =>
   JSON.stringify([
     unit.unit,
@@ -150,14 +150,18 @@ export class SystemdUserServices {
       process.env.XDG_CONFIG_HOME ||
       join(homedir(), ".config");
   }
-  private async bus(scope: "user" | "system", args: string[]) {
-    return JSON.parse(
+  private async bus(
+    scope: "user" | "system",
+    args: string[],
+  ): Promise<unknown> {
+    return decodeBusReply(
       await this.run("busctl", [`--${scope}`, "--json=short", ...args]),
     );
   }
   private async object(unit: string, scope: "user" | "system") {
-    if (!unitName(unit)) throw new Error("Invalid Rex service unit name.");
-    return (
+    if (!isServiceUnitName(unit))
+      throw new Error("Invalid Rex service unit name.");
+    return decodeUnitObject(
       await this.bus(scope, [
         "call",
         "org.freedesktop.systemd1",
@@ -166,63 +170,61 @@ export class SystemdUserServices {
         "LoadUnit",
         "s",
         unit,
-      ])
-    ).data[0] as string;
+      ]),
+    );
   }
   private async property(path: string, scope: "user" | "system", name: string) {
-    return (
-      await this.bus(scope, [
-        "get-property",
-        "org.freedesktop.systemd1",
-        path,
-        "org.freedesktop.systemd1.Service",
-        name,
-      ])
-    ).data;
+    return this.bus(scope, [
+      "get-property",
+      "org.freedesktop.systemd1",
+      path,
+      "org.freedesktop.systemd1.Service",
+      name,
+    ]);
   }
   async inspect(
     unit: string,
     scope: "user" | "system" = "user",
   ): Promise<ServiceSnapshot> {
     const path = await this.object(unit, scope);
-    const raw = fields(
-      await this.bus(scope, [
-        "call",
-        "org.freedesktop.systemd1",
-        path,
-        "org.freedesktop.DBus.Properties",
-        "GetAll",
-        "s",
-        "org.freedesktop.systemd1.Unit",
-      ]),
-    );
+    const properties = await this.bus(scope, [
+      "call",
+      "org.freedesktop.systemd1",
+      path,
+      "org.freedesktop.DBus.Properties",
+      "GetAll",
+      "s",
+      "org.freedesktop.systemd1.Unit",
+    ]);
     const [pid, restart, remain, commands] = await Promise.all([
       this.property(path, scope, "MainPID"),
       this.property(path, scope, "Restart"),
       this.property(path, scope, "RemainAfterExit"),
       this.property(path, scope, "ExecStart"),
     ]);
-    const command = commands?.[0];
+    const inspection = decodeSystemdInspection(properties, {
+      pid,
+      restart,
+      remain,
+      commands,
+    });
+    const command = inspection.commands[0];
     const result: ServiceSnapshot = {
-      unit: String(raw.Id),
+      unit: inspection.unit,
       scope,
       objectPath: path,
-      mainPID: Number(scalar(pid)),
-      activeState: String(raw.ActiveState),
-      subState: String(raw.SubState),
-      restart: String(scalar(restart)),
-      fragmentPath: String(raw.FragmentPath || ""),
-      dropInPaths: Array.isArray(raw.DropInPaths)
-        ? (raw.DropInPaths as string[])
-        : [],
-      configuredOrigins: originPatterns(command?.[1] || []),
-      triggeredBy: Array.isArray(raw.TriggeredBy)
-        ? (raw.TriggeredBy as string[])
-        : [],
-      remainAfterExit: Boolean(scalar(remain)),
-      execPath: command?.[0] || "",
-      argv: command?.[1] || [],
-      job: Number((raw.Job as unknown[])?.[0] || 0),
+      mainPID: inspection.mainPID,
+      activeState: inspection.activeState,
+      subState: inspection.subState,
+      restart: inspection.restart,
+      fragmentPath: inspection.fragmentPath,
+      dropInPaths: inspection.dropInPaths,
+      configuredOrigins: originPatterns(command?.argv ?? []),
+      triggeredBy: inspection.triggeredBy,
+      remainAfterExit: inspection.remainAfterExit,
+      execPath: command?.path ?? "",
+      argv: command?.argv ?? [],
+      job: inspection.job,
       canManage: true,
     };
     if (scope === "system") {
@@ -238,13 +240,13 @@ export class SystemdUserServices {
       result.reason =
         "Socket, timer or path activated services require their existing activation controls.";
     } else if (
-      commands?.length !== 1 ||
+      inspection.commands.length !== 1 ||
       !result.execPath ||
       !/^rex(?:[-.].*)?$/.test(basename(result.execPath)) ||
       result.argv[0] !== result.execPath ||
       result.argv[1] !== "server" ||
       result.argv[2] !== "run" ||
-      command?.[2]
+      command?.ignoreFailure
     ) {
       result.canManage = false;
       result.reason =
@@ -261,35 +263,38 @@ export class SystemdUserServices {
   ): Promise<ServiceSnapshot | undefined> {
     await this.options.attest(endpoint, pid);
     for (const scope of ["user", "system"] as const) {
-      let object: string;
+      let lookup: unknown;
       try {
-        object = (
-          await this.bus(scope, [
-            "call",
-            "org.freedesktop.systemd1",
-            "/org/freedesktop/systemd1",
-            "org.freedesktop.systemd1.Manager",
-            "GetUnitByPID",
-            "u",
-            String(pid),
-          ])
-        ).data[0];
-      } catch {
+        lookup = await this.bus(scope, [
+          "call",
+          "org.freedesktop.systemd1",
+          "/org/freedesktop/systemd1",
+          "org.freedesktop.systemd1.Manager",
+          "GetUnitByPID",
+          "u",
+          String(pid),
+        ]);
+      } catch (error) {
+        if (error instanceof InvalidSystemdReplyError)
+          throw new Error(
+            `The owning service cannot be inspected safely: ${error.message}`,
+          );
         continue;
       }
       try {
-        const id = scalar(
-          (
-            await this.bus(scope, [
-              "get-property",
-              "org.freedesktop.systemd1",
-              object,
-              "org.freedesktop.systemd1.Unit",
-              "Id",
-            ])
-          ).data,
+        const object = decodeUnitObject(lookup);
+        const id = decodeUnitName(
+          await this.bus(scope, [
+            "get-property",
+            "org.freedesktop.systemd1",
+            object,
+            "org.freedesktop.systemd1.Unit",
+            "Id",
+          ]),
         );
-        if (!unitName(id)) continue;
+        // A desktop/login scope is not a dedicated Rex service. Its process
+        // remains subject to the separate local socket and executable attestation.
+        if (!isServiceUnitName(id)) continue;
         const unit = await this.inspect(id, scope);
         if (unit.mainPID !== pid) continue;
         if (
@@ -344,7 +349,8 @@ export class SystemdUserServices {
   }
   /** Explicit lifecycle actions recover a previous desktop crash; status is read-only. */
   async recoverIdleGuards(unit: string) {
-    if (!unitName(unit)) throw new Error("Invalid Rex service unit name.");
+    if (!isServiceUnitName(unit))
+      throw new Error("Invalid Rex service unit name.");
     const directory = join(this.runtime, "systemd/user.control", `${unit}.d`);
     const names = await readdir(directory).catch((error) => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -506,7 +512,7 @@ export class SystemdUserServices {
     }
   }
   private path(unit: string) {
-    if (!unitName(unit)) throw new Error("Invalid Rex service name.");
+    if (!isServiceUnitName(unit)) throw new Error("Invalid Rex service name.");
     return join(
       this.config,
       "systemd/user",
@@ -540,15 +546,15 @@ export class SystemdUserServices {
       throw new Error(
         "This service uses command expansion. Edit its origins with the existing service configuration.",
       );
-    const paths = (
+    const paths = decodeUnitPaths(
       await this.bus("user", [
         "get-property",
         "org.freedesktop.systemd1",
         "/org/freedesktop/systemd1",
         "org.freedesktop.systemd1.Manager",
         "UnitPath",
-      ])
-    ).data;
+      ]),
+    );
     if (
       !Array.isArray(paths) ||
       !paths.includes(join(this.config, "systemd/user"))

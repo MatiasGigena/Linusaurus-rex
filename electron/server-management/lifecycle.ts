@@ -2,21 +2,15 @@ import { createHash } from "node:crypto";
 import {
   open,
   readFile,
-  readlink,
   realpath,
   stat,
   mkdir,
   rename,
   writeFile,
 } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import {
-  originPatterns,
-  validateOrigins,
-  withOrigins,
-} from "./server-origins.js";
-export {
   originPatterns,
   validateOrigins,
   withOrigins,
@@ -24,17 +18,21 @@ export {
 import type { Host, ServerManagementInfo } from "../../src/shared/types.js";
 import { SystemdUserServices } from "./systemd.js";
 import { attestLocalRex } from "./local-attestation.js";
+import {
+  readProcessProfile,
+  parseSavedProfile,
+  environmentKey,
+  commandLineOptionValue,
+  type LaunchProfile as Profile,
+} from "./process-profile.js";
+import {
+  decodeRunningServer,
+  advertisesIdleShutdown,
+} from "./lifecycle-replies.js";
+import { parseServerVersion } from "../rex/server-version.js";
 import { effectiveEndpoint } from "../rex/service.js";
 import { localEndpoint } from "../rex/control.js";
 
-type Profile = {
-  endpoint: string;
-  executable: string;
-  args: string[];
-  env: Record<string, string>;
-  serviceUnit?: string;
-  serviceScope?: "user" | "system";
-};
 type ServerCall = (
   host: Host,
   method: string,
@@ -51,77 +49,6 @@ export interface LifecycleOptions {
 const managementBusy = new Set<string>();
 const local = (endpoint: string) =>
   endpoint.startsWith("unix://") || endpoint.startsWith("/");
-const environmentKey = (key: string) =>
-  [
-    "PATH",
-    "HOME",
-    "SHELL",
-    "USER",
-    "LOGNAME",
-    "XDG_CONFIG_HOME",
-    "XDG_DATA_HOME",
-    "XDG_STATE_HOME",
-    "XDG_RUNTIME_DIR",
-    "REX_CONFIG",
-    "TMPDIR",
-    "LANG",
-    "TZ",
-  ].includes(key) || key.startsWith("LC_");
-const commandLineOptionValue = (args: string[], name: string) => {
-  const index = args.indexOf(name);
-  return index >= 0
-    ? args[index + 1]
-    : args
-        .find((argument) => argument.startsWith(`${name}=`))
-        ?.slice(name.length + 1);
-};
-async function processProfile(pid: number, endpoint: string): Promise<Profile> {
-  await attestLocalRex(endpoint, pid);
-  const metadata = await stat(`/proc/${pid}`);
-  if (metadata.uid !== process.getuid?.())
-    throw new Error("The Rex process belongs to another user.");
-  const executable = await readlink(`/proc/${pid}/exe`);
-  if (!/^rex(?:[-.].*)?$/.test(basename(executable)))
-    throw new Error(
-      "The connected process is not an identifiable Rex executable.",
-    );
-  const command = (await readFile(`/proc/${pid}/cmdline`))
-    .toString()
-    .split("\0")
-    .filter(Boolean);
-  const args = command.slice(1);
-  if (args[0] !== "server" || args[1] !== "run")
-    throw new Error(
-      "The server was not launched as rex server run. Manage this service with its existing service manager.",
-    );
-  const listened = commandLineOptionValue(args, "--listen");
-  if (listened && listened !== endpoint)
-    throw new Error(
-      "This is an additional listener; manage the server through its primary Unix socket.",
-    );
-  if (
-    args
-      .slice(0, -1)
-      .some(
-        (flag) =>
-          /auth.*key(?!.*file)|password|secret|token/i.test(flag) &&
-          !flag.includes("file"),
-      )
-  )
-    throw new Error(
-      "A secret appears in the server command line. Manage this service with its existing service manager.",
-    );
-  const env: Record<string, string> = {};
-  for (const pair of (await readFile(`/proc/${pid}/environ`))
-    .toString()
-    .split("\0")) {
-    const equal = pair.indexOf("=");
-    if (equal > 0) env[pair.slice(0, equal)] = pair.slice(equal + 1);
-  }
-  for (const key of ["REX_SESSION", "REX_BLOCK", "REX_CLIENT", "REX_SERVER"])
-    delete env[key];
-  return { endpoint, executable, args, env };
-}
 export class LinuxServerManager {
   private profiles = new Map<string, Profile>();
   private busy = managementBusy;
@@ -172,18 +99,11 @@ export class LinuxServerManager {
     let profile = this.profiles.get(endpoint);
     if (profile) return profile;
     try {
-      const parsed = JSON.parse(
-        await readFile(this.path(endpoint), "utf8"),
-      ) as Profile;
-      if (
-        parsed.endpoint !== endpoint ||
-        !Array.isArray(parsed.args) ||
-        parsed.args[0] !== "server" ||
-        parsed.args[1] !== "run" ||
-        typeof parsed.executable !== "string" ||
-        !/^rex(?:[-.].*)?$/.test(basename(parsed.executable))
-      )
-        return;
+      const parsed = parseSavedProfile(
+        JSON.parse(await readFile(this.path(endpoint), "utf8")),
+        endpoint,
+      );
+      if (!parsed) return;
       profile = parsed;
       this.profiles.set(endpoint, profile);
       return profile;
@@ -207,14 +127,13 @@ export class LinuxServerManager {
         "Lifecycle and web-origin launch options are managed on the remote Rex host.";
       return info;
     }
-    let result: Record<string, any> | undefined;
+    let result: ReturnType<typeof decodeRunningServer> | undefined;
     try {
-      result = (await this.options.call(host, "server.status", {})) as Record<
-        string,
-        any
-      >;
+      result = decodeRunningServer(
+        await this.options.call(host, "server.status", {}),
+      );
     } catch (error) {
-      const message = (error as Error).message;
+      const message = error instanceof Error ? error.message : String(error);
       if (
         !/ENOENT|ECONNREFUSED|closed|not connected|connection.*refused|socket.*not.*found/i.test(
           message,
@@ -231,19 +150,16 @@ export class LinuxServerManager {
     if (result) {
       info.running = true;
       info.pid = result.pid;
-      info.sessionCount = result.session_count || 0;
+      info.sessionCount = result.sessionCount;
       try {
-        const version = (await this.options.call(
-          host,
-          "server.version",
-          {},
-        )) as { version?: string; rex_version?: string };
-        info.version = version.version || version.rex_version;
+        info.version = parseServerVersion(
+          await this.options.call(host, "server.version", {}),
+        );
       } catch {
         /* Older servers may expose version in the connection welcome only. */
       }
       try {
-        profile = await (this.options.process || processProfile)(
+        profile = await (this.options.process || readProcessProfile)(
           result.pid,
           endpoint,
         );
@@ -254,7 +170,7 @@ export class LinuxServerManager {
         }
         await this.save(profile);
       } catch (error) {
-        info.reason = (error as Error).message;
+        info.reason = error instanceof Error ? error.message : String(error);
         profile = undefined;
       }
     }
@@ -265,21 +181,20 @@ export class LinuxServerManager {
           profile.serviceScope || "user",
         );
       } catch (error) {
-        info.reason = `The saved service cannot be inspected: ${(error as Error).message}`;
+        info.reason = `The saved service cannot be inspected: ${error instanceof Error ? error.message : String(error)}`;
         return info;
       }
     }
-    if (service) {
-      info.service = this.systemd!.info(service);
+    if (service && this.systemd) {
+      info.service = this.systemd.info(service);
       if (!service.canManage) info.reason = service.reason;
     }
     if (profile) {
       info.canManage = service ? service.canManage : true;
       info.executable = profile.executable;
-      info.arguments = profile.args.map((argument, index) =>
-        /auth.*key(?!.*file)|password|secret|token/i.test(
-          profile!.args[index - 1] || "",
-        )
+      const args = profile.args;
+      info.arguments = args.map((argument, index) =>
+        /auth.*key(?!.*file)|password|secret|token/i.test(args[index - 1] || "")
           ? "[redacted]"
           : argument,
       );
@@ -427,15 +342,8 @@ export class LinuxServerManager {
           throw new Error(
             `Rex has ${before.sessionCount} existing session${before.sessionCount === 1 ? "" : "s"}. Close them yourself before stopping or restarting; their programs will never be ended by this client.`,
           );
-        const help = (await this.options.call(host, "help.all", {})) as {
-          methods?: {
-            name: string;
-            input_schema?: { properties?: Record<string, unknown> };
-          }[];
-        };
         if (
-          !help.methods?.find((method) => method.name === "server.stop")
-            ?.input_schema?.properties?.if_idle
+          !advertisesIdleShutdown(await this.options.call(host, "help.all", {}))
         )
           throw new Error(
             "This Rex version does not advertise atomic idle shutdown. Update Rex before using lifecycle controls.",
@@ -443,7 +351,11 @@ export class LinuxServerManager {
         // The server performs this test atomically, refusing races and other clients.
         if (before.service?.scope === "user" && this.systemd) {
           const unit = await this.systemd.inspect(before.service.unit);
-          await this.systemd.stop(host, endpoint, before.pid!, unit);
+          if (before.pid === undefined)
+            throw new Error(
+              "The local server process ID is missing. Refresh before retrying.",
+            );
+          await this.systemd.stop(host, endpoint, before.pid, unit);
         } else await this.options.call(host, "server.stop", { if_idle: true });
         for (let attempt = 0; attempt < 50; attempt++) {
           try {

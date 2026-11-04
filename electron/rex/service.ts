@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { normalizeView } from './normalize.js';
+import { parseServerVersion } from './server-version.js';
 import { parseCreatedSession, parseSessionList } from './session-summary.js';
 import { RexControl, localEndpoint, type RexCredentials } from './control.js';
 import { RexTerminalStream, type FrameKind, type FrameSize } from './stream.js';
@@ -21,12 +22,6 @@ function optionalCount(value: unknown, message: string): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error(message);
   return value;
-}
-function serverVersion(value: unknown): string | undefined {
-  const message = 'Rex returned an invalid server version.';
-  const result = replyRecord(value, message);
-  if ((result.version !== undefined && typeof result.version !== 'string') || (result.rex_version !== undefined && typeof result.rex_version !== 'string')) throw new Error(message);
-  return result.version || result.rex_version;
 }
 function captureReply(value: unknown): Capture {
   const message = 'Rex returned an invalid terminal snapshot.';
@@ -77,7 +72,7 @@ export class RexService {
   async status(host: RexHost): Promise<ServerStatus> {
     try {
       const control = await this.control(host);
-      const version = serverVersion(await control.call('server.version', {}));
+      const version = parseServerVersion(await control.call('server.version', {}));
       return { connected: true, endpoint: control.endpoint, version };
     } catch (error) { return { connected: false, endpoint: effectiveEndpoint(host.endpoint) || localEndpoint(), error: errorMessage(error) }; }
   }
