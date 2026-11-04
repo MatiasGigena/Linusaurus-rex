@@ -2,13 +2,9 @@ import type { WorkspaceOperations } from "../src/core/workspaceOperations";
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import type { Dispatch, SetStateAction } from "react";
-import type { SettingsTab } from "../src/components/preferences/types.js";
 import { createWorkspaceActions } from "../src/workspace/actions/createWorkspaceActions.js";
-import type {
-  Confirmation,
-  Form,
-  WorkspaceActionOptions,
-} from "../src/workspace/actions/context.js";
+import type { WorkspaceActionOptions } from "../src/workspace/actions/context.js";
+import { WorkspaceDialogController } from "../src/workspace/dialogs.js";
 import {
   terminalCommands,
   type TerminalCommandCompletion,
@@ -70,10 +66,23 @@ function fixture(t: TestContext) {
     windowId: "local-session-first",
   });
   const focusedPane = state<string | undefined>("local-session-right");
-  const palette = state<"all" | "sessions" | undefined>(undefined);
-  const settingsTab = state<SettingsTab | undefined>(undefined);
-  const form = state<Form | undefined>(undefined);
-  const confirmation = state<Confirmation | undefined>(undefined);
+  const dialogs = new WorkspaceDialogController();
+  const palette = {
+    get: () => {
+      const p = dialogs.snapshot.primary?.dialog;
+      return p?.kind === "palette" ? p.scope : undefined;
+    },
+  };
+  const settingsTab = {
+    get: () => {
+      const p = dialogs.snapshot.primary?.dialog;
+      return p?.kind === "settings" ? p.tab : undefined;
+    },
+  };
+  const form = { get: () => dialogs.snapshot.form?.dialog.form };
+  const confirmation = {
+    get: () => dialogs.snapshot.confirmation?.dialog.confirmation,
+  };
   const views = {
     "local/local-session": session("local-session"),
     "remote/remote-session": session("remote-session"),
@@ -205,6 +214,7 @@ function fixture(t: TestContext) {
     else Reflect.deleteProperty(globalThis, "window");
   });
   const options: WorkspaceActionOptions = {
+    dialogs,
     workspace,
     hosts,
     views,
@@ -220,22 +230,15 @@ function fixture(t: TestContext) {
     },
     interfaceTheme: "macos",
     workspaceElement: { current: null },
-    setPalette: palette.set,
-    setSettingsTab: settingsTab.set,
-    setDiagnostics: discard,
-    setPairing: discard,
-    setEditingHost: discard,
-    setConfirmation: confirmation.set,
-    setForm: form.set,
     setCollapsedSessions: discard,
     setActivityOnly: discard,
     setActivityOpen: discard,
     setActivityGroup: discard,
-    setDirectoryBrowser: discard,
     onError: discard,
   };
   return {
     initial,
+    dialogs,
     settings,
     selection,
     focusedPane,
@@ -602,7 +605,7 @@ test("destructive session, tab and pane actions wait for explicit confirmation",
     ["close-window", "closeWindow"],
     ["close-pane", "closePane"],
   ] as const) {
-    current.confirmation.set(undefined);
+    current.dialogs.close(current.dialogs.snapshot.confirmation);
     const before = current.requests.length;
     await current.execute(action);
     assert.equal(current.requests.length, before);
@@ -655,6 +658,7 @@ test("only source-bound paste uses queued terminal completion and conflicting so
         available: () => true,
         focused: () => hostId === "local",
         execute: async (command, _signal, completion) => {
+          assert.ok(typeof command === "string");
           received.push({ hostId, command, completion });
         },
         onError: () => {},

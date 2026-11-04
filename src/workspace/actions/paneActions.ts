@@ -12,14 +12,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
   return async function paneActions(
     context: PaneActionsTarget,
   ): Promise<unknown> {
-    const {
-      workspace,
-      settings,
-      setConfirmation,
-      setForm,
-      setDirectoryBrowser,
-      requestClose,
-    } = dependencies;
+    const { workspace, settings, requestClose, dialogs } = dependencies;
     const {
       name,
       args,
@@ -106,69 +99,81 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
         };
         if (typeof args.ratio === "number")
           return resize(Number(args.border || 1), args.ratio);
-        setForm({
-          title: "Resize split",
-          description:
-            "The nearest border to the target pane comes first. " +
-            dividers
-              .map(
-                (divider, index) =>
-                  `${index + 1}: ${divider.direction === "horizontal" ? "left/right" : "upper/lower"}`,
-              )
-              .join("; "),
-          fields: [
-            ...(dividers.length > 1
-              ? [
-                  {
-                    name: "border",
-                    label: "Border number",
-                    value: "1",
-                    required: true,
-                  },
-                ]
-              : []),
-            {
-              name: "ratio",
-              label: "Before-side percentage",
-              value: String(Math.round(dividers[0].ratio * 100)),
-              required: true,
-            },
-          ],
-          submit: (values) =>
-            resize(Number(values.border || 1), Number(values.ratio) / 100),
+        dialogs.open({
+          kind: "form",
+          form: {
+            title: "Resize split",
+            description:
+              "The nearest border to the target pane comes first. " +
+              dividers
+                .map(
+                  (divider, index) =>
+                    `${index + 1}: ${divider.direction === "horizontal" ? "left/right" : "upper/lower"}`,
+                )
+                .join("; "),
+            fields: [
+              ...(dividers.length > 1
+                ? [
+                    {
+                      name: "border",
+                      label: "Border number",
+                      value: "1",
+                      required: true,
+                    },
+                  ]
+                : []),
+              {
+                name: "ratio",
+                label: "Before-side percentage",
+                value: String(Math.round(dividers[0].ratio * 100)),
+                required: true,
+              },
+            ],
+            submit: (values) =>
+              resize(Number(values.border || 1), Number(values.ratio) / 100),
+          },
         });
         return;
       }
       case "pane.rename":
         requirePane();
-        setForm({
-          title: "Rename pane",
-          description: "A label shared with other Rex clients.",
-          fields: [
-            {
-              name: "label",
-              label: "Pane name",
-              value: targetPane?.label,
-              required: true,
+        dialogs.open({
+          kind: "form",
+          form: {
+            title: "Rename pane",
+            description: "A label shared with other Rex clients.",
+            fields: [
+              {
+                name: "label",
+                label: "Pane name",
+                value: targetPane?.label,
+                required: true,
+              },
+            ],
+            submit: async (values) => {
+              await workspace.run(hostId, () =>
+                window.rex.request("renamePane", {
+                  ...terminalRef,
+                  label: values.label,
+                }),
+              );
             },
-          ],
-          submit: async (values) => {
-            await workspace.run(hostId, () =>
-              window.rex.request("renamePane", {
-                ...terminalRef,
-                label: values.label,
-              }),
-            );
           },
         });
         return;
       case "pane.go_to_directory":
         requirePane();
-        setDirectoryBrowser({ mode: "directory", ref: terminalRef });
+        dialogs.open({
+          kind: "directory",
+          choice: { mode: "directory", ref: terminalRef },
+        });
         return;
       case "pane.insert_path":
         requirePane();
-        setDirectoryBrowser({ mode: "insert", ref: terminalRef });
+        dialogs.open({
+          kind: "directory",
+          choice: { mode: "insert", ref: terminalRef },
+        });
         return;
       case "pane.send_key":
       case "client.key.forward": {
@@ -180,15 +185,18 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
             args: { key, mods, text },
           });
         if (!args.key) {
-          setForm({
-            title: "Send key",
-            description: "Send one Ghostty key name to the target program.",
-            fields: [
-              { name: "key", label: "Key", value: "enter", required: true },
-              { name: "mods", label: "Modifiers", placeholder: "ctrl+shift" },
-            ],
-            submit: async (values) => {
-              await send(values.key, values.mods || "");
+          dialogs.open({
+            kind: "form",
+            form: {
+              title: "Send key",
+              description: "Send one Ghostty key name to the target program.",
+              fields: [
+                { name: "key", label: "Key", value: "enter", required: true },
+                { name: "mods", label: "Modifiers", placeholder: "ctrl+shift" },
+              ],
+              submit: async (values) => {
+                await send(values.key, values.mods || "");
+              },
             },
           });
           return;
@@ -218,16 +226,19 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
         });
       case "pane.reset_terminal":
         requirePane();
-        setConfirmation({
-          title: "Reset terminal?",
-          description:
-            "Reset the terminal emulator and clear its screen and scrollback. The program keeps running.",
-          label: "Reset terminal",
-          submit: async () => {
-            await window.rex.request("invokeAction", {
-              ...terminalRef,
-              action: "com.superlogical.terminal.reset",
-            });
+        dialogs.open({
+          kind: "confirmation",
+          confirmation: {
+            title: "Reset terminal?",
+            description:
+              "Reset the terminal emulator and clear its screen and scrollback. The program keeps running.",
+            label: "Reset terminal",
+            submit: async () => {
+              await window.rex.request("invokeAction", {
+                ...terminalRef,
+                action: "com.superlogical.terminal.reset",
+              });
+            },
           },
         });
         return;
@@ -261,28 +272,31 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
             })
           : [];
         const advertised = [...new Set(flavors)];
-        setForm({
-          title: "Create block",
-          description: `${advertised.length ? `Available flavors: ${advertised.join(", ")}.` : "This server has not advertised any block flavors."} Non-terminal blocks expose their available methods in the inspector.`,
-          fields: [
-            { name: "flavor", label: "Block flavor", required: true },
-            {
-              name: "options",
-              label: "Options (JSON)",
-              value: "{}",
-              multiline: true,
+        dialogs.open({
+          kind: "form",
+          form: {
+            title: "Create block",
+            description: `${advertised.length ? `Available flavors: ${advertised.join(", ")}.` : "This server has not advertised any block flavors."} Non-terminal blocks expose their available methods in the inspector.`,
+            fields: [
+              { name: "flavor", label: "Block flavor", required: true },
+              {
+                name: "options",
+                label: "Options (JSON)",
+                value: "{}",
+                multiline: true,
+              },
+            ],
+            submit: async (values) => {
+              await workspace.run(hostId, () =>
+                window.rex.request("createBlock", {
+                  hostId,
+                  sessionId,
+                  windowId: currentWindow?.id,
+                  flavor: values.flavor,
+                  options: parseMethodArgs(values.options || "{}"),
+                }),
+              );
             },
-          ],
-          submit: async (values) => {
-            await workspace.run(hostId, () =>
-              window.rex.request("createBlock", {
-                hostId,
-                sessionId,
-                windowId: currentWindow?.id,
-                flavor: values.flavor,
-                options: parseMethodArgs(values.options || "{}"),
-              }),
-            );
           },
         });
         return;

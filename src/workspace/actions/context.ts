@@ -1,11 +1,10 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import type { SettingsTab } from "../../components/preferences/types";
 import type { HostState, SessionViews } from "../../core/workspaceSnapshot";
 import type { WorkspaceOperations } from "../../core/workspaceOperations";
+import type { DialogActions } from "../dialogs";
 import type {
   ClientEvent,
   KeymapResult,
-  Host,
   RexPane,
   RexWindow,
   Selection,
@@ -14,26 +13,6 @@ import type {
   TerminalRef,
 } from "../../shared/types";
 
-export interface FormField {
-  name: string;
-  label: string;
-  value?: string;
-  placeholder?: string;
-  required?: boolean;
-  multiline?: boolean;
-}
-export interface Form {
-  title: string;
-  description: string;
-  fields: FormField[];
-  submit(values: Record<string, string>): Promise<void>;
-}
-export interface Confirmation {
-  title: string;
-  description: string;
-  label?: string;
-  submit(): Promise<void>;
-}
 type StateSetter<T> = Dispatch<SetStateAction<T>>;
 export interface WorkspaceActionOptions {
   workspace: WorkspaceOperations;
@@ -45,20 +24,11 @@ export interface WorkspaceActionOptions {
   focusedPane: string | undefined;
   interfaceTheme: string | undefined;
   workspaceElement: RefObject<HTMLDivElement | null>;
-  setPalette: StateSetter<"all" | "sessions" | undefined>;
-  setSettingsTab: StateSetter<SettingsTab | undefined>;
-  setDiagnostics: StateSetter<boolean>;
-  setPairing: StateSetter<boolean>;
-  setEditingHost: StateSetter<Host | null | undefined>;
-  setConfirmation: StateSetter<Confirmation | undefined>;
-  setForm: StateSetter<Form | undefined>;
+  dialogs: DialogActions;
   setCollapsedSessions: StateSetter<Set<string>>;
   setActivityOnly: StateSetter<boolean>;
   setActivityOpen: StateSetter<boolean>;
   setActivityGroup: StateSetter<"session" | "priority">;
-  setDirectoryBrowser: StateSetter<
-    { mode: "insert" | "directory"; ref: TerminalRef } | undefined
-  >;
   onError(message: string): void;
 }
 export interface ResolvedCommand {
@@ -89,7 +59,7 @@ export type SessionActionsTarget = Pick<
 >;
 export type SessionActionsDependencies = Pick<
   WorkspaceActionOptions,
-  "hosts" | "setPalette" | "setForm" | "setCollapsedSessions"
+  "hosts" | "dialogs" | "setCollapsedSessions"
 > & {
   workspace: Pick<
     WorkspaceOperations,
@@ -110,8 +80,11 @@ export type TabActionsTarget = Pick<
   | "terminalRef"
   | "execute"
 >;
-export type TabActionsDependencies = Pick<WorkspaceActionOptions, "setForm"> & {
-  workspace: Pick<WorkspaceOperations, "mutateSession" | "run" | "select">;
+export type TabActionsDependencies = Pick<WorkspaceActionOptions, "dialogs"> & {
+  workspace: Pick<
+    WorkspaceOperations,
+    "mutateSession" | "run" | "select"
+  >;
   requestClose: RequestClose;
 };
 
@@ -130,7 +103,7 @@ export type PaneActionsTarget = Pick<
 >;
 export type PaneActionsDependencies = Pick<
   WorkspaceActionOptions,
-  "setConfirmation" | "setForm" | "setDirectoryBrowser"
+  "dialogs"
 > & {
   workspace: Pick<WorkspaceOperations, "run">;
   settings: Settings;
@@ -153,7 +126,7 @@ export type PaneLayoutActionsTarget = Pick<
 >;
 export type PaneLayoutActionsDependencies = Pick<
   WorkspaceActionOptions,
-  "workspaceElement" | "setForm"
+  "workspaceElement" | "dialogs"
 > & {
   workspace: Pick<
     WorkspaceOperations,
@@ -170,13 +143,7 @@ export type ClientActionsDependencies = Pick<
   WorkspaceActionOptions,
   | "hosts"
   | "interfaceTheme"
-  | "setPalette"
-  | "setSettingsTab"
-  | "setDiagnostics"
-  | "setPairing"
-  | "setEditingHost"
-  | "setConfirmation"
-  | "setForm"
+  | "dialogs"
   | "setActivityOnly"
   | "setActivityOpen"
   | "setActivityGroup"

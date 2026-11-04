@@ -8,14 +8,8 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
   return async function sessionActions(
     context: SessionActionsTarget,
   ): Promise<unknown> {
-    const {
-      workspace,
-      hosts,
-      setPalette,
-      setForm,
-      setCollapsedSessions,
-      requestClose,
-    } = dependencies;
+    const { workspace, hosts, setCollapsedSessions, requestClose, dialogs } =
+      dependencies;
     const { name, args, hostId, sourceHostId, sessionId, currentView } =
       context;
     const navigationHosts =
@@ -24,7 +18,7 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
         : hosts.filter((host) => host.id === sourceHostId);
     switch (name) {
       case "session.switch":
-        setPalette("sessions");
+        dialogs.open({ kind: "palette", scope: "sessions" });
         return;
       case "session.new": {
         const create = async (label: string, cwd?: string) => {
@@ -47,18 +41,21 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
             String(args.label || args.name),
             args.cwd ? String(args.cwd) : undefined,
           );
-        setForm({
-          title: "New session",
-          description: "Create a persistent workspace on this Rex server.",
-          fields: [
-            { name: "label", label: "Session name", required: true },
-            {
-              name: "cwd",
-              label: "Working directory",
-              placeholder: "Default home directory",
-            },
-          ],
-          submit: (values) => create(values.label, values.cwd),
+        dialogs.open({
+          kind: "form",
+          form: {
+            title: "New session",
+            description: "Create a persistent workspace on this Rex server.",
+            fields: [
+              { name: "label", label: "Session name", required: true },
+              {
+                name: "cwd",
+                label: "Working directory",
+                placeholder: "Default home directory",
+              },
+            ],
+            submit: (values) => create(values.label, values.cwd),
+          },
         });
         return;
       }
@@ -83,7 +80,7 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
           return;
         }
         if (!target) {
-          setPalette("sessions");
+          dialogs.open({ kind: "palette", scope: "sessions" });
           return;
         }
         throw new Error(
@@ -119,18 +116,21 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
           );
         };
         if (args.label) return rename(String(args.label));
-        setForm({
-          title: "Rename session",
-          description: "This name is shared with your other Rex clients.",
-          fields: [
-            {
-              name: "label",
-              label: "Session name",
-              value: currentView?.label,
-              required: true,
-            },
-          ],
-          submit: (values) => rename(values.label),
+        dialogs.open({
+          kind: "form",
+          form: {
+            title: "Rename session",
+            description: "This name is shared with your other Rex clients.",
+            fields: [
+              {
+                name: "label",
+                label: "Session name",
+                value: currentView?.label,
+                required: true,
+              },
+            ],
+            submit: (values) => rename(values.label),
+          },
         });
         return;
       }

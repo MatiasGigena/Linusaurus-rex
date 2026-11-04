@@ -1,3 +1,5 @@
+import { useWorkspaceDialogs } from "./hooks/useWorkspaceDialogs";
+import { WorkspaceDialogHost } from "./components/workspace/WorkspaceDialogHost";
 import { reorderWorkspaceTab } from "./workspace/actions/tabActions";
 import { persistSidebarWidth } from "./workspace/actions/clientActions";
 import { ActivityPanel } from "./components/ActivityPanel";
@@ -7,18 +9,14 @@ import { sessionMenuItems, tabMenuItems } from "./workspace/contextMenus";
 import { useWorkspaceGestures } from "./hooks/useWorkspaceGestures";
 import { configuredShortcutEntries } from "./shared/actions";
 import { createHostSaver } from "./workspace/actions/hostActions";
-import { createServerActions } from "./workspace/actions/serverActions";
-import { pickDirectoryPath } from "./workspace/actions/directoryActions";
 import {
   buildNavigationHosts,
   buildActivityFeed,
   enrichWindow,
 } from "./workspace/presentation";
 import { WorkspaceLayout } from "./components/workspace/WorkspaceLayout";
-import { FormDialog, ConfirmDialog } from "./components/workspace/WorkspaceDialogs";
 import { useInterfaceAppearance } from "./hooks/useInterfaceAppearance";
 import { createWorkspaceActions } from "./workspace/actions/createWorkspaceActions";
-import type { Form, Confirmation } from "./workspace/actions/context";
 import { useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -32,18 +30,8 @@ import {
 } from "lucide-react";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { Toolbar } from "./components/workspace/Toolbar";
-import { Dialog } from "./components/Dialog";
-import { CommandPalette } from "./components/CommandPalette";
 import { ContextMenu, type ContextItem } from "./components/ContextMenu";
-import { SettingsDialog } from "./components/preferences/SettingsDialog";
-import type { SettingsTab } from "./components/preferences/types";
-import { HostDialog } from "./components/HostDialog";
-import { ConfigurationDialog } from "./components/services/ConfigurationDialog";
-import { DiagnosticsDialog } from "./components/services/DiagnosticsDialog";
-import { PairDeviceDialog } from "./components/services/PairDeviceDialog";
-import { DirectoryDialog } from "./components/DirectoryDialog";
 import { TabStrip } from "./components/workspace/TabStrip";
-import { NativeServicesDialog } from "./components/services/NativeServicesDialog";
 import type { UpdateState } from "./shared/types";
 import "./linux.css";
 import { useWorkspace } from "./hooks/useWorkspace";
@@ -53,7 +41,7 @@ import {
   windowTitle,
   viewKey,
 } from "./core/workspace";
-import { type ClientEvent, type Host } from "./shared/types";
+import { type ClientEvent } from "./shared/types";
 
 type Menu = { x: number; y: number; items: (ContextItem | null)[] };
 export default function App() {
@@ -70,24 +58,19 @@ export default function App() {
     busy,
     loading,
   } = ws;
-  const [palette, setPalette] = useState<"all" | "sessions">();
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>();
-  const [form, setForm] = useState<Form>();
-  const [confirmation, setConfirmation] = useState<Confirmation>();
-  const [editingHost, setEditingHost] = useState<Host | null>();
-  const [configuration, setConfiguration] = useState(false);
-  const [diagnostics, setDiagnostics] = useState(false);
-  const [pairing, setPairing] = useState(false);
-  const [nativeServices, setNativeServices] = useState<"server" | "updates">();
+  const {
+    controller: dialogs,
+    state: dialogState,
+    modalOpen,
+  } = useWorkspaceDialogs();
+  const palette =
+    dialogState.primary?.dialog.kind === "palette"
+      ? dialogState.primary.dialog.scope
+      : undefined;
   const [updateState, setUpdateState] = useState<UpdateState>();
-  const [directoryBrowser, setDirectoryBrowser] = useState<{
-    mode: "insert" | "directory";
-    ref: { hostId: string; sessionId: string; blockId: string };
-  }>();
   const [connectionRevisions, setConnectionRevisions] = useState<
     Record<string, number>
   >({});
-  const [report, setReport] = useState<{ title: string; body: string }>();
   const [menu, setMenu] = useState<Menu>();
   const [activityOpen, setActivityOpen] = useState(false);
   const interfaceTheme = useInterfaceAppearance(settings);
@@ -106,18 +89,6 @@ export default function App() {
       event?: ClientEvent,
     ) => Promise<unknown>
   >(async () => {});
-  const modalOpen =
-    !!palette ||
-    !!settingsTab ||
-    !!form ||
-    !!confirmation ||
-    editingHost !== undefined ||
-    configuration ||
-    diagnostics ||
-    pairing ||
-    !!nativeServices ||
-    !!directoryBrowser ||
-    !!report;
   const activeHost =
     hosts.find((host) => host.id === selection?.hostId) || hosts[0];
   const view =
@@ -174,6 +145,7 @@ export default function App() {
     });
   }, []);
   const execute = createWorkspaceActions({
+    dialogs,
     workspace: ws.operations,
     settings,
     hosts,
@@ -183,18 +155,10 @@ export default function App() {
     keymaps,
     interfaceTheme,
     workspaceElement,
-    setPalette,
-    setSettingsTab,
-    setDiagnostics,
-    setPairing,
-    setEditingHost,
-    setConfirmation,
-    setForm,
     setCollapsedSessions,
     setActivityOnly,
     setActivityOpen,
     setActivityGroup,
-    setDirectoryBrowser,
     onError: ws.setError,
   });
 
@@ -247,6 +211,7 @@ export default function App() {
     activityGroup,
   );
   const paletteCommands = buildPaletteCommands({
+    dialogs,
     palette,
     settings,
     keymaps,
@@ -255,7 +220,6 @@ export default function App() {
     dispatch,
     execute,
     select: ws.operations.select,
-    setForm,
   });
   const openSessionMenu = (
     event: React.MouseEvent,
@@ -305,12 +269,6 @@ export default function App() {
       [hostId]: (previous[hostId] || 0) + 1,
     })),
   );
-  const serverAction = createServerActions(activeHost?.id || "local", {
-    setDiagnostics,
-    setForm,
-    setConfirmation,
-    setReport,
-  });
 
   if (!settings && loading)
     return (
@@ -382,11 +340,11 @@ export default function App() {
         onRenameSession={(hostId, sessionId) =>
           dispatch("session.rename", { host_id: hostId, session_id: sessionId })
         }
-        onSettings={() => setSettingsTab("appearance")}
+        onSettings={() => dialogs.open({ kind: "settings", tab: "appearance" })}
         onToggle={() => dispatch("client.sidebar.toggle")}
-        onPalette={() => setPalette("all")}
-        onSwitcher={() => setPalette("sessions")}
-        onAddHost={() => setEditingHost(null)}
+        onPalette={() => dialogs.open({ kind: "palette", scope: "all" })}
+        onSwitcher={() => dialogs.open({ kind: "palette", scope: "sessions" })}
+        onAddHost={() => dialogs.open({ kind: "host", host: null })}
         onActivity={() => setActivityOpen((previous) => !previous)}
         onToggleSession={toggleCollapse}
         onContextSession={openSessionMenu}
@@ -431,8 +389,10 @@ export default function App() {
           zoomed={!!activeWindow?.zoomedBlockId}
           canZoom={!macChrome || (activeWindow?.panes.length ?? 0) > 1}
           onCloseWindow={() => dispatch("client.tab.close")}
-          onPalette={() => setPalette("all")}
-          onSettings={() => setSettingsTab("appearance")}
+          onPalette={() => dialogs.open({ kind: "palette", scope: "all" })}
+          onSettings={() =>
+            dialogs.open({ kind: "settings", tab: "appearance" })
+          }
           onRenameWindow={() => dispatch("client.tab.rename")}
           onWindowControl={window.rex.windowControl}
           windowControlsPlacement={
@@ -501,7 +461,15 @@ export default function App() {
                     : "is available"}
                 .
               </span>
-              <button onClick={() => setNativeServices("updates")}>
+              <button
+                onClick={() =>
+                  dialogs.open({
+                    kind: "services",
+                    hostId: activeHost?.id || "local",
+                    tab: "updates",
+                  })
+                }
+              >
                 Review update
               </button>
             </div>
@@ -557,7 +525,10 @@ export default function App() {
                 Reconnect
               </button>
             </div>
-            <button className="empty-palette" onClick={() => setPalette("all")}>
+            <button
+              className="empty-palette"
+              onClick={() => dialogs.open({ kind: "palette", scope: "all" })}
+            >
               <Command size={13} />
               Find a session or command<kbd>Ctrl Shift P</kbd>
             </button>
@@ -627,142 +598,18 @@ export default function App() {
           )
         }
       />
-      {palette && (
-        <CommandPalette
-          commands={paletteCommands}
-          onClose={() => setPalette(undefined)}
-        />
-      )}
-      {settingsTab && (
-        <SettingsDialog
-          settings={settings}
-          initialTab={settingsTab}
-          onSave={async (next) => {
-            const saved = await ws.saveSettings(next);
-            await ws.refresh();
-            return saved;
-          }}
-          onClose={() => setSettingsTab(undefined)}
-          onAddHost={() => {
-            setSettingsTab(undefined);
-            setEditingHost(null);
-          }}
-          onEditHost={(host) => {
-            setSettingsTab(undefined);
-            setEditingHost(host);
-          }}
-          onNativeServices={() => {
-            setSettingsTab(undefined);
-            setNativeServices("server");
-          }}
-          onConfig={() => {
-            setSettingsTab(undefined);
-            setConfiguration(true);
-          }}
-          onDiagnostics={() => {
-            setSettingsTab(undefined);
-            setDiagnostics(true);
-          }}
-        />
-      )}
-      {editingHost !== undefined && (
-        <HostDialog
-          host={editingHost || undefined}
-          onClose={() => setEditingHost(undefined)}
-          onSave={saveHost}
-        />
-      )}
-      {configuration && (
-        <ConfigurationDialog
-          hostId={activeHost?.id || "local"}
-          onClose={() => setConfiguration(false)}
-          onReload={() => safely(() => ws.refresh())}
-        />
-      )}
-      {diagnostics && (
-        <DiagnosticsDialog
-          hostId={activeHost?.id}
-          endpoint={activeHost?.endpoint}
-          onClose={() => setDiagnostics(false)}
-          onServerAction={serverAction}
-        />
-      )}
-      {pairing && (
-        <PairDeviceDialog
-          hostId={activeHost?.id || "local"}
-          endpoint={activeHost?.status?.endpoint || activeHost?.endpoint}
-          onClose={() => setPairing(false)}
-          onManage={() => {
-            setPairing(false);
-            setDiagnostics(true);
-          }}
-        />
-      )}
-      {directoryBrowser && (
-        <DirectoryDialog
-          terminalRef={directoryBrowser.ref}
-          endpoint={
-            settings.hosts.find(
-              (host) => host.id === directoryBrowser.ref.hostId,
-            )?.endpoint
-          }
-          mode={directoryBrowser.mode}
-          recent={
-            settings.showRecentPaths
-              ? settings.recentPaths[directoryBrowser.ref.hostId] || []
-              : []
-          }
-          onClose={() => setDirectoryBrowser(undefined)}
-          onPick={(path) =>
-            pickDirectoryPath(ws.operations, directoryBrowser, path)
-          }
-        />
-      )}
-      {form && (
-        <FormDialog
-          form={form}
-          busy={busy}
-          onRefresh={ws.refresh}
-          onClose={() => setForm((current) => current === form ? undefined : current)}
-        />
-      )}
-      {confirmation && (
-        <ConfirmDialog
-          confirmation={confirmation}
-          onRefresh={ws.refresh}
-          onClose={() => setConfirmation((current) => current === confirmation ? undefined : current)}
-        />
-      )}
-      {report && (
-        <Dialog title={report.title} onClose={() => setReport(undefined)} wide>
-          <pre className="diagnostic-output">{report.body}</pre>
-          <div className="dialog-actions">
-            <button
-              className="button"
-              onClick={() =>
-                safely(() => window.rex.writeClipboard(report.body))
-              }
-            >
-              Copy
-            </button>
-            <button
-              className="button button-primary"
-              onClick={() => setReport(undefined)}
-            >
-              Done
-            </button>
-          </div>
-        </Dialog>
-      )}
-      {nativeServices && (
-        <NativeServicesDialog
-          settings={settings}
-          hostId={activeHost?.id || "local"}
-          initialTab={nativeServices}
-          onSave={ws.saveSettings}
-          onClose={() => setNativeServices(undefined)}
-        />
-      )}
+      <WorkspaceDialogHost
+        state={dialogState}
+        dialogs={dialogs}
+        settings={settings}
+        hosts={hosts}
+        activeHostId={activeHost?.id || "local"}
+        operations={ws.operations}
+        busy={busy}
+        commands={paletteCommands}
+        saveHost={saveHost}
+        onError={ws.setError}
+      />
       {menu && <ContextMenu {...menu} onClose={() => setMenu(undefined)} />}
     </div>
   );

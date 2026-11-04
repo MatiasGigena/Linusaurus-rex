@@ -3,7 +3,6 @@ import {
   type TabActionsDependencies,
   type TabActionsTarget,
 } from "./context";
-
 import type { WorkspaceOperations } from "../../core/workspaceOperations";
 import type { RexMethods } from "../../shared/types";
 
@@ -21,7 +20,7 @@ export function createTabActions(dependencies: TabActionsDependencies) {
   return async function tabActions(
     context: TabActionsTarget,
   ): Promise<unknown> {
-    const { workspace, setForm, requestClose } = dependencies;
+    const { workspace, requestClose, dialogs } = dependencies;
     const {
       name,
       args,
@@ -74,18 +73,21 @@ export function createTabActions(dependencies: TabActionsDependencies) {
           );
         };
         if (args.label) return rename(String(args.label));
-        setForm({
-          title: "Rename tab",
-          description: "Give this terminal tab a recognizable name.",
-          fields: [
-            {
-              name: "label",
-              label: "Tab name",
-              value: currentWindow.label,
-              required: true,
-            },
-          ],
-          submit: (values) => rename(values.label),
+        dialogs.open({
+          kind: "form",
+          form: {
+            title: "Rename tab",
+            description: "Give this terminal tab a recognizable name.",
+            fields: [
+              {
+                name: "label",
+                label: "Tab name",
+                value: currentWindow.label,
+                required: true,
+              },
+            ],
+            submit: (values) => rename(values.label),
+          },
         });
         return;
       }
@@ -105,16 +107,19 @@ export function createTabActions(dependencies: TabActionsDependencies) {
       }
       case "client.tab.goto": {
         if (args.index === undefined) {
-          setForm({
-            title: "Go to tab",
-            description: "Tabs are numbered from 1. Use -1 for the last tab.",
-            fields: [{ name: "index", label: "Tab number", required: true }],
-            submit: async (values) => {
-              await execute(
-                "client.tab.goto",
-                { ...args, index: Number(values.index) },
-                event,
-              );
+          dialogs.open({
+            kind: "form",
+            form: {
+              title: "Go to tab",
+              description: "Tabs are numbered from 1. Use -1 for the last tab.",
+              fields: [{ name: "index", label: "Tab number", required: true }],
+              submit: async (values) => {
+                await execute(
+                  "client.tab.goto",
+                  { ...args, index: Number(values.index) },
+                  event,
+                );
+              },
             },
           });
           return;
@@ -133,16 +138,21 @@ export function createTabActions(dependencies: TabActionsDependencies) {
       case "client.tab.move.forward": {
         if (!currentView || !currentWindow) return;
         if (name === "client.tab.move" && args.index === undefined) {
-          setForm({
-            title: "Move tab",
-            description: "Choose the tab’s new position in this session.",
-            fields: [{ name: "index", label: "Tab position", required: true }],
-            submit: async (values) => {
-              await execute(
-                name,
-                { ...args, index: Number(values.index) },
-                event,
-              );
+          dialogs.open({
+            kind: "form",
+            form: {
+              title: "Move tab",
+              description: "Choose the tab’s new position in this session.",
+              fields: [
+                { name: "index", label: "Tab position", required: true },
+              ],
+              submit: async (values) => {
+                await execute(
+                  name,
+                  { ...args, index: Number(values.index) },
+                  event,
+                );
+              },
             },
           });
           return;

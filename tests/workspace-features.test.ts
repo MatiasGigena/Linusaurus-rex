@@ -3,7 +3,8 @@ import { test, type TestContext } from "node:test";
 import { pickDirectoryPath } from "../src/workspace/actions/directoryActions";
 import { createHostSaver } from "../src/workspace/actions/hostActions";
 import { createServerActions } from "../src/workspace/actions/serverActions";
-import type { Confirmation, Form } from "../src/workspace/actions/context";
+import { terminalCommands } from "../src/terminal/commands";
+import { WorkspaceDialogController } from "../src/workspace/dialogs";
 import {
   DEFAULT_SETTINGS,
   type RexBridge,
@@ -46,6 +47,20 @@ const target = { hostId: "remote", sessionId: "session", blockId: "pane" };
 const unexpectedMutation: WorkspaceOperations["mutateSession"] = async () => {
   throw new Error("Unexpected session mutation");
 };
+function installPasteOwner(t: TestContext) {
+  const registration = terminalCommands.register(target, {
+    available: () => true,
+    focused: () => false,
+    onError: () => {},
+    execute: async (request, _signal, completion) => {
+      assert.ok(typeof request !== "string");
+      assert.equal(request.command, "paste");
+      assert.equal(completion, "settled");
+      await window.rex.request("paste", { ...target, text: request.text });
+    },
+  });
+  t.after(() => registration.dispose());
+}
 
 test("directory insertion quotes shell paths and merges history into settings current at completion", async (t) => {
   const paste = deferred();
@@ -56,6 +71,7 @@ test("directory insertion quotes shell paths and merges history into settings cu
       await paste.promise;
     },
   });
+  installPasteOwner(t);
   let settings = structuredClone(DEFAULT_SETTINGS);
   const path = "/work/Pat's project";
   const choosing = pickDirectoryPath(
@@ -106,6 +122,7 @@ test("failed directory insertion preserves the RPC error and does not remember a
       throw failure;
     },
   });
+  installPasteOwner(t);
   let saved = false;
   await assert.rejects(
     pickDirectoryPath(
@@ -187,35 +204,21 @@ test("server changes remain deferred until confirmation and retain the confirmed
       return { applied: true };
     },
   });
-  const confirmations: Confirmation[] = [];
-  const reports: { title: string; body: string }[] = [];
-  const diagnostics: boolean[] = [];
-  const ui = {
-    setDiagnostics: (value: boolean) => {
-      diagnostics.push(value);
-    },
-    setForm: (_form: Form) => {
-      throw new Error("Unexpected form");
-    },
-    setConfirmation: (value: Confirmation) => {
-      confirmations.push(value);
-    },
-    setReport: (value: { title: string; body: string }) => {
-      reports.push(value);
-    },
-  };
-  const selected = createServerActions("selected-host", ui);
+  const dialogs = new WorkspaceDialogController();
+  const origin = dialogs.open({ kind: "diagnostics", hostId: "selected-host" });
+  const selected = createServerActions("selected-host", dialogs, origin);
   selected("tailscale.enable", { hostname: "workstation" });
   assert.deepEqual(
     requests,
     [],
     "opening a confirmation must not mutate remote access",
   );
-  assert.deepEqual(diagnostics, [false]);
-  const confirmed = confirmations[0];
+  assert.equal(Boolean(dialogs.snapshot.primary), false);
+  const confirmed = dialogs.snapshot.confirmation?.dialog.confirmation;
+  assert.ok(confirmed);
   assert.equal(confirmed.label, "Apply change");
   // Creating commands for another selection must not retarget an existing confirmation.
-  createServerActions("different-host", ui)("tailscale.disable");
+  createServerActions("different-host", dialogs);
   const sending = confirmed.submit();
   assert.deepEqual(requests, [
     {
@@ -225,13 +228,15 @@ test("server changes remain deferred until confirmation and retain the confirmed
     },
   ]);
   assert.equal(
-    reports.length,
-    0,
+    Boolean(dialogs.snapshot.primary),
+    false,
     "a response report must wait for the remote operation",
   );
   response.complete();
   await sending;
-  assert.deepEqual(JSON.parse(reports[0].body), { applied: true });
+  const report = dialogs.snapshot.primary?.dialog;
+  assert.ok(report?.kind === "report");
+  assert.deepEqual(JSON.parse(report.body), { applied: true });
 });
 
 test("server rename waits for form submission and confirmation errors preserve the RPC rejection without a success report", async (t) => {
@@ -244,25 +249,16 @@ test("server rename waits for form submission and confirmation errors preserve t
       return { renamed: true };
     },
   });
-  const forms: Form[] = [];
-  const confirmations: Confirmation[] = [];
-  const reports: { title: string; body: string }[] = [];
-  const invoke = createServerActions("rename-host", {
-    setDiagnostics: () => {},
-    setForm: (value) => {
-      forms.push(value);
-    },
-    setConfirmation: (value) => {
-      confirmations.push(value);
-    },
-    setReport: (value) => {
-      reports.push(value);
-    },
-  });
+  const dialogs = new WorkspaceDialogController();
+  const origin = dialogs.open({ kind: "diagnostics", hostId: "rename-host" });
+  const invoke = createServerActions("rename-host", dialogs, origin);
   invoke("tailscale.rename");
   assert.deepEqual(requests, []);
-  assert.equal(forms[0].fields[0].name, "hostname");
-  await forms[0].submit({ hostname: "new-hostname" });
+  const form = dialogs.snapshot.form?.dialog.form;
+  assert.ok(form);
+  assert.equal(form.fields[0].name, "hostname");
+  await form.submit({ hostname: "new-hostname" });
+  dialogs.close(dialogs.snapshot.form);
   assert.deepEqual(requests, [
     {
       hostId: "rename-host",
@@ -270,8 +266,105 @@ test("server rename waits for form submission and confirmation errors preserve t
       args: { hostname: "new-hostname" },
     },
   ]);
-  invoke("tailscale.disable");
+  createServerActions("rename-host", dialogs)("tailscale.disable");
   assert.equal(requests.length, 1);
-  await assert.rejects(confirmations[0].submit(), (error) => error === failure);
-  assert.deepEqual(reports, []);
+  const confirmation = dialogs.snapshot.confirmation?.dialog.confirmation;
+  assert.ok(confirmation);
+  await assert.rejects(confirmation.submit(), (error) => error === failure);
+  assert.equal(dialogs.snapshot.primary, undefined);
+});
+
+for (const disposition of ["closed", "replaced"] as const) {
+  test(`a ${disposition} server confirmation cannot publish a late response report`, async (t) => {
+    const response = deferred();
+    const requests: RexMethods["serverAction"]["args"][] = [];
+    installBridge(t, {
+      serverAction: async (args) => {
+        requests.push(args);
+        await response.promise;
+        return { applied: true };
+      },
+    });
+    const dialogs = new WorkspaceDialogController();
+    createServerActions("confirmed-host", dialogs)("tailscale.disable");
+    const owner = dialogs.snapshot.confirmation;
+    assert.ok(owner);
+    const sending = owner.dialog.confirmation.submit();
+    const replacement =
+      disposition === "replaced"
+        ? dialogs.open({
+            kind: "confirmation",
+            confirmation: {
+              title: "A newer change",
+              description: "Preserve this confirmation",
+              submit: async () => {},
+            },
+          })
+        : undefined;
+    if (disposition === "closed") dialogs.close(owner);
+    response.complete();
+    await sending;
+    await owner.dialog.confirmation.submit();
+    assert.equal(Boolean(dialogs.snapshot.primary), false);
+    assert.equal(dialogs.snapshot.confirmation, replacement);
+    assert.deepEqual(requests, [
+      { hostId: "confirmed-host", action: "tailscale.disable" },
+    ]);
+  });
+}
+
+test("a pending server response cannot replace a newly opened primary dialog", async (t) => {
+  const response = deferred();
+  installBridge(t, {
+    serverAction: async () => {
+      await response.promise;
+      return { applied: true };
+    },
+  });
+  const dialogs = new WorkspaceDialogController();
+  const origin = dialogs.open({
+    kind: "diagnostics",
+    hostId: "confirmed-host",
+  });
+  createServerActions("confirmed-host", dialogs, origin)("tailscale.disable");
+  const confirmation = dialogs.snapshot.confirmation;
+  assert.ok(confirmation);
+  const sending = confirmation.dialog.confirmation.submit();
+  const replacement = dialogs.open({ kind: "settings", tab: "appearance" });
+  response.complete();
+  await sending;
+  assert.equal(dialogs.snapshot.primary, replacement);
+  assert.equal(dialogs.snapshot.confirmation, confirmation);
+});
+
+test("stale originating diagnostics cannot open server-action forms or confirmations", async (t) => {
+  const requests: string[] = [];
+  installBridge(t, {
+    serverAction: async () => {
+      requests.push("serverAction");
+      return {};
+    },
+  });
+  const dialogs = new WorkspaceDialogController();
+  const origin = dialogs.open({ kind: "diagnostics", hostId: "old-host" });
+  const stale = createServerActions("old-host", dialogs, origin);
+  const replacement = dialogs.open({ kind: "diagnostics", hostId: "new-host" });
+  stale("tailscale.rename");
+  stale("tailscale.enable", { hostname: "old-hostname" });
+  assert.equal(dialogs.snapshot.primary, replacement);
+  assert.equal(Boolean(dialogs.snapshot.form), false);
+  assert.equal(Boolean(dialogs.snapshot.confirmation), false);
+  assert.deepEqual(requests, []);
+});
+
+test("an empty successful server result produces a string report body", async (t) => {
+  installBridge(t, { serverAction: async () => undefined });
+  const dialogs = new WorkspaceDialogController();
+  createServerActions("host", dialogs)("tailscale.disable");
+  const confirmation = dialogs.snapshot.confirmation;
+  assert.ok(confirmation);
+  await confirmation.dialog.confirmation.submit();
+  const report = dialogs.snapshot.primary?.dialog;
+  assert.ok(report?.kind === "report");
+  assert.equal(report.body, "null");
 });

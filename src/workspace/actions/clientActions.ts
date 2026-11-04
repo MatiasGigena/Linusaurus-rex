@@ -29,25 +29,23 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
       settings,
       hosts,
       interfaceTheme,
-      setPalette,
-      setSettingsTab,
-      setDiagnostics,
-      setPairing,
-      setEditingHost,
-      setConfirmation,
-      setForm,
       setActivityOnly,
       setActivityOpen,
       setActivityGroup,
+      dialogs,
     } = dependencies;
     const { name, args, hostId, sourceHostId } = context;
     switch (name) {
-      case "client.palette.toggle":
-        setPalette((previous) => (previous ? undefined : "all"));
+      case "client.palette.toggle": {
+        const current = dialogs.snapshot.primary;
+        if (current?.dialog.kind === "palette") dialogs.close(current);
+        else dialogs.open({ kind: "palette", scope: "all" });
         return;
+      }
       case "client.settings":
-        setSettingsTab(
-          [
+        dialogs.open({
+          kind: "settings",
+          tab: [
             "appearance",
             "terminal",
             "notifications",
@@ -58,19 +56,19 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
           ].includes(String(args.tab))
             ? (args.tab as SettingsTab)
             : "appearance",
-        );
+        });
         return;
       case "client.shortcuts.edit":
-        setSettingsTab("shortcuts");
+        dialogs.open({ kind: "settings", tab: "shortcuts" });
         return;
       case "client.agents.setup":
-        setSettingsTab("integrations");
+        dialogs.open({ kind: "settings", tab: "integrations" });
         return;
       case "client.diagnostics":
-        setDiagnostics(true);
+        dialogs.open({ kind: "diagnostics", hostId });
         return;
       case "client.pair_device":
-        setPairing(true);
+        dialogs.open({ kind: "pairing", hostId });
         return;
       case "client.onboarding": {
         const { result: tutorial } = await workspace.mutateSession(
@@ -100,7 +98,7 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
         workspace.dismissNotices();
         return;
       case "client.host.add":
-        setEditingHost(null);
+        dialogs.open({ kind: "host", host: null });
         return;
       case "client.host.remove": {
         const host = settings.hosts.find((host) => host.id === hostId);
@@ -108,18 +106,21 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
           throw new Error(
             "The local host is retained. Edit its endpoint in Settings.",
           );
-        setConfirmation({
-          title: `Forget ${host.label}?`,
-          description:
-            "The saved connection and its stored credentials will be removed. Server sessions keep running.",
-          label: "Forget host",
-          submit: async () => {
-            await window.rex.request("removeCredentials", { hostId });
-            await workspace.saveSettings({
-              ...settings,
-              hosts: settings.hosts.filter((item) => item.id !== hostId),
-            });
-            await workspace.refresh();
+        dialogs.open({
+          kind: "confirmation",
+          confirmation: {
+            title: `Forget ${host.label}?`,
+            description:
+              "The saved connection and its stored credentials will be removed. Server sessions keep running.",
+            label: "Forget host",
+            submit: async () => {
+              await window.rex.request("removeCredentials", { hostId });
+              await workspace.saveSettings({
+                ...settings,
+                hosts: settings.hosts.filter((item) => item.id !== hostId),
+              });
+              await workspace.refresh();
+            },
           },
         });
         return;
@@ -137,8 +138,8 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
             );
           const first = hosts.find((host) => host.id === next.id)?.sessions[0];
           if (first) workspace.select(next.id, first.id);
-          else setEditingHost(next);
-        } else setPalette("sessions");
+          else dialogs.open({ kind: "host", host: next });
+        } else dialogs.open({ kind: "palette", scope: "sessions" });
         return;
       }
       case "client.font.increase":
@@ -201,7 +202,7 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
                 : "left",
         });
       case "client.theme.change":
-        setSettingsTab("appearance");
+        dialogs.open({ kind: "settings", tab: "appearance" });
         return;
       case "client.theme.import": {
         const imported = await window.rex.request("importTheme", {});
@@ -247,16 +248,19 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
         return;
       case "client.mode.enter":
         if (!args.name) {
-          setForm({
-            title: "Enter key mode",
-            description: "Choose a mode declared in the resolved Rex keymap.",
-            fields: [{ name: "name", label: "Mode name", required: true }],
-            submit: async (values) => {
-              await window.rex.request("keyMode", {
-                hostId,
-                operation: "enter",
-                name: values.name,
-              });
+          dialogs.open({
+            kind: "form",
+            form: {
+              title: "Enter key mode",
+              description: "Choose a mode declared in the resolved Rex keymap.",
+              fields: [{ name: "name", label: "Mode name", required: true }],
+              submit: async (values) => {
+                await window.rex.request("keyMode", {
+                  hostId,
+                  operation: "enter",
+                  name: values.name,
+                });
+              },
             },
           });
           return;

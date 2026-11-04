@@ -28,11 +28,14 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
   if (!settings) return async () => undefined;
   const requestClose: RequestClose = (hostId, title, description, action) => {
     if (settings.confirmClose)
-      options.setConfirmation({
-        title,
-        description,
-        submit: async () => {
-          await workspace.run(hostId, action);
+      options.dialogs.open({
+        kind: "confirmation",
+        confirmation: {
+          title,
+          description,
+          submit: async () => {
+            await workspace.run(hostId, action);
+          },
         },
       });
     else
@@ -42,6 +45,7 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
   };
   const handlers = [
     createSessionActions({
+      dialogs: options.dialogs,
       workspace: {
         mutateSession: workspace.mutateSession,
         select: workspace.select,
@@ -49,29 +53,26 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
         refresh: workspace.refresh,
       },
       hosts: options.hosts,
-      setPalette: options.setPalette,
-      setForm: options.setForm,
       setCollapsedSessions: options.setCollapsedSessions,
       requestClose,
     }),
     createTabActions({
+      dialogs: options.dialogs,
       workspace: {
         mutateSession: workspace.mutateSession,
         run: workspace.run,
         select: workspace.select,
       },
-      setForm: options.setForm,
       requestClose,
     }),
     createPaneActions({
+      dialogs: options.dialogs,
       workspace: { run: workspace.run },
       settings,
-      setConfirmation: options.setConfirmation,
-      setForm: options.setForm,
-      setDirectoryBrowser: options.setDirectoryBrowser,
       requestClose,
     }),
     createPaneLayoutActions({
+      dialogs: options.dialogs,
       workspace: {
         mutateSession: workspace.mutateSession,
         focusPane: workspace.focusPane,
@@ -80,9 +81,9 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
       },
       settings,
       workspaceElement: options.workspaceElement,
-      setForm: options.setForm,
     }),
     createClientActions({
+      dialogs: options.dialogs,
       workspace: {
         mutateSession: workspace.mutateSession,
         select: workspace.select,
@@ -94,13 +95,6 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
       settings,
       hosts: options.hosts,
       interfaceTheme: options.interfaceTheme,
-      setPalette: options.setPalette,
-      setSettingsTab: options.setSettingsTab,
-      setDiagnostics: options.setDiagnostics,
-      setPairing: options.setPairing,
-      setEditingHost: options.setEditingHost,
-      setConfirmation: options.setConfirmation,
-      setForm: options.setForm,
       setActivityOnly: options.setActivityOnly,
       setActivityOpen: options.setActivityOpen,
       setActivityGroup: options.setActivityGroup,

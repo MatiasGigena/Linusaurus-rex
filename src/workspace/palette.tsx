@@ -3,7 +3,7 @@ import type { PaletteCommand } from "../components/CommandPalette";
 import type { NavigationHost } from "../components/sidebar/Sidebar";
 import type { KeymapResult, Settings } from "../shared/types";
 import { CLIENT_ACTIONS, configuredShortcut } from "../shared/actions";
-import type { Form } from "./actions/context";
+import type { DialogActions } from "./dialogs";
 interface PaletteOptions {
   palette: "all" | "sessions" | undefined;
   settings: Settings | undefined;
@@ -13,7 +13,7 @@ interface PaletteOptions {
   dispatch(name: string, args?: Record<string, unknown>): void;
   execute(name: string, args?: Record<string, unknown>): Promise<unknown>;
   select(hostId: string, sessionId: string, windowId?: string): void;
-  setForm(form: Form): void;
+  dialogs: Pick<DialogActions, "open">;
 }
 function serverActionArguments(text: string): Record<string, unknown> {
   let value: unknown;
@@ -35,7 +35,7 @@ export function buildPaletteCommands({
   dispatch,
   execute,
   select,
-  setForm,
+  dialogs,
 }: PaletteOptions): PaletteCommand[] {
   return [
     ...(palette === "sessions"
@@ -83,26 +83,29 @@ export function buildPaletteCommands({
                   )
                 : [];
               if (required?.length)
-                setForm({
-                  title: action.title || action.name,
-                  description: "Arguments for this server-defined action.",
-                  fields: [
-                    {
-                      name: "args",
-                      label: "Arguments (JSON)",
-                      value: JSON.stringify(
-                        Object.fromEntries(required.map((key) => [key, ""])),
-                        null,
-                        2,
-                      ),
-                      multiline: true,
+                dialogs.open({
+                  kind: "form",
+                  form: {
+                    title: action.title || action.name,
+                    description: "Arguments for this server-defined action.",
+                    fields: [
+                      {
+                        name: "args",
+                        label: "Arguments (JSON)",
+                        value: JSON.stringify(
+                          Object.fromEntries(required.map((key) => [key, ""])),
+                          null,
+                          2,
+                        ),
+                        multiline: true,
+                      },
+                    ],
+                    submit: async (values) => {
+                      await execute(
+                        action.name,
+                        serverActionArguments(values.args),
+                      );
                     },
-                  ],
-                  submit: async (values) => {
-                    await execute(
-                      action.name,
-                      serverActionArguments(values.args),
-                    );
                   },
                 });
               else dispatch(action.name);

@@ -1,3 +1,4 @@
+import { WorkspaceDialogController } from "../src/workspace/dialogs.js";
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import { ClientFeatures } from "../electron/client/client.js";
@@ -81,7 +82,9 @@ function fixture(t: TestContext) {
     value: { rex: { request } },
   });
   const discard = (_value: unknown) => {};
+  const dialogs = new WorkspaceDialogController();
   const execute = createWorkspaceActions({
+    dialogs,
     workspace,
     settings,
     hosts: settings.hosts.map((host) => ({
@@ -108,18 +111,10 @@ function fixture(t: TestContext) {
     },
     interfaceTheme: "macos",
     workspaceElement: { current: null },
-    setPalette: discard,
-    setSettingsTab: discard,
-    setDiagnostics: discard,
-    setPairing: discard,
-    setEditingHost: discard,
-    setConfirmation: discard,
-    setForm: discard,
     setCollapsedSessions: discard,
     setActivityOnly: discard,
     setActivityOpen: discard,
     setActivityGroup: discard,
-    setDirectoryBrowser: discard,
     onError: discard,
   });
   let incoming: ((event: RexEvent) => void) | undefined;
@@ -168,6 +163,7 @@ function fixture(t: TestContext) {
   });
   return {
     source,
+    dialogs,
     target,
     requests,
     selected,
@@ -334,5 +330,26 @@ for (const host of ["other", "Other"]) {
       hostId: "other",
       sessionId: "other-a",
     });
+  });
+}
+
+for (const [action, kind] of [
+  ["client.diagnostics", "diagnostics"],
+  ["client.pair_device", "pairing"],
+] as const) {
+  test(`incoming ${action} opens administration for its source host despite another selection`, async (t) => {
+    const current = fixture(t);
+    const reply = await current.perform({}, action);
+    assert.equal(reply.error, undefined);
+    assert.deepEqual(current.dialogs.snapshot.primary?.dialog, {
+      kind,
+      hostId: current.source.id,
+    });
+    await current.execute(action, { host_id: current.target.id });
+    assert.deepEqual(current.dialogs.snapshot.primary?.dialog, {
+      kind,
+      hostId: current.target.id,
+    });
+    assert.deepEqual(current.requests, []);
   });
 }

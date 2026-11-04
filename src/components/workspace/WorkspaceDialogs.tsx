@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Dialog } from "../Dialog";
 import { errorMessage } from "../../core/workspace";
 import { WorkspaceReconciliationError } from "../../core/workspaceOperations";
-import type { Form, Confirmation } from "../../workspace/actions/context";
+import type { Form, Confirmation } from "../../workspace/dialogs";
 
 type SubmissionPhase = "ready" | "saving" | "committed" | "refreshing";
 

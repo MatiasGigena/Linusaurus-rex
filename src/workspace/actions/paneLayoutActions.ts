@@ -39,7 +39,7 @@ export function createPaneLayoutActions(
   return async function paneLayoutActions(
     context: PaneLayoutActionsTarget,
   ): Promise<unknown> {
-    const { workspace, settings, workspaceElement, setForm } = dependencies;
+    const { workspace, settings, workspaceElement, dialogs } = dependencies;
     const {
       name,
       args,
@@ -123,16 +123,19 @@ export function createPaneLayoutActions(
           !args.block_id &&
           args.direction === undefined
         ) {
-          setForm({
-            title: "Focus pane",
-            description: "Choose the pane by its block ID.",
-            fields: [{ name: "block", label: "Pane ID", required: true }],
-            submit: async (values) => {
-              await execute(
-                "pane.focus",
-                { ...args, block_id: values.block },
-                event,
-              );
+          dialogs.open({
+            kind: "form",
+            form: {
+              title: "Focus pane",
+              description: "Choose the pane by its block ID.",
+              fields: [{ name: "block", label: "Pane ID", required: true }],
+              submit: async (values) => {
+                await execute(
+                  "pane.focus",
+                  { ...args, block_id: values.block },
+                  event,
+                );
+              },
             },
           });
           return;
@@ -198,32 +201,35 @@ export function createPaneLayoutActions(
               )
             : undefined;
         if (!target || !direction) {
-          setForm({
-            title: "Move pane",
-            description: "Choose the destination pane and a direction.",
-            fields: [
-              {
-                name: "anchor",
-                label: "Destination pane ID",
-                value: target?.id,
-                required: true,
+          dialogs.open({
+            kind: "form",
+            form: {
+              title: "Move pane",
+              description: "Choose the destination pane and a direction.",
+              fields: [
+                {
+                  name: "anchor",
+                  label: "Destination pane ID",
+                  value: target?.id,
+                  required: true,
+                },
+                {
+                  name: "direction",
+                  label: "Direction",
+                  value: "right",
+                  required: true,
+                },
+              ],
+              submit: async (values) => {
+                const direction = moveDirection(values.direction);
+                await workspace.run(hostId, () =>
+                  window.rex.request("movePane", {
+                    ...terminalRef,
+                    anchorBlockId: values.anchor,
+                    direction,
+                  }),
+                );
               },
-              {
-                name: "direction",
-                label: "Direction",
-                value: "right",
-                required: true,
-              },
-            ],
-            submit: async (values) => {
-              const direction = moveDirection(values.direction);
-              await workspace.run(hostId, () =>
-                window.rex.request("movePane", {
-                  ...terminalRef,
-                  anchorBlockId: values.anchor,
-                  direction,
-                }),
-              );
             },
           });
           return;
@@ -270,20 +276,27 @@ export function createPaneLayoutActions(
         };
         const operation = operations[name];
         if (operation === "moveToTab" && !args.window_id) {
-          setForm({
-            title: "Move pane to tab",
-            description: "Enter the destination tab ID from this session.",
-            fields: [
-              { name: "windowId", label: "Destination tab ID", required: true },
-            ],
-            submit: async (values) => {
-              await workspace.run(hostId, () =>
-                window.rex.request("layoutAction", {
-                  ...terminalRef,
-                  operation,
-                  targetWindowId: values.windowId,
-                }),
-              );
+          dialogs.open({
+            kind: "form",
+            form: {
+              title: "Move pane to tab",
+              description: "Enter the destination tab ID from this session.",
+              fields: [
+                {
+                  name: "windowId",
+                  label: "Destination tab ID",
+                  required: true,
+                },
+              ],
+              submit: async (values) => {
+                await workspace.run(hostId, () =>
+                  window.rex.request("layoutAction", {
+                    ...terminalRef,
+                    operation,
+                    targetWindowId: values.windowId,
+                  }),
+                );
+              },
             },
           });
           return;

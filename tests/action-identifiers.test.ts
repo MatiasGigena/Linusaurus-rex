@@ -1,3 +1,4 @@
+import { WorkspaceDialogController } from "../src/workspace/dialogs.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -25,9 +26,7 @@ test("palette labels and execution share canonical copy/paste names while retain
       },
       execute: async () => {},
       select: () => {},
-      setForm: () => {
-        throw new Error("Unexpected form");
-      },
+      dialogs: new WorkspaceDialogController(),
     });
   let commands = build();
   const copy = commands.find((command) => command.id === "client.copy");
