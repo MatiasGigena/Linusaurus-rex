@@ -159,11 +159,27 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
       ].includes(name)
     )
       return localCommand(name);
+    const intendedEndpoint = settings.hosts.find(
+      (host) => host.id === hostId,
+    )?.endpoint;
     const command: ResolvedCommand = {
       ...target,
       localCommand,
       requirePane,
-      execute,
+      execute: async (name, args, event) => {
+        const currentHost = workspace
+          .getSettings()
+          ?.hosts.find((host) => host.id === hostId);
+        if (
+          intendedEndpoint === undefined ||
+          !currentHost ||
+          currentHost.endpoint !== intendedEndpoint
+        )
+          throw new Error(
+            "The host configuration changed before this action could be submitted. Reopen the form for the current server.",
+          );
+        return options.executeCurrent(name, args, event);
+      },
     };
     for (const handler of handlers) {
       const result = await handler(command);

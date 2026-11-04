@@ -34,7 +34,8 @@ export function createTabActions(dependencies: TabActionsDependencies) {
     } = context;
     switch (name) {
       case "client.tab.new": {
-        if (!sessionId) return execute("session.new", { host_id: hostId });
+        if (!sessionId)
+          return execute("session.new", { host_id: hostId }, event);
         const completed = await workspace.mutateSession(
           { hostId, sessionId, selectActive: true },
           () =>
@@ -105,6 +106,7 @@ export function createTabActions(dependencies: TabActionsDependencies) {
         return;
       }
       case "client.tab.goto": {
+        if (!sessionId) throw new Error("Choose a session first.");
         if (args.index === undefined) {
           dialogs.open({
             kind: "form",
@@ -115,7 +117,13 @@ export function createTabActions(dependencies: TabActionsDependencies) {
               submit: async (values) => {
                 await execute(
                   "client.tab.goto",
-                  { ...args, index: Number(values.index) },
+                  {
+                    ...args,
+                    host_id: hostId,
+                    session_id: sessionId,
+                    window_id: currentWindow?.id,
+                    index: Number(values.index),
+                  },
                   event,
                 );
               },
@@ -135,7 +143,17 @@ export function createTabActions(dependencies: TabActionsDependencies) {
       case "client.tab.move":
       case "client.tab.move.backward":
       case "client.tab.move.forward": {
-        if (!currentView || !currentWindow) return;
+        const movingWindow =
+          args.window_id === undefined
+            ? currentWindow
+            : currentView?.windows.find(
+                (window) => window.id === String(args.window_id),
+              );
+        if (!currentView || !movingWindow) {
+          if (args.window_id !== undefined)
+            throw new Error("The target tab is no longer available.");
+          return;
+        }
         if (name === "client.tab.move" && args.index === undefined) {
           dialogs.open({
             kind: "form",
@@ -148,7 +166,13 @@ export function createTabActions(dependencies: TabActionsDependencies) {
               submit: async (values) => {
                 await execute(
                   name,
-                  { ...args, index: Number(values.index) },
+                  {
+                    ...args,
+                    host_id: hostId,
+                    session_id: sessionId,
+                    window_id: movingWindow.id,
+                    index: Number(values.index),
+                  },
                   event,
                 );
               },
@@ -158,7 +182,7 @@ export function createTabActions(dependencies: TabActionsDependencies) {
         }
         const windows = currentView.windows;
         const index = windows.findIndex(
-          (window) => window.id === currentWindow.id,
+          (window) => window.id === movingWindow.id,
         );
         const target = name.endsWith("backward")
           ? index - 1
@@ -172,7 +196,7 @@ export function createTabActions(dependencies: TabActionsDependencies) {
         return reorderWorkspaceTab(workspace, {
           hostId,
           sessionId,
-          windowId: currentWindow.id,
+          windowId: movingWindow.id,
           beforeWindowId,
         });
       }

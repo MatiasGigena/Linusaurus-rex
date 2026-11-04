@@ -142,6 +142,8 @@ export default function App() {
     });
   }, []);
   const execute = createWorkspaceActions({
+    executeCurrent: (name, args, event) =>
+      executeRef.current(name, args, event),
     dialogs,
     workspace: ws.operations,
     settings,

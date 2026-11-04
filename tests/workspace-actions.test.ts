@@ -110,6 +110,11 @@ function fixture(t: TestContext) {
     selectActive?: boolean;
   }[] = [];
   const timeline: string[] = [];
+  const dispatches: {
+    name: string;
+    args?: Record<string, unknown>;
+    event?: ClientEvent;
+  }[] = [];
   type Responders = {
     [K in keyof RexMethods]: (
       args: RexMethods[K]["args"],
@@ -217,6 +222,7 @@ function fixture(t: TestContext) {
     else Reflect.deleteProperty(globalThis, "window");
   });
   const options: WorkspaceActionOptions = {
+    executeCurrent,
     dialogs,
     workspace,
     hosts,
@@ -238,6 +244,22 @@ function fixture(t: TestContext) {
     setActivityOpen: discard,
     setActivityGroup: discard,
   };
+  function executeCurrent(
+    name: string,
+    args?: Record<string, unknown>,
+    event?: ClientEvent,
+  ) {
+    dispatches.push({ name, args, event });
+    // Each call models a rendered snapshot; retained forms must cross the same
+    // current-executor seam that App supplies instead of reusing this snapshot.
+    return createWorkspaceActions({
+      ...options,
+      views: { ...views },
+      settings: settings.get(),
+      selection: selection.get(),
+      focusedPane: focusedPane.get(),
+    })(name, args, event);
+  }
   return {
     initial,
     dialogs,
@@ -255,13 +277,10 @@ function fixture(t: TestContext) {
     saved,
     inspections,
     timeline,
+    dispatches,
     workspace,
     responders,
-    execute: (
-      name: string,
-      args?: Record<string, unknown>,
-      event?: ClientEvent,
-    ) => createWorkspaceActions(options)(name, args, event),
+    execute: executeCurrent,
   };
 }
 
@@ -741,6 +760,294 @@ test("new-tab fallback prompts for a session on the requested host before creati
   ]);
   assert.equal(current.selections.at(-1)?.hostId, "remote");
   assert.equal(current.selections.at(-1)?.sessionId, "created");
+});
+
+test("a deferred tab number uses current windows in its original session after another host is selected", async (t) => {
+  const current = fixture(t);
+  await current.execute("client.tab.goto");
+  const form = current.form.get();
+  assert.ok(form);
+  const view = current.views["local/local-session"];
+  current.views["local/local-session"] = {
+    ...view,
+    windows: [
+      { id: "new-first", label: "New tab", panes: [], focusedBlockId: "" },
+      ...view.windows,
+    ],
+  };
+  current.selection.set({
+    hostId: "remote",
+    sessionId: "remote-session",
+    windowId: "remote-session-first",
+  });
+  await form.submit({ index: "1" });
+  assert.deepEqual(current.selections.at(-1), {
+    hostId: "local",
+    sessionId: "local-session",
+    windowId: "new-first",
+  });
+  assert.deepEqual(current.requests, []);
+});
+
+test("a deferred tab move resolves its captured window against the current tab order", async (t) => {
+  const current = fixture(t);
+  await current.execute("client.tab.move");
+  const form = current.form.get();
+  assert.ok(form);
+  const view = current.views["local/local-session"];
+  current.views["local/local-session"] = {
+    ...view,
+    windows: [
+      { id: "new-first", label: "New tab", panes: [], focusedBlockId: "" },
+      ...view.windows,
+    ],
+  };
+  current.selection.set({
+    hostId: "remote",
+    sessionId: "remote-session",
+    windowId: "remote-session-first",
+  });
+  current.responders.reorderWindow = async () => {};
+  await form.submit({ index: "3" });
+  assert.deepEqual(current.requests, [
+    {
+      method: "reorderWindow",
+      args: {
+        hostId: "local",
+        sessionId: "local-session",
+        windowId: "local-session-first",
+        beforeWindowId: undefined,
+      },
+    },
+  ]);
+});
+
+test("a removed deferred tab target cannot borrow its session's active window", async (t) => {
+  const current = fixture(t);
+  current.responders.reorderWindow = async () => {};
+  await current.execute("client.tab.move");
+  const form = current.form.get();
+  assert.ok(form);
+  const view = current.views["local/local-session"];
+  current.views["local/local-session"] = {
+    ...view,
+    activeWindowId: view.windows[1].id,
+    windows: view.windows.slice(1),
+  };
+  await assert.rejects(
+    form.submit({ index: "1" }),
+    /target tab.*no longer available/i,
+  );
+  assert.deepEqual(current.requests, []);
+});
+
+test("a deferred form refuses an endpoint replacement even when the new server has colliding target IDs", async (t) => {
+  const current = fixture(t);
+  current.responders.reorderWindow = async () => {};
+  await current.execute("client.tab.move");
+  const form = current.form.get();
+  assert.ok(form);
+  const settings = current.settings.get();
+  current.settings.set({
+    ...settings,
+    hosts: settings.hosts.map((host) =>
+      host.id === "local"
+        ? { ...host, endpoint: "https://replacement.example" }
+        : host,
+    ),
+  });
+  await assert.rejects(
+    form.submit({ index: "2" }),
+    /host configuration changed|selected host changed/i,
+  );
+  assert.deepEqual(current.requests, []);
+});
+
+test("a source-bound deferred pane choice finds new panes without adopting the newly displayed host", async (t) => {
+  const current = fixture(t);
+  const source: ClientEvent = {
+    type: "action",
+    requestId: "focus-form",
+    hostId: "local",
+    sessionId: "local-session",
+    name: "pane.focus",
+    args: {},
+  };
+  await current.execute("pane.focus", {}, source);
+  const form = current.form.get();
+  assert.ok(form);
+  const view = current.views["local/local-session"];
+  current.views["local/local-session"] = {
+    ...view,
+    windows: view.windows.map((window, index) =>
+      index
+        ? window
+        : {
+            ...window,
+            focusedBlockId: "fresh-pane",
+            panes: [
+              { id: "fresh-pane", label: "Fresh pane", rect: [0, 0, 1, 1] },
+            ],
+          },
+    ),
+  };
+  current.selection.set({
+    hostId: "remote",
+    sessionId: "remote-session",
+    windowId: "remote-session-first",
+  });
+  await form.submit({ block: "fresh-pane" });
+  assert.equal(
+    current.dispatches.at(-1)?.event,
+    source,
+    "deferred dispatch retains the original source authority",
+  );
+  assert.deepEqual(current.selections.at(-1), {
+    hostId: "local",
+    sessionId: "local-session",
+    windowId: "local-session-first",
+    blockId: "fresh-pane",
+  });
+});
+
+test("a deferred tab move retains its tab even when the originating pane has moved elsewhere", async (t) => {
+  const current = fixture(t);
+  current.responders.reorderWindow = async () => {};
+  const source: ClientEvent = {
+    type: "action",
+    requestId: "tab-form",
+    hostId: "local",
+    sessionId: "local-session",
+    blockId: "local-session-right",
+    name: "client.tab.move",
+    args: {},
+  };
+  await current.execute(source.name, source.args, source);
+  const form = current.form.get();
+  assert.ok(form);
+  const view = current.views["local/local-session"];
+  const moved = view.windows[0].panes[1];
+  current.views["local/local-session"] = {
+    ...view,
+    windows: [
+      {
+        ...view.windows[0],
+        focusedBlockId: view.windows[0].panes[0].id,
+        panes: view.windows[0].panes.slice(0, 1),
+      },
+      { ...view.windows[1], panes: [...view.windows[1].panes, moved] },
+    ],
+  };
+  await form.submit({ index: "2" });
+  assert.deepEqual(current.requests, [
+    {
+      method: "reorderWindow",
+      args: {
+        hostId: "local",
+        sessionId: "local-session",
+        windowId: "local-session-first",
+        beforeWindowId: undefined,
+      },
+    },
+  ]);
+  assert.equal(current.dispatches.at(-1)?.event, source);
+});
+
+test("a deferred resize cannot resize another pane after its original target disappears", async (t) => {
+  const current = fixture(t);
+  const view = current.views["local/local-session"];
+  const original = view.windows[0];
+  original.dividers = [
+    {
+      beforeBlockId: original.panes[0].id,
+      afterBlockId: original.panes[1].id,
+      direction: "horizontal",
+      ratio: 0.5,
+      rect: [0, 0, 1, 1],
+    },
+  ];
+  current.responders.resizeDivider = async () => {};
+  await current.execute("pane.resize");
+  const form = current.form.get();
+  assert.ok(form);
+  current.views["local/local-session"] = {
+    ...view,
+    windows: [
+      {
+        ...original,
+        focusedBlockId: original.panes[0].id,
+        panes: original.panes.slice(0, 1),
+      },
+      ...view.windows.slice(1),
+    ],
+  };
+  await assert.rejects(
+    form.submit({ border: "1", ratio: "40" }),
+    /target pane.*no longer available/i,
+  );
+  assert.deepEqual(current.requests, []);
+});
+
+test("a deferred pane resize resolves current dividers and preserves the actual RPC rejection", async (t) => {
+  const current = fixture(t);
+  const view = current.views["local/local-session"];
+  const divider = {
+    beforeBlockId: "local-session-left",
+    afterBlockId: "local-session-right",
+    direction: "horizontal" as const,
+    ratio: 0.5,
+    rect: [0, 0, 1, 1] as [number, number, number, number],
+  };
+  view.windows[0].dividers = [divider];
+  await current.execute("pane.resize");
+  const form = current.form.get();
+  assert.ok(form);
+  current.views["local/local-session"] = {
+    ...view,
+    windows: view.windows.map((window, index) =>
+      index
+        ? window
+        : {
+            ...window,
+            dividers: [
+              {
+                ...divider,
+                beforeBlockId: "fresh-before",
+                afterBlockId: "fresh-after",
+              },
+            ],
+          },
+    ),
+  };
+  current.selection.set({
+    hostId: "remote",
+    sessionId: "remote-session",
+    windowId: "remote-session-first",
+  });
+  const original = Object.assign(new Error("Resize denied"), {
+    code: "DENIED",
+    method: "session.resize_divider",
+  });
+  current.responders.resizeDivider = async () => {
+    throw original;
+  };
+  await assert.rejects(
+    form.submit({ border: "1", ratio: "40" }),
+    (error) => error === original,
+  );
+  assert.deepEqual(current.requests, [
+    {
+      method: "resizeDivider",
+      args: {
+        hostId: "local",
+        sessionId: "local-session",
+        ...divider,
+        beforeBlockId: "fresh-before",
+        afterBlockId: "fresh-after",
+        ratio: 0.4,
+      },
+    },
+  ]);
 });
 
 test("only source-bound paste uses queued terminal completion and conflicting sources never reach an executor", async (t) => {

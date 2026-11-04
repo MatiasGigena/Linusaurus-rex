@@ -16,6 +16,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
     const {
       name,
       args,
+      event,
       hostId,
       sessionId,
       currentWindow,
@@ -24,6 +25,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
       targetPane,
       localCommand,
       requirePane,
+      execute,
     } = context;
     switch (name) {
       case "pane.close":
@@ -63,6 +65,8 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
         return window.rex.writeClipboard(blockId);
       case "pane.resize": {
         requirePane();
+        if (!targetPane)
+          throw new Error("The target pane is no longer available.");
         const dividers = [...(currentWindow?.dividers || [])].sort((a, b) => {
           const score = (divider: PaneDivider) => {
             const [x, y, w, h] = targetPane?.rect || [0, 0, 1, 1];
@@ -128,8 +132,21 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
                 required: true,
               },
             ],
-            submit: (values) =>
-              resize(Number(values.border || 1), Number(values.ratio) / 100),
+            submit: async (values) => {
+              await execute(
+                "pane.resize",
+                {
+                  ...args,
+                  host_id: hostId,
+                  session_id: sessionId,
+                  window_id: currentWindow?.id,
+                  block_id: blockId,
+                  border: Number(values.border || 1),
+                  ratio: Number(values.ratio) / 100,
+                },
+                event,
+              );
+            },
           },
         });
         return;

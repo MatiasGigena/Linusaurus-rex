@@ -25,6 +25,8 @@ export interface WorkspaceActionOptions {
   interfaceTheme: string | undefined;
   workspaceElement: RefObject<HTMLDivElement | null>;
   dialogs: DialogActions;
+  /** Redispatch deferred actions through the current rendered executor. */
+  executeCurrent: ResolvedCommand["execute"];
   setCollapsedSessions: StateSetter<Set<string>>;
   setActivityOnly: StateSetter<boolean>;
   setActivityOpen: StateSetter<boolean>;
@@ -91,6 +93,7 @@ export type PaneActionsTarget = Pick<
   ResolvedCommand,
   | "name"
   | "args"
+  | "event"
   | "hostId"
   | "sessionId"
   | "currentWindow"
@@ -99,6 +102,7 @@ export type PaneActionsTarget = Pick<
   | "targetPane"
   | "localCommand"
   | "requirePane"
+  | "execute"
 >;
 export type PaneActionsDependencies = Pick<
   WorkspaceActionOptions,

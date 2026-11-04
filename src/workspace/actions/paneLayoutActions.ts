@@ -132,7 +132,13 @@ export function createPaneLayoutActions(
               submit: async (values) => {
                 await execute(
                   "pane.focus",
-                  { ...args, block_id: values.block },
+                  {
+                    ...args,
+                    host_id: hostId,
+                    session_id: sessionId,
+                    window_id: currentWindow.id,
+                    block_id: values.block,
+                  },
                   event,
                 );
               },

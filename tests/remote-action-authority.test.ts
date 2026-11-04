@@ -98,55 +98,57 @@ function fixture(
   });
   const discard = (_value: unknown) => {};
   const dialogs = new WorkspaceDialogController();
-  const execute = createWorkspaceActions({
-    dialogs,
-    workspace,
-    settings,
-    hosts: settings.hosts.map((host) => ({
-      ...host,
-      connected: true,
-      sessions:
-        host.id === source.id
-          ? [
-              { id: "source-a", label: "Shared" },
-              { id: "source-b", label: "Source second" },
-            ]
-          : [
-              { id: "other-a", label: "Other only" },
-              { id: "other-shared", label: "Shared" },
-            ],
-    })),
-    views: {
-      "source/source-a": {
-        id: "source-a",
-        label: "Source session",
-        activeWindowId: "source-tab",
-        windows: [
-          {
-            id: "source-tab",
-            label: "Source tab",
-            focusedBlockId: "source-pane",
-            panes: [
-              { id: "source-pane", label: "Source pane", rect: [0, 0, 1, 1] },
-            ],
-          },
-        ],
+  const execute: ReturnType<typeof createWorkspaceActions> =
+    createWorkspaceActions({
+      executeCurrent: (name, args, event) => execute(name, args, event),
+      dialogs,
+      workspace,
+      settings,
+      hosts: settings.hosts.map((host) => ({
+        ...host,
+        connected: true,
+        sessions:
+          host.id === source.id
+            ? [
+                { id: "source-a", label: "Shared" },
+                { id: "source-b", label: "Source second" },
+              ]
+            : [
+                { id: "other-a", label: "Other only" },
+                { id: "other-shared", label: "Shared" },
+              ],
+      })),
+      views: {
+        "source/source-a": {
+          id: "source-a",
+          label: "Source session",
+          activeWindowId: "source-tab",
+          windows: [
+            {
+              id: "source-tab",
+              label: "Source tab",
+              focusedBlockId: "source-pane",
+              panes: [
+                { id: "source-pane", label: "Source pane", rect: [0, 0, 1, 1] },
+              ],
+            },
+          ],
+        },
       },
-    },
-    keymaps: {},
-    focusedPane: undefined,
-    selection: {
-      hostId: target.id,
-      sessionId: "displayed",
-      windowId: "displayed-tab",
-    },
-    interfaceTheme: "macos",
-    workspaceElement: { current: null },
-    setCollapsedSessions: discard,
-    setActivityOnly: discard,
-    setActivityOpen: discard,
-    setActivityGroup: discard,
-  });
+      keymaps: {},
+      focusedPane: undefined,
+      selection: {
+        hostId: target.id,
+        sessionId: "displayed",
+        windowId: "displayed-tab",
+      },
+      interfaceTheme: "macos",
+      workspaceElement: { current: null },
+      setCollapsedSessions: discard,
+      setActivityOnly: discard,
+      setActivityOpen: discard,
+      setActivityGroup: discard,
+    });
   let incoming: ((event: RexEvent) => void) | undefined;
   let complete: ((reply: Record<string, unknown>) => void) | undefined;
   const replies: Record<string, unknown>[] = [];
