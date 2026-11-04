@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type { TerminalPaneProps } from "../terminal/TerminalPane";
 import { errorMessage } from "../core/workspace";
+import { canonicalActionName, configuredShortcut } from "../shared/actions";
 
 const STEPS = [
   "welcome",
@@ -20,7 +21,20 @@ const STEPS = [
   "practice",
   "done",
 ];
-export function OnboardingPane({
+export function OnboardingPane(props: TerminalPaneProps) {
+  const { hostId, sessionId, blockId } = props.terminalRef;
+  const endpoint = props.settings.hosts.find(
+    (host) => host.id === hostId,
+  )?.endpoint;
+  return (
+    <OnboardingTutorial
+      key={JSON.stringify([hostId, endpoint, sessionId, blockId])}
+      {...props}
+    />
+  );
+}
+
+function OnboardingTutorial({
   pane,
   terminalRef,
   settings,
@@ -32,43 +46,69 @@ export function OnboardingPane({
   const [step, setStep] = useState("welcome");
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const mounted = useRef(true);
+  const stepRevision = useRef(0);
+  const changingStep = useRef(false);
   const { hostId, sessionId, blockId } = terminalRef;
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const run = async (action: () => Promise<unknown>) => {
+    if (!mounted.current) return;
     setBusy(true);
     setError(undefined);
     try {
       await action();
     } catch (failure) {
-      setError(errorMessage(failure));
+      if (mounted.current) setError(errorMessage(failure));
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
-  };
-  const load = async () => {
-    const state = (await window.rex.request("callBlock", {
-      hostId,
-      sessionId,
-      blockId,
-      method: "state",
-      args: {},
-    })) as { step?: string };
-    setStep(STEPS.includes(state.step || "") ? state.step! : "welcome");
   };
   useEffect(() => {
     if (!visible) return;
-    let mounted = true;
-    const read = () =>
-      void load().catch((failure) => {
-        if (mounted) setError(errorMessage(failure));
-      });
-    read();
+    let active = true;
+    let latestRead = 0;
+    const read = async () => {
+      if (!active || !mounted.current || changingStep.current) return;
+      const sequence = ++latestRead;
+      const revision = stepRevision.current;
+      const current = () =>
+        active &&
+        mounted.current &&
+        latestRead === sequence &&
+        stepRevision.current === revision;
+      try {
+        const state = (await window.rex.request("callBlock", {
+          hostId,
+          sessionId,
+          blockId,
+          method: "state",
+          args: {},
+        })) as { step?: string };
+        if (current()) {
+          setStep(STEPS.includes(state.step || "") ? state.step! : "welcome");
+          setError(undefined);
+        }
+      } catch (failure) {
+        if (current()) setError(errorMessage(failure));
+      }
+    };
+    void read();
     const timer = window.setInterval(read, 2000);
     return () => {
-      mounted = false;
+      active = false;
       clearInterval(timer);
     };
   }, [hostId, sessionId, blockId, visible]);
-  const move = (next: string) =>
+  const move = (next: string) => {
+    if (changingStep.current || !mounted.current) return;
+    changingStep.current = true;
+    // Reads started before this write must not restore the previous step.
+    stepRevision.current++;
     void run(async () => {
       await window.rex.request("callBlock", {
         hostId,
@@ -77,8 +117,12 @@ export function OnboardingPane({
         method: "set_step",
         args: { step: next },
       });
-      setStep(next);
+      if (mounted.current) setStep(next);
+    }).finally(() => {
+      changingStep.current = false;
+      stepRevision.current++;
     });
+  };
   const index = STEPS.indexOf(step);
   return (
     <section
@@ -203,7 +247,12 @@ export function OnboardingPane({
                   <div key={key}>
                     <dt>{label}</dt>
                     <dd>
-                      <kbd>{settings.shortcuts[key]}</kbd>
+                      <kbd>
+                        {configuredShortcut(
+                          canonicalActionName(key),
+                          settings.shortcuts,
+                        )}
+                      </kbd>
                     </dd>
                   </div>
                 ))}
