@@ -1,8 +1,9 @@
-import { AppearancePreferences } from "./preferences/AppearancePreferences";
-import { TerminalPreferences } from "./preferences/TerminalPreferences";
-import { NotificationPreferences } from "./preferences/NotificationPreferences";
-import { AgentIntegrations } from "./preferences/AgentIntegrations";
-import { Section, Toggle, Text } from "./preferences/Controls";
+import type { SettingsTab } from "./types";
+import { AppearancePreferences } from "./AppearancePreferences";
+import { TerminalPreferences } from "./TerminalPreferences";
+import { NotificationPreferences } from "./NotificationPreferences";
+import { AgentIntegrations } from "./AgentIntegrations";
+import { Section, Toggle, Text } from "./Controls";
 import { useState } from "react";
 import {
   Check,
@@ -16,20 +17,12 @@ import {
   TerminalSquare,
   Bell,
 } from "lucide-react";
-import { Dialog } from "./Dialog";
-import { migrateThemeLibrary } from "../core/themeLibrary";
-import type { Host, Settings } from "../shared/types";
-import { DEFAULT_SETTINGS } from "../shared/types";
-import { errorMessage } from "../core/workspace";
+import { Dialog } from "../Dialog";
+import { migrateThemeLibrary } from "../../core/themeLibrary";
+import type { Host, Settings } from "../../shared/types";
+import { DEFAULT_SETTINGS } from "../../shared/types";
+import { errorMessage } from "../../core/workspace";
 
-export type SettingsTab =
-  | "appearance"
-  | "terminal"
-  | "notifications"
-  | "hosts"
-  | "integrations"
-  | "shortcuts"
-  | "server";
 interface Props {
   settings: Settings;
   initialTab?: SettingsTab;

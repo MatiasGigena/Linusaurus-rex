@@ -1,5 +1,5 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import type { SettingsTab } from "../../components/SettingsDialog";
+import type { SettingsTab } from "../../components/preferences/types";
 import type { useWorkspace } from "../../hooks/useWorkspace";
 import type {
   ClientEvent,

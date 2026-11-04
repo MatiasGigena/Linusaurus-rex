@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Download, Palette, Save, Trash2 } from "lucide-react";
-import type { Settings } from "../shared/types";
-import { TERMINAL_THEMES } from "../terminal/themes";
+import type { Settings } from "../../shared/types";
+import { TERMINAL_THEMES } from "../../terminal/themes";
 import {
   deleteLibraryTheme,
   migrateThemeLibrary,
@@ -12,8 +12,8 @@ import {
   uniqueThemeName,
   type LibraryTheme,
   type ThemeAppearance,
-} from "../core/themeLibrary";
-import { errorMessage } from "../core/workspace";
+} from "../../core/themeLibrary";
+import { errorMessage } from "../../core/workspace";
 
 export function ThemeLibrary({
   settings,

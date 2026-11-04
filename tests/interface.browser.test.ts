@@ -7,7 +7,7 @@ import react from "@vitejs/plugin-react";
 const source = `
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { SettingsDialog } from '/src/components/SettingsDialog.tsx';
+import { SettingsDialog } from '/src/components/preferences/SettingsDialog.tsx';
 import { ProgramIcon } from '/src/components/ProgramIcon.tsx';
 import { ActivePaneHighlight } from '/src/components/ActivePaneHighlight.tsx';
 import { DEFAULT_SETTINGS } from '/src/shared/types.ts';

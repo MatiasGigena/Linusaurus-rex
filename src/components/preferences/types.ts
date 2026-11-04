@@ -5,3 +5,12 @@ export interface PreferencesEditor {
   setDraft: Dispatch<SetStateAction<Settings>>;
   update<K extends keyof Settings>(key: K, value: Settings[K]): void;
 }
+
+export type SettingsTab =
+  | "appearance"
+  | "terminal"
+  | "notifications"
+  | "hosts"
+  | "integrations"
+  | "shortcuts"
+  | "server";

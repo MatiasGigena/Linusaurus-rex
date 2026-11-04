@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Section, Toggle, Select, Range, Color } from "./Controls";
-import { ThemeLibrary } from "../ThemeLibrary";
+import { ThemeLibrary } from "./ThemeLibrary";
 import { type Settings } from "../../shared/types";
 import type { PreferencesEditor } from "./types";
 

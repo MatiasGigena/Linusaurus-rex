@@ -4,7 +4,7 @@ import {
   saveLibraryTheme,
   uniqueThemeName,
 } from "../../core/themeLibrary";
-import type { SettingsTab } from "../../components/SettingsDialog";
+import type { SettingsTab } from "../../components/preferences/types";
 import { UNHANDLED, type ActionContext } from "./context";
 
 export async function clientActions(context: ActionContext): Promise<unknown> {

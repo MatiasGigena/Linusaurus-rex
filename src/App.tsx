@@ -33,7 +33,8 @@ import {
   type PaletteCommand,
 } from "./components/CommandPalette";
 import { ContextMenu, type ContextItem } from "./components/ContextMenu";
-import { SettingsDialog, type SettingsTab } from "./components/SettingsDialog";
+import { SettingsDialog } from "./components/preferences/SettingsDialog";
+import type { SettingsTab } from "./components/preferences/types";
 import { HostDialog, type Credentials } from "./components/HostDialog";
 import { ConfigurationDialog } from "./components/ConfigurationDialog";
 import { DiagnosticsDialog } from "./components/DiagnosticsDialog";
