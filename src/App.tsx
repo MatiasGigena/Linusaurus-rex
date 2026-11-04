@@ -7,6 +7,7 @@ import { NoticeStack } from "./components/NoticeStack";
 import { buildPaletteCommands } from "./workspace/palette";
 import { useWorkspaceMenus } from "./hooks/useWorkspaceMenus";
 import { useNativeWindowFocus } from "./hooks/useNativeWindowFocus";
+import { useClientUpdateBanner } from "./hooks/useClientUpdateBanner";
 import { useWorkspaceGestures } from "./hooks/useWorkspaceGestures";
 import { configuredShortcutEntries } from "./shared/actions";
 import { createHostSaver } from "./workspace/actions/hostActions";
@@ -33,7 +34,6 @@ import { Sidebar } from "./components/sidebar/Sidebar";
 import { Toolbar } from "./components/workspace/Toolbar";
 import { ContextMenu } from "./components/ContextMenu";
 import { TabStrip } from "./components/workspace/TabStrip";
-import type { UpdateState } from "./shared/types";
 import "./linux.css";
 import { useWorkspace } from "./hooks/useWorkspace";
 import {
@@ -67,7 +67,6 @@ export default function App() {
     dialogState.primary?.dialog.kind === "palette"
       ? dialogState.primary.dialog.scope
       : undefined;
-  const [updateState, setUpdateState] = useState<UpdateState>();
   const [connectionRevisions, setConnectionRevisions] = useState<
     Partial<Record<string, number>>
   >({});
@@ -123,16 +122,13 @@ export default function App() {
   useEffect(() => {
     ws.publishUiBusy(modalOpen || !!menu);
   }, [modalOpen, menu, ws.publishUiBusy]);
-  useEffect(() => {
-    if (!window.rex) return;
-    void window.rex
-      .request("updateStatus", {})
-      .then(setUpdateState)
-      .catch(() => {});
-    return window.rex.onClientEvent((event) => {
-      if (event.type === "update") setUpdateState(event.state);
-    });
-  }, []);
+  const updateBanner = useClientUpdateBanner(() =>
+    dialogs.open({
+      kind: "services",
+      hostId: activeHost?.id || "local",
+      tab: "updates",
+    }),
+  );
   const execute = createWorkspaceActions({
     executeCurrent: (name, args, event) =>
       executeRef.current(name, args, event),
@@ -412,31 +408,7 @@ export default function App() {
             </button>
           </div>
         )}
-        {updateState &&
-          ["available", "ready", "scheduled"].includes(updateState.phase) && (
-            <div className="client-update-banner">
-              <span>
-                Linusaurus Rex {updateState.version}{" "}
-                {updateState.phase === "scheduled"
-                  ? "will install when idle"
-                  : updateState.phase === "ready"
-                    ? "is ready to install"
-                    : "is available"}
-                .
-              </span>
-              <button
-                onClick={() =>
-                  dialogs.open({
-                    kind: "services",
-                    hostId: activeHost?.id || "local",
-                    tab: "updates",
-                  })
-                }
-              >
-                Review update
-              </button>
-            </div>
-          )}
+        {updateBanner}
         <WorkspaceLayout
           workspaceElement={workspaceElement}
           selection={selection}
