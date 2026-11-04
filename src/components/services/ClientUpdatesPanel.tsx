@@ -15,9 +15,11 @@ export function ClientUpdatesPanel({
 }) {
   const [update, setUpdate] = useState<UpdateState>();
   const [busy, setBusy] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string>();
   const mounted = useRef(true);
   const revision = useRef(0);
+  const pendingActions = useRef(0);
   useEffect(() => {
     mounted.current = true;
     const unsubscribe = window.rex.onClientEvent((event) => {
@@ -33,6 +35,7 @@ export function ClientUpdatesPanel({
   }, []);
   const run = async (action: () => Promise<unknown>) => {
     if (!mounted.current) return;
+    pendingActions.current++;
     setBusy(true);
     setError(undefined);
     try {
@@ -40,7 +43,8 @@ export function ClientUpdatesPanel({
     } catch (failure) {
       if (mounted.current) setError(errorMessage(failure));
     } finally {
-      if (mounted.current) setBusy(false);
+      pendingActions.current--;
+      if (mounted.current) setBusy(pendingActions.current > 0);
     }
   };
   const requestUpdate = async (
@@ -73,9 +77,15 @@ export function ClientUpdatesPanel({
     );
     return () => clearInterval(timer);
   }, [active]);
-  const updateAction = (
-    action: "checkUpdates" | "downloadUpdate" | "cancelUpdate",
-  ) => void run(() => requestUpdate(action));
+  const updateAction = (action: "checkUpdates" | "downloadUpdate") =>
+    void run(() => requestUpdate(action));
+  const cancelUpdate = () => {
+    if (cancelling) return;
+    setCancelling(true);
+    void run(() => requestUpdate("cancelUpdate")).finally(() => {
+      if (mounted.current) setCancelling(false);
+    });
+  };
   return (
     <>
       <dl className="server-facts">
@@ -154,10 +164,11 @@ export function ClientUpdatesPanel({
         <button
           className="button"
           disabled={
-            busy ||
+            cancelling ||
+            (busy && update?.phase !== "downloading") ||
             !["downloading", "scheduled", "ready"].includes(update?.phase || "")
           }
-          onClick={() => updateAction("cancelUpdate")}
+          onClick={cancelUpdate}
         >
           Cancel update
         </button>
