@@ -24,7 +24,7 @@ interface WorkspaceLayoutProps {
   settings: Settings;
   focusedPane?: string;
   modalOpen: boolean;
-  connectionRevisions: Record<string, number>;
+  connectionRevisions: Partial<Record<string, number>>;
   operations: PaneGeometryOperations &
     Pick<WorkspaceOperations, "focusPane" | "refresh">;
   execute(name: string, args: Record<string, unknown>): Promise<unknown>;
