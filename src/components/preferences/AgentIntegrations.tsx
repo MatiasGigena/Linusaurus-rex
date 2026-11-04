@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { Section, Toggle } from "./Controls";
 import { errorMessage } from "../../core/workspace";
@@ -21,8 +21,30 @@ export function AgentIntegrations({
   ]);
   const [preview, setPreview] = useState<IntegrationPreview>();
   const [integrating, setIntegrating] = useState(false);
+  const mounted = useRef(true);
+  const revision = useRef(0);
+  const intent = useRef({ agents, letAgentsNameSessions });
+  intent.current = { agents, letAgentsNameSessions };
+  const invalidatePreview = () => {
+    revision.current++;
+    setPreview(undefined);
+    setError(undefined);
+    setIntegrating(false);
+  };
+  const beginRequest = () => {
+    const request = ++revision.current;
+    const requested = intent.current;
+    setIntegrating(true);
+    setError(undefined);
+    return () =>
+      mounted.current &&
+      revision.current === request &&
+      intent.current.agents === requested.agents &&
+      intent.current.letAgentsNameSessions === requested.letAgentsNameSessions;
+  };
   useEffect(() => {
     let active = true;
+    mounted.current = true;
     void window.rex
       .request("integrationsStatus", {})
       .then((result) => {
@@ -33,22 +55,43 @@ export function AgentIntegrations({
       });
     return () => {
       active = false;
+      mounted.current = false;
+      revision.current++;
     };
   }, []);
+  useEffect(() => {
+    invalidatePreview();
+  }, [letAgentsNameSessions]);
   const makePreview = async (operation: "setup" | "remove") => {
-    setIntegrating(true);
-    setError(undefined);
+    const ownsRequest = beginRequest();
+    setPreview(undefined);
     try {
       const result = await window.rex.request("integrationsPreview", {
         operation,
         agents,
         letAgentsNameSessions: letAgentsNameSessions,
       });
-      setPreview(result);
+      if (ownsRequest()) setPreview(result);
     } catch (failure) {
-      setError(errorMessage(failure));
+      if (ownsRequest()) setError(errorMessage(failure));
     } finally {
-      setIntegrating(false);
+      if (ownsRequest()) setIntegrating(false);
+    }
+  };
+  const applyPreview = async () => {
+    if (!preview) return;
+    const ownsRequest = beginRequest();
+    try {
+      const result = await window.rex.request("integrationsApply", {
+        previewId: preview.previewId,
+      });
+      if (!ownsRequest()) return;
+      setIntegrationOutput(result.output);
+      setPreview(undefined);
+    } catch (failure) {
+      if (ownsRequest()) setError(errorMessage(failure));
+    } finally {
+      if (ownsRequest()) setIntegrating(false);
     }
   };
 
@@ -66,12 +109,12 @@ export function AgentIntegrations({
                 type="checkbox"
                 checked={agents.includes(agent)}
                 onChange={(event) => {
+                  invalidatePreview();
                   setAgents(
                     event.target.checked
                       ? [...agents, agent]
                       : agents.filter((value) => value !== agent),
                   );
-                  setPreview(undefined);
                 }}
               />
               {
@@ -91,8 +134,8 @@ export function AgentIntegrations({
           label="Let agents name sessions"
           value={letAgentsNameSessions}
           onChange={(value) => {
+            invalidatePreview();
             onSessionNamingChange(value);
-            setPreview(undefined);
           }}
         />
         <div className="settings-buttons">
@@ -127,19 +170,7 @@ export function AgentIntegrations({
             className="button button-primary"
             type="button"
             disabled={integrating}
-            onClick={() => {
-              setIntegrating(true);
-              void window.rex
-                .request("integrationsApply", {
-                  previewId: preview.previewId,
-                })
-                .then((result) => {
-                  setIntegrationOutput(result.output);
-                  setPreview(undefined);
-                })
-                .catch((failure) => setError(errorMessage(failure)))
-                .finally(() => setIntegrating(false));
-            }}
+            onClick={() => void applyPreview()}
           >
             <ShieldCheck size={14} />
             {integrating ? "Applying…" : "Apply these changes"}

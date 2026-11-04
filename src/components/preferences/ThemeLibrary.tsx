@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, Palette, Save, Trash2 } from "lucide-react";
 import type { Settings } from "../../shared/types";
 import { TERMINAL_THEMES } from "../../terminal/themes";
@@ -25,13 +25,23 @@ export function ThemeLibrary({
 }) {
   const [names, setNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+  const mounted = useRef(true);
+  const current = useRef({ settings, onChange, onError });
+  current.current = { settings, onChange, onError };
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const draft = settings;
-  const apply = (operation: () => Settings) => {
+  const apply = (operation: (draft: Settings) => Settings) => {
+    if (!mounted.current) return;
     try {
-      onChange(operation());
-      onError(undefined);
+      current.current.onChange(operation(current.current.settings));
+      current.current.onError(undefined);
     } catch (failure) {
-      onError(errorMessage(failure));
+      current.current.onError(errorMessage(failure));
     }
   };
   const importTheme = async (appearance: ThemeAppearance) => {
@@ -39,7 +49,7 @@ export function ThemeLibrary({
     try {
       const colors = await window.rex.request("importTheme", {});
       if (colors)
-        apply(() =>
+        apply((draft) =>
           saveLibraryTheme(
             draft,
             uniqueThemeName(draft.themeLibrary, `Imported ${appearance}`),
@@ -48,13 +58,13 @@ export function ThemeLibrary({
           ),
         );
     } catch (failure) {
-      onError(errorMessage(failure));
+      if (mounted.current) current.current.onError(errorMessage(failure));
     } finally {
-      setLoading(false);
+      if (mounted.current) setLoading(false);
     }
   };
   const saveCurrent = (appearance: ThemeAppearance) =>
-    apply(() => {
+    apply((draft) => {
       const builtIn =
         TERMINAL_THEMES[
           appearance === "light" ? draft.lightTheme : draft.darkTheme
@@ -90,7 +100,7 @@ export function ThemeLibrary({
                 appearance === "light" ? draft.lightThemeId : draft.darkThemeId
               }
               onChange={(event) =>
-                apply(() =>
+                apply((draft) =>
                   selectLibraryTheme(draft, appearance, event.target.value),
                 )
               }
@@ -184,7 +194,7 @@ export function ThemeLibrary({
                   names[theme.id].trim() === theme.name
                 }
                 onClick={() =>
-                  apply(() =>
+                  apply((draft) =>
                     renameLibraryTheme(draft, theme.id, names[theme.id]),
                   )
                 }
@@ -196,7 +206,9 @@ export function ThemeLibrary({
                 className="icon-button"
                 aria-label={`Delete ${theme.name}`}
                 title="Remove from library"
-                onClick={() => apply(() => deleteLibraryTheme(draft, theme.id))}
+                onClick={() =>
+                  apply((draft) => deleteLibraryTheme(draft, theme.id))
+                }
               >
                 <Trash2 size={14} />
               </button>
