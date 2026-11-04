@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import type { TerminalPaneProps } from "../../terminal/TerminalPane";
 import { errorMessage } from "../../core/workspace";
-import { canonicalActionName, configuredShortcut } from "../../shared/actions";
+import { configuredShortcut } from "../../shared/actions";
 
 const STEPS = [
   "welcome",
@@ -238,21 +238,16 @@ function OnboardingTutorial({
               <h1>Keep your hands on the keyboard</h1>
               <dl className="server-facts">
                 {[
-                  ["command-palette", "Find a command"],
-                  ["session-switcher", "Switch session"],
-                  ["split-right", "Split right"],
-                  ["zoom", "Zoom or restore a pane"],
-                  ["find", "Search terminal output"],
+                  ["client.palette.toggle", "Find a command"],
+                  ["session.switch", "Switch session"],
+                  ["pane.split.right", "Split right"],
+                  ["pane.zoom", "Zoom or restore a pane"],
+                  ["client.find.open", "Search terminal output"],
                 ].map(([key, label]) => (
                   <div key={key}>
                     <dt>{label}</dt>
                     <dd>
-                      <kbd>
-                        {configuredShortcut(
-                          canonicalActionName(key),
-                          settings.shortcuts,
-                        )}
-                      </kbd>
+                      <kbd>{configuredShortcut(key, settings.shortcuts)}</kbd>
                     </dd>
                   </div>
                 ))}
