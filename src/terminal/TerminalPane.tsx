@@ -5,7 +5,7 @@ import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { AlertCircle, ArrowDown, ArrowUp, CaseSensitive, ChevronDown, ChevronUp, Copy, Maximize2, Regex, Search, TerminalSquare, X } from 'lucide-react';
 import type { RexPane, Settings, TerminalFrame, TerminalRef } from '../shared/types';
 import { acquireTerminal, releaseTerminal, type TerminalRuntime } from './runtime';
-import { isCompositionKey, isNativeText, keyboardPayload, keyModifiers, pointerCell } from './keys';
+import { registerTerminalInput, type TerminalMenu } from './input';
 import { terminalOptions, terminalServerTheme } from './themes';
 import { applicationLinks, linkProtocol } from './links';
 import { TerminalVisuals } from './visuals';
@@ -81,7 +81,7 @@ export function TerminalPane(props: TerminalPaneProps) {
   const [regex, setRegex] = useState(false);
   const [searchError, setSearchError] = useState<string>();
   const [searchResults, setSearchResults] = useState({ resultIndex: -1, resultCount: 0 });
-  const [menu, setMenu] = useState<{ x: number; y: number; selection: boolean }>();
+  const [menu, setMenu] = useState<TerminalMenu>();
   const commandRef = useRef<(command: string) => void>(() => {});
   const searchOperation = useRef<(previous?: boolean) => void>(() => {});
 
@@ -95,21 +95,15 @@ export function TerminalPane(props: TerminalPaneProps) {
     hostElement.replaceChildren(runtime.element);
     runtimeRef.current = runtime;
     const visuals=new TerminalVisuals(term,runtime.element,hostElement,settingsRef.current);visualsRef.current=visuals;
-    let disposed = false, online = false, commandReady = false, disconnected = false, generation = 0, composing = false, deadKey = false, writing = false, replayingSnapshot = false, sawFrame = false;
+    let disposed = false, online = false, commandReady = false, disconnected = false, generation = 0, writing = false, replayingSnapshot = false, sawFrame = false;
     let inputQueue = Promise.resolve();
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    let copyTimer: ReturnType<typeof setTimeout> | undefined;
-    let motionAnimation = 0, resizeAnimation = 0, nativeTextUntil = 0, pendingBytes = 0, wheelRemainder = 0;
-    let pendingMotion: (() => void) | undefined;
+    let resizeAnimation = 0, pendingBytes = 0;
     let pendingFrames: TerminalFrame[] = [];
-    let layout: ReadonlyMap<string, string> | undefined;
-    let pointerButton: 'left' | 'middle' | 'right' | undefined;
-    let selectionAnchor: number | undefined;
     let promptNavigationMarker: TerminalRuntime['prompts'][number] | undefined;
     let promptNavigationViewport = -1;
-    let lastMouseCell = '', lastSize = '';
-    const pressedKeys = new Set<string>();
+    let lastSize = '';
     const commandWaiters = new Set<{ resolve(generation: number): void; reject(failure: Error): void; timer: ReturnType<typeof setTimeout> }>();
     const ref = { hostId, sessionId, blockId };
     const subscriptionId = crypto.randomUUID();
@@ -215,13 +209,33 @@ export function TerminalPane(props: TerminalPaneProps) {
         };writePart(0);
       }else done();
     };
+    const paste = async (text?: string, commandGeneration?: number) => {
+      const readyGeneration = commandGeneration ?? await waitForCommands();
+      const value = text ?? await window.rex.readClipboard();
+      if (new TextEncoder().encode(value).length > 1024 * 1024) throw new Error('Paste is larger than the 1 MiB input limit.');
+      if (generation !== readyGeneration || !commandReady || !enqueue(() => window.rex.request('paste', { ...ref, text: value }))) {
+        throw new Error('The terminal connection changed before paste could be accepted.');
+      }
+    };
+    const input = registerTerminalInput({
+      runtime, hostElement, ref,
+      settings: () => settingsRef.current,
+      isVisible, isOnline: () => online,
+      isFocused: () => callbacks.current.focused,
+      isReplayingSnapshot: () => replayingSnapshot,
+      enqueue, paste,
+      onFocus: () => callbacks.current.onFocus(),
+      onCopied: () => visuals.copied(),
+      onError: reportCommandError,
+      onMenu: setMenu,
+    });
     runtime.requestCursorReset = drawNext;
     const unsubscribe = window.rex.onTerminal((frame) => {
       if (disposed || frame.subscriptionId !== subscriptionId) return;
       if (frame.error) { fail(frame.error); return; }
       if (frame.data === undefined && frame.kind !== 'resize') return;
       const recovered = !online;
-      if (recovered) { generation++; disconnected = false; pressedKeys.clear(); }
+      if (recovered) { generation++; disconnected = false; input.reset(); }
       online = true; setConnected(true); setError(undefined);
       if (recovered && callbacks.current.focused) enqueue(() => window.rex.request('focusEvent', { ...ref, focused: true }));
       if (recovered && isVisible()) {
@@ -242,17 +256,6 @@ export function TerminalPane(props: TerminalPaneProps) {
       drawNext();
       if (callbacks.current.focused && isVisible() && document.activeElement === document.body) term.focus();
     });
-    const copy = () => {
-      if (term.hasSelection()) void window.rex.writeClipboard(term.getSelection()).then(()=>visuals.copied()).catch((failure: unknown) => setError(displayError(failure)));
-    };
-    const paste = async (text?: string, commandGeneration?: number) => {
-      const readyGeneration = commandGeneration ?? await waitForCommands();
-      const value = text ?? await window.rex.readClipboard();
-      if (new TextEncoder().encode(value).length > 1024 * 1024) throw new Error('Paste is larger than the 1 MiB input limit.');
-      if (generation !== readyGeneration || !commandReady || !enqueue(() => window.rex.request('paste', { ...ref, text: value }))) {
-        throw new Error('The terminal connection changed before paste could be accepted.');
-      }
-    };
     const promptNavigation = (direction: 'previous' | 'next') => {
       const buffer = term.buffer.active;
       const logicalMarker = promptNavigationMarker && !promptNavigationMarker.isDisposed && promptNavigationViewport === buffer.viewportY ? promptNavigationMarker : undefined;
@@ -265,7 +268,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     };
     const handleCommand = (command: string, commandGeneration: number) => {
       switch (command) {
-        case 'copy': copy(); break;
+        case 'copy': input.copy(); break;
         case 'paste': return paste(undefined, commandGeneration);
         case 'select-all': term.selectAll(); break;
         case 'find': setSearchOpen(true); break;
@@ -321,113 +324,6 @@ export function TerminalPane(props: TerminalPaneProps) {
       // selected cursor. Other cursor visibility/mode sequences remain intact.
       return settingsRef.current.forceCursorStyle && style !== 0;
     });
-    const dataListener = term.onData((data) => {
-      // Rex's Ghostty already answered terminal queries. Only native IME/dead-key
-      // text enters this path; keys, paste, mouse and focus use typed events.
-      if (isNativeText(data) && (composing || performance.now() < nativeTextUntil)) enqueue(() => window.rex.request('input', { ...ref, data }));
-    });
-    term.attachCustomKeyEventHandler((event) => {
-      if (event.defaultPrevented || !isVisible() || !online) return false;
-      if (isCompositionKey(event) || composing || deadKey) {
-        nativeTextUntil = performance.now() + 1500;
-        if (event.key === 'Dead') deadKey = true;
-        else if (event.type === 'keyup') deadKey = false;
-        return true;
-      }
-      if (event.type === 'keypress') return false;
-      const payload = keyboardPayload(event, layout);
-      if (!payload) return true;
-      if (event.type === 'keyup') { if (!pressedKeys.delete(event.code)) return false; }
-      else pressedKeys.add(event.code);
-      event.preventDefault(); enqueue(() => window.rex.request('key', { ...ref, event: payload }));
-      if (settingsRef.current.scrollOnOutput && event.type === 'keydown') term.scrollToBottom();
-      return false;
-    });
-    const clipboardPaste = (event: ClipboardEvent) => {
-      if (!isVisible()) return;
-      event.preventDefault(); event.stopImmediatePropagation();
-      void paste(event.clipboardData?.types.includes('text/plain') ? event.clipboardData.getData('text/plain') : undefined).catch(reportCommandError);
-    };
-    const compositionStart = () => { composing = true; nativeTextUntil = performance.now() + 1500; };
-    const compositionEnd = () => { composing = false; nativeTextUntil = performance.now() + 250; };
-    const beforeInput = (event: InputEvent) => { if (event.isComposing || event.inputType.startsWith('insertComposition')) nativeTextUntil = performance.now() + 1500; };
-    const focusIn = () => enqueue(() => window.rex.request('focusEvent', { ...ref, focused: true }));
-    const focusOut = () => { pressedKeys.clear(); enqueue(() => window.rex.request('focusEvent', { ...ref, focused: false })); };
-    hostElement.addEventListener('paste', clipboardPaste, true);
-    hostElement.addEventListener('compositionstart', compositionStart, true);
-    hostElement.addEventListener('compositionend', compositionEnd, true);
-    hostElement.addEventListener('beforeinput', beforeInput as EventListener, true);
-    hostElement.addEventListener('focusin', focusIn); hostElement.addEventListener('focusout', focusOut);
-    const screen = runtime.element.querySelector<HTMLElement>('.xterm-screen')!;
-    const cellAt = (event: MouseEvent) => pointerCell(event.clientX, event.clientY, screen.getBoundingClientRect(), term.cols, term.rows);
-    const tracking = () => term.modes.mouseTrackingMode !== 'none';
-    const sendMouse = (event: MouseEvent, action: 'press' | 'motion' | 'release', button?: 'left' | 'middle' | 'right') => {
-      const cell = cellAt(event), signature = `${cell.x}/${cell.y}/${button || ''}`;
-      if (action === 'motion' && lastMouseCell === signature) return;
-      lastMouseCell = signature;
-      enqueue(() => window.rex.request('mouse', { ...ref, event: { action, ...(button ? { button } : {}), ...cell, mods: keyModifiers(event, false) } }));
-    };
-    const stopMouse = (event: MouseEvent) => { event.preventDefault(); event.stopImmediatePropagation(); };
-    const mouseDown = (event: MouseEvent) => {
-      if (!isVisible()) return;
-      if (event.button === 2 && !(event.shiftKey && tracking() && settingsRef.current.mouseReporting)) { stopMouse(event); return; }
-      if (!tracking() || (event.button === 0 && event.shiftKey)) return;
-      if (!settingsRef.current.mouseReporting && event.button === 0) {
-        const at = cellAt(event); selectionAnchor = (term.buffer.active.viewportY + at.y) * term.cols + at.x;
-        term.clearSelection(); stopMouse(event); return;
-      }
-      if (!settingsRef.current.mouseReporting || !online) return;
-      pointerButton = event.button === 0 ? 'left' : event.button === 1 ? 'middle' : 'right';
-      term.clearSelection(); sendMouse(event, 'press', pointerButton); stopMouse(event);
-    };
-    const mouseMove = (event: MouseEvent) => {
-      if (!isVisible()) return;
-      if (selectionAnchor !== undefined) {
-        const at = cellAt(event), end = (term.buffer.active.viewportY + at.y) * term.cols + at.x, start = Math.min(selectionAnchor, end);
-        term.select(start % term.cols, Math.floor(start / term.cols), Math.abs(selectionAnchor - end) + 1);
-        stopMouse(event); return;
-      }
-      const inside = screen.contains(event.target as Node);
-      if (!pointerButton && (!inside || !callbacks.current.focused || term.modes.mouseTrackingMode !== 'any' || event.shiftKey)) return;
-      if (!settingsRef.current.mouseReporting || !online || !tracking()) return;
-      pendingMotion = () => sendMouse(event, 'motion', pointerButton);
-      if (!motionAnimation) motionAnimation = requestAnimationFrame(() => { motionAnimation = 0; pendingMotion?.(); pendingMotion = undefined; });
-      if (pointerButton) stopMouse(event);
-    };
-    const mouseUp = (event: MouseEvent) => {
-      if (selectionAnchor !== undefined) { selectionAnchor = undefined; stopMouse(event); return; }
-      if (!pointerButton) return;
-      cancelAnimationFrame(motionAnimation); motionAnimation = 0; pendingMotion?.(); pendingMotion = undefined;
-      sendMouse(event, 'release', pointerButton); pointerButton = undefined; stopMouse(event);
-    };
-    const contextMenu = (event: MouseEvent) => {
-      event.preventDefault(); event.stopPropagation();
-      if (event.shiftKey && tracking() && settingsRef.current.mouseReporting && online) return;
-      callbacks.current.onFocus();
-      setMenu({ x: Math.max(8, Math.min(event.clientX, window.innerWidth - 230)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 410)), selection: term.hasSelection() });
-    };
-    const wheel = (event: WheelEvent) => {
-      if (!isVisible()) return;
-      if (settingsRef.current.mouseReporting && tracking() && !event.shiftKey && online) {
-        event.preventDefault(); event.stopImmediatePropagation();
-        const lineHeight = screen.clientHeight / Math.max(1, term.rows);
-        wheelRemainder += event.deltaY * (event.deltaMode === WheelEvent.DOM_DELTA_LINE ? lineHeight : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? screen.clientHeight : 1) / lineHeight;
-        const lines = Math.trunc(wheelRemainder); wheelRemainder -= lines;
-        const cell = cellAt(event);
-        for (let i = 0; i < Math.min(Math.abs(lines), 8); i++) enqueue(() => window.rex.request('wheel', { ...ref, event: { ...cell, delta_x: 0, delta_y: Math.sign(lines) } }));
-      } else if (tracking()) {
-        event.preventDefault(); event.stopImmediatePropagation();
-        const lines = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY : event.deltaY / (screen.clientHeight / Math.max(1, term.rows));
-        term.scrollLines(Math.sign(lines) * Math.max(1, Math.round(Math.abs(lines))));
-      }
-    };
-    hostElement.addEventListener('mousedown', mouseDown, true);
-    window.addEventListener('mousemove', mouseMove, true); window.addEventListener('mouseup', mouseUp, true);
-    hostElement.addEventListener('contextmenu', contextMenu); hostElement.addEventListener('wheel', wheel, { capture: true, passive: false });
-    const selectionListener = term.onSelectionChange(() => {
-      clearTimeout(copyTimer);
-      if (!replayingSnapshot && settingsRef.current.copyOnSelect && term.hasSelection()) copyTimer = setTimeout(copy, 150);
-    });
     const titleListener = term.onTitleChange((title) => callbacks.current.onTitle?.(title));
     const bellListener = term.onBell(() => {
       if (replayingSnapshot) return;
@@ -471,10 +367,8 @@ export function TerminalPane(props: TerminalPaneProps) {
       if (isVisible()) synchronizeTheme(runtime, ref, settingsRef.current, (message) => { if (!disposed) setError(message); });
     };
     colorScheme.addEventListener('change', updateColorScheme);
-    const navigatorWithKeyboard = navigator as Navigator & { keyboard?: { getLayoutMap(): Promise<ReadonlyMap<string, string>> } };
-    void navigatorWithKeyboard.keyboard?.getLayoutMap().then((value) => { layout = value; }).catch(() => {});
     const visibilityChanged=(show:boolean)=>{
-      if(!show){generation++;pressedKeys.clear();rejectPendingCommands('The terminal pane was hidden before the command became ready.');clearTimeout(resizeTimer);void window.rex.request('releaseViewport',ref).catch(()=>{});}
+      if(!show){generation++;input.reset();rejectPendingCommands('The terminal pane was hidden before the command became ready.');clearTimeout(resizeTimer);void window.rex.request('releaseViewport',ref).catch(()=>{});}
       else{lastSize='';sendSize();}
     };
     runtime.visibilityChanged=visibilityChanged;
@@ -482,22 +376,15 @@ export function TerminalPane(props: TerminalPaneProps) {
     return () => {
       disposed = true; online = false; generation++;
       rejectPendingCommands('The terminal pane was hidden or closed before the command became ready.');
-      clearTimeout(resizeTimer); clearTimeout(retryTimer); clearTimeout(copyTimer); cancelAnimationFrame(motionAnimation); cancelAnimationFrame(resizeAnimation);
+      clearTimeout(resizeTimer); clearTimeout(retryTimer); cancelAnimationFrame(resizeAnimation);
       observer.disconnect(); unsubscribe(); cursorStyleListener.dispose();
-      dataListener.dispose(); selectionListener.dispose(); titleListener.dispose(); bellListener.dispose(); links.dispose(); appLinks.dispose(); resultsListener.dispose();
+      input.dispose(); titleListener.dispose(); bellListener.dispose(); links.dispose(); appLinks.dispose(); resultsListener.dispose();
       window.removeEventListener('rex-terminal-command', commandListener);
-      hostElement.removeEventListener('paste', clipboardPaste, true);
-      hostElement.removeEventListener('compositionstart', compositionStart, true); hostElement.removeEventListener('compositionend', compositionEnd, true);
-      hostElement.removeEventListener('beforeinput', beforeInput as EventListener, true);
-      hostElement.removeEventListener('focusin', focusIn); hostElement.removeEventListener('focusout', focusOut);
-      hostElement.removeEventListener('mousedown', mouseDown, true);
-      window.removeEventListener('mousemove', mouseMove, true); window.removeEventListener('mouseup', mouseUp, true);
-      hostElement.removeEventListener('contextmenu', contextMenu); hostElement.removeEventListener('wheel', wheel, true);
       document.removeEventListener('visibilitychange', visibility);
       window.removeEventListener('focus', windowFocus);
       colorScheme.removeEventListener('change', updateColorScheme);
       void window.rex.request('unsubscribe', { subscriptionId }).catch(() => {});
-      term.attachCustomKeyEventHandler(() => false); releaseTerminal(runtime);
+      releaseTerminal(runtime);
       if (runtime.requestCursorReset === drawNext) runtime.requestCursorReset = undefined;
       if (runtimeRef.current === runtime) runtimeRef.current = undefined;
       if(runtime.visibilityChanged===visibilityChanged)runtime.visibilityChanged=undefined;

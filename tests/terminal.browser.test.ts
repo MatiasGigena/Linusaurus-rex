@@ -17,9 +17,9 @@ const ref={hostId:'test',sessionId:'test',blockId:'test'};
 const requests=[],listeners=new Set(); let currentSubscription; let first=true; let clipboard='PASTE_FROM_CLIPBOARD';
 window.rex={request:async(method,args)=>{requests.push({method,args,contentAtSend:window.fixture?.term()?.buffer.active.getLine(0)?.translateToString(true)}); if(method==='key' && window.fixture?.deferNextKey){window.fixture.deferNextKey=false;await new Promise(resolve=>{window.fixture.releaseKey=resolve})} if(method==='key' && window.fixture?.failNextKey){const message=window.fixture.failNextKey;window.fixture.failNextKey=undefined;throw new Error(message)} if(method==='subscribe'){currentSubscription=args.subscriptionId;if(first){first=false;if(!location.search.includes('deferSnapshot'))setTimeout(()=>emit({kind:'snapshot',data:'alpha alpha\\r\\nready> ',cols:80,rows:24}),10)}} return method==='key'?{handled:true}:undefined},onTerminal:cb=>{listeners.add(cb);return()=>listeners.delete(cb)},onCommand:()=>()=>{},readClipboard:async()=>clipboard,writeClipboard:async text=>{clipboard=text}};
 function emit(frame){for(const fn of listeners)fn({subscriptionId:currentSubscription,...frame})}
-let update,show; function Fixture(){const [settings,setSettings]=React.useState(DEFAULT_SETTINGS),[visible,setVisible]=React.useState(true);update=patch=>setSettings(s=>({...s,...patch}));show=setVisible;return React.createElement(TerminalPane,{pane:{id:'test',label:'Test terminal',rect:[0,0,1,1]},terminalRef:ref,settings,visible,focused:true,showHeader:false,onFocus(){},onClose(){},onZoom(){}})}
+let update,show,mount; function Fixture(){const [settings,setSettings]=React.useState(DEFAULT_SETTINGS),[visible,setVisible]=React.useState(true),[mounted,setMounted]=React.useState(true);update=patch=>setSettings(s=>({...s,...patch}));show=setVisible;mount=setMounted;return mounted&&React.createElement(TerminalPane,{pane:{id:'test',label:'Test terminal',rect:[0,0,1,1]},terminalRef:ref,settings,visible,focused:true,showHeader:false,onFocus(){},onClose(){},onZoom(){}})}
 createRoot(document.getElementById('root')).render(React.createElement(Fixture));
-window.fixture={requests,emit,update:patch=>update(patch),show:value=>show(value),term:()=>getCachedTerminal(ref)?.terminal,command:dispatchTerminalCommand,commandAsync:dispatchTerminalCommandAsync};
+window.fixture={requests,emit,update:patch=>update(patch),show:value=>show(value),mount:value=>mount(value),subscribers:()=>listeners.size,term:()=>getCachedTerminal(ref)?.terminal,command:dispatchTerminalCommand,commandAsync:dispatchTerminalCommandAsync};
 </script></body></html>`;
 
 test('terminal appends streams, retains selection/settings, routes mouse/keys, and searches output', { skip: process.env.TERMINAL_UI_TEST !== '1', timeout: 40_000 }, async () => {
@@ -235,6 +235,31 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     assert.equal(await page.evaluate(() => (window as any).fixture.term().buffer.active.viewportY), 0);
     await page.evaluate(() => (window as any).fixture.commandAsync('prompt-next'));
     assert.equal(await page.evaluate(() => (window as any).fixture.term().buffer.active.viewportY), 8);
+    // Remounting a cached emulator replaces every input listener and clears a
+    // held pointer, so a detached pane cannot send input or release a stale drag.
+    await page.evaluate(async () => {
+      const f = (window as any).fixture;
+      await new Promise<void>(resolve => f.term().write('\x1b[?1000h\x1b[?1006h', resolve));
+    });
+    const remountScreen = await page.locator('.xterm-screen').boundingBox();
+    assert.ok(remountScreen);
+    await page.mouse.move(remountScreen.x + 20, remountScreen.y + 20);
+    await page.mouse.down();
+    const beforeUnmount = await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'mouse').length);
+    await page.evaluate(() => (window as any).fixture.mount(false));
+    await page.locator('.terminal-container').waitFor({ state: 'detached' });
+    assert.equal(await page.evaluate(() => (window as any).fixture.subscribers()), 0);
+    await page.evaluate(() => (window as any).fixture.mount(true));
+    await page.locator('.terminal-container .xterm').waitFor();
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'snapshot', data: 'remounted> \x1b[?1000h\x1b[?1006h', cols: 80, rows: 24 }));
+    await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(0)?.translateToString(true).trimEnd() === 'remounted>');
+    await page.mouse.up();
+    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'mouse').length), beforeUnmount, 'a remounted pane must not release a pointer held by its previous input lifecycle');
+    await page.locator('.xterm-helper-textarea').focus();
+    await page.keyboard.press('z');
+    await page.waitForFunction(() => (window as any).fixture.requests.some((r: any) => r.method === 'key' && r.args.event.key === 'key_z' && r.args.event.action === 'release'));
+    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((r: any) => r.method === 'key' && r.args.event.key === 'key_z' && r.args.event.action === 'press').length), 1);
+    assert.equal(await page.evaluate(() => (window as any).fixture.subscribers()), 1);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); await server.close(); }
 });
