@@ -804,14 +804,14 @@ export default function App() {
           form={form}
           busy={busy}
           onRefresh={ws.refresh}
-          onClose={() => setForm(undefined)}
+          onClose={() => setForm((current) => current === form ? undefined : current)}
         />
       )}
       {confirmation && (
         <ConfirmDialog
           confirmation={confirmation}
           onRefresh={ws.refresh}
-          onClose={() => setConfirmation(undefined)}
+          onClose={() => setConfirmation((current) => current === confirmation ? undefined : current)}
         />
       )}
       {report && (

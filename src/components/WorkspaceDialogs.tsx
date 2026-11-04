@@ -8,14 +8,22 @@ type SubmissionPhase = "ready" | "saving" | "committed" | "refreshing";
 
 /** A completed write can recover by reading, never by invoking submit again. */
 function useMutationDialog(
+  owner: Form | Confirmation,
   onClose: () => void,
   onRefresh?: () => Promise<void>,
 ) {
-  const [state, setState] = useState<{
+  type Submission = {
+    owner: Form | Confirmation;
     phase: SubmissionPhase;
     error?: string;
-  }>({ phase: "ready" });
-  const phase = useRef<SubmissionPhase>("ready");
+    committedError?: string;
+  };
+  const [saved, setSaved] = useState<Submission>({ owner, phase: "ready" });
+  const state: Submission =
+    saved.owner === owner ? saved : { owner, phase: "ready" };
+  const phase = useRef({ owner, value: "ready" as SubmissionPhase });
+  const currentOwner = useRef(owner);
+  currentOwner.current = owner;
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -23,40 +31,53 @@ function useMutationDialog(
       mounted.current = false;
     };
   }, []);
-  const update = (next: typeof state) => {
-    phase.current = next.phase;
-    if (mounted.current) setState(next);
+  const ownsDialog = () => mounted.current && currentOwner.current === owner;
+  const update = (next: Omit<Submission, "owner">) => {
+    if (!ownsDialog()) return;
+    phase.current = { owner, value: next.phase };
+    setSaved({ ...next, owner });
   };
   const close = () => {
-    if (mounted.current) onClose();
+    if (ownsDialog()) onClose();
   };
   return {
     ...state,
     committed: state.phase === "committed" || state.phase === "refreshing",
     submit(operation: () => Promise<unknown>) {
-      if (phase.current !== "ready") return;
+      if (
+        !ownsDialog() ||
+        (phase.current.owner === owner && phase.current.value !== "ready")
+      )
+        return;
       update({ phase: "saving" });
       void Promise.resolve()
         .then(operation)
         .then(close, (failure) => {
+          const committed = failure instanceof WorkspaceReconciliationError;
+          const error = errorMessage(failure);
           update({
-            phase:
-              failure instanceof WorkspaceReconciliationError
-                ? "committed"
-                : "ready",
-            error: errorMessage(failure),
+            phase: committed ? "committed" : "ready",
+            error,
+            committedError: committed ? error : undefined,
           });
         });
     },
     refresh() {
-      if (phase.current !== "committed" || !onRefresh) return;
+      if (
+        !ownsDialog() ||
+        phase.current.owner !== owner ||
+        phase.current.value !== "committed" ||
+        !onRefresh
+      )
+        return;
       update({ ...state, phase: "refreshing" });
       void Promise.resolve()
         .then(onRefresh)
         .then(close, (failure) => {
           update({
             phase: "committed",
-            error: `${state.error}\nRefresh failed: ${errorMessage(failure)}`,
+            committedError: state.committedError,
+            error: `${state.committedError}\nRefresh failed: ${errorMessage(failure)}`,
           });
         });
     },
@@ -74,12 +95,18 @@ export function FormDialog({
   onClose(): void;
   onRefresh?(): Promise<void>;
 }) {
-  const [values, setValues] = useState(
+  const initialValues = () =>
     Object.fromEntries(
       form.fields.map((field) => [field.name, field.value || ""]),
-    ),
-  );
-  const submission = useMutationDialog(onClose, onRefresh);
+    );
+  const [draft, setDraft] = useState(() => ({
+    owner: form,
+    values: initialValues(),
+  }));
+  const values = draft.owner === form ? draft.values : initialValues();
+  const setValues = (next: Record<string, string>) =>
+    setDraft({ owner: form, values: next });
+  const submission = useMutationDialog(form, onClose, onRefresh);
   const saving = submission.phase === "saving";
   const { error } = submission;
   return (
@@ -157,7 +184,7 @@ export function ConfirmDialog({
   onClose(): void;
   onRefresh?(): Promise<void>;
 }) {
-  const submission = useMutationDialog(onClose, onRefresh);
+  const submission = useMutationDialog(confirmation, onClose, onRefresh);
   const saving = submission.phase === "saving";
   const { error } = submission;
   return (
