@@ -176,10 +176,15 @@ test(
       await rex.resize(local, sessionId, blockId, 92, 28);
       localTerminal = await GhosttyTerminal.open({ cols: 92, rows: 28 });
       const terminal = localTerminal;
-      const wait = async (condition: () => boolean, label: string) => {
-        for (let attempt = 0; attempt < 150; attempt++) {
-          if (condition()) return;
-          await delay(20);
+      const readinessDeadline = performance.now() + 25_000;
+      const wait = async (
+        condition: () => boolean | Promise<boolean>,
+        label: string,
+      ) => {
+        const deadline = Math.min(readinessDeadline, performance.now() + 8_000);
+        while (performance.now() < deadline) {
+          if (await condition()) return;
+          await delay(Math.min(50, Math.max(0, deadline - performance.now())));
         }
         throw new Error(`${label}; stream errors: ${errors.join("; ")}`);
       };
@@ -261,15 +266,13 @@ test(
         blockId,
         "printf '\\033[?1049hSTREAM_ALT_%s' READY; read -r ignored; printf '\\033[?1049l'\r",
       );
-      for (let attempt = 0; attempt < 60; attempt++) {
-        if (
-          (await rex.capture(local, sessionId, blockId)).includes(
+      await wait(
+        async () =>
+          (await rex.capture(local, sessionId!, blockId)).includes(
             "STREAM_ALT_READY",
-          )
-        )
-          break;
-        await delay(20);
-      }
+          ),
+        "Server must enter the alternate screen before a fresh attachment",
+      );
       stop = subscribe();
       await wait(
         () =>
@@ -325,10 +328,11 @@ test(
       const blockId = (await rex.inspect(local, sessionId)).windows[0].panes[0]
         .id;
       let screen = "";
-      for (let attempt = 0; attempt < 50; attempt++) {
+      const deadline = performance.now() + 8_000;
+      while (performance.now() < deadline) {
         screen = await rex.capture(local, sessionId, blockId);
         if (screen.includes("STARTUP_OK")) break;
-        await delay(20);
+        await delay(Math.min(50, Math.max(0, deadline - performance.now())));
       }
       assert.match(screen, /STARTUP_OK/);
     } finally {
