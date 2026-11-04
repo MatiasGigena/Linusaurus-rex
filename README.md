@@ -130,6 +130,7 @@ npm run test:terminal
 npm run test:ui
 npm run test:boundary
 npm run test:actions
+npm run test:startup
 npm run test:services
 npm run test:graphics
 npm run test:layers
@@ -137,7 +138,7 @@ npm run test:systemd
 npm run test:accessibility
 ```
 
-Native desktop tests require `Xvfb` and `xauth` (on Debian/Ubuntu: `sudo apt install xvfb xauth`). Every `test:ui`, `test:boundary`, `test:actions`, `test:services`, `test:graphics`, `test:layers`, `test:systemd`, `test:accessibility` and `test:update-live` run uses a private, authenticated X11 display and clipboard. They never open windows on your desktop. Set `XVFB=/absolute/path/to/Xvfb` to use a local executable; missing Xvfb is an error. After building once, run several fixtures in sequence with `node scripts/test-desktop.mjs smoke boundary actions services graphics layers systemd accessibility`. Add `--isolated-rex` before the fixture names to create a temporary Rex server and runtime directory with persistence disabled; the runner cleans up its owned processes and files. `REX_EXECUTABLE=/absolute/path/to/rex` selects that server binary. `npm run test:boundary` builds and runs the IPC authorization checks with this isolation. The existing D-Bus connection is retained for owned systemd and AT-SPI checks. Live update verification additionally requires `LIVE_UPDATE_FROM=/absolute/path/to/published.AppImage` and a newer published stable release; it updates only a temporary copy.
+Native desktop tests require `Xvfb` and `xauth` (on Debian/Ubuntu: `sudo apt install xvfb xauth`). Every `test:ui`, `test:boundary`, `test:actions`, `test:startup`, `test:services`, `test:graphics`, `test:layers`, `test:systemd`, `test:accessibility` and `test:update-live` run uses a private, authenticated X11 display and clipboard. They never open windows on your desktop. Set `XVFB=/absolute/path/to/Xvfb` to use a local executable; missing Xvfb is an error. After building once, run several fixtures in sequence with `node scripts/test-desktop.mjs smoke boundary actions startup services graphics layers systemd accessibility`. Add `--isolated-rex` before the fixture names to create a temporary Rex server and runtime directory with persistence disabled; the runner cleans up its owned processes and files. `REX_EXECUTABLE=/absolute/path/to/rex` selects that server binary. `npm run test:boundary` and `npm run test:startup` build and use this isolation. The startup fixture holds a real preferences read open while a second process launches, verifying readiness and preservation of its CLI overrides. The existing D-Bus connection is retained for owned systemd and AT-SPI checks. Live update verification additionally requires `LIVE_UPDATE_FROM=/absolute/path/to/published.AppImage` and a newer published stable release; it updates only a temporary copy.
 
 Release validation runs the browser behavior and pixel suites, then private Electron smoke and IPC authorization fixtures against a pinned Rex archive verified by SHA-256. These gates must pass before release assets are published.
 
