@@ -10,6 +10,16 @@ export interface SessionMutationPlan<T> {
   sessionId: string | ((result: T) => string);
   selectActive?: boolean;
 }
+/** A newer workspace publication owns the state that this read would replace. */
+export class SupersededSessionInspectionError extends Error {
+  constructor(cause?: unknown) {
+    super(
+      "The session inspection was superseded by a newer workspace change.",
+      { cause },
+    );
+    this.name = "SupersededSessionInspectionError";
+  }
+}
 /** The write completed; this failure must be recovered by reading, not replaying it. */
 export class WorkspaceReconciliationError extends Error {
   readonly code?: string;

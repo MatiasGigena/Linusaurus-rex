@@ -56,7 +56,7 @@ export function SessionNavigation({
         </IconButton>
       </div>
       {!props.collapsedSessions?.has(session.id) &&
-        props.settings?.tabStyle !== "top" && (
+        props.preferences?.tabStyle !== "top" && (
           <div className="session-windows">
             {session.windows
               .filter(
@@ -67,7 +67,7 @@ export function SessionNavigation({
                       .includes(props.filter.toLowerCase())) &&
                   (!props.activityOnly ||
                     (!!window.activity &&
-                      (props.settings?.notifications.includeIdle ||
+                      (props.preferences?.notifications.includeIdle ||
                         window.activity.state !== "idle"))),
               )
               .map((window) => (
@@ -77,7 +77,7 @@ export function SessionNavigation({
                   sessionId={session.id}
                   window={window}
                   selected={activeSession && window.id === props.activeWindowId}
-                  settings={props.settings}
+                  preferences={props.preferences}
                   onSelect={props.onSelect}
                   onContextWindow={props.onContextWindow}
                   onCloseWindow={props.onCloseWindow}

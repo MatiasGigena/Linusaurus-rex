@@ -1,9 +1,10 @@
+import type { NavigationPreferences } from "./sidebar/navigation";
 import { HostNavigation } from "./sidebar/HostNavigation";
 import { SidebarResizer } from "./sidebar/SidebarResizer";
 import { SidebarFooter } from "./sidebar/SidebarFooter";
 import { PanelLeftClose, Search, Terminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { ProgramActivity, Settings } from "../shared/types";
+import type { ProgramActivity } from "../shared/types";
 import { IconButton } from "./IconButton";
 import { WindowControls, type WindowControlAction } from "./WindowControls";
 
@@ -45,7 +46,7 @@ export interface SidebarProps {
   onPalette: () => void;
   onAddHost?: () => void;
   onDeleteHost?: (hostId: string) => void;
-  settings?: Settings;
+  preferences?: NavigationPreferences;
   collapsedSessions?: Set<string>;
   onToggleSession?: (sessionId: string) => void;
   onContextSession?: (
@@ -113,8 +114,8 @@ export function Sidebar(props: SidebarProps) {
     >
       <SidebarResizer
         width={props.width}
-        committedWidth={props.settings?.sidebarWidth}
-        right={props.settings?.tabStyle === "right"}
+        committedWidth={props.preferences?.sidebarWidth}
+        right={props.preferences?.tabStyle === "right"}
         onResize={props.onResize}
         onResizeEnd={props.onResizeEnd}
       />
@@ -183,7 +184,7 @@ export function Sidebar(props: SidebarProps) {
             activeHostId={props.activeHostId}
             activeSessionId={props.activeSessionId}
             activeWindowId={props.activeWindowId}
-            settings={props.settings}
+            preferences={props.preferences}
             collapsedSessions={props.collapsedSessions}
             onToggleSession={props.onToggleSession}
             onSelect={props.onSelect}

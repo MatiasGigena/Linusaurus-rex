@@ -3,7 +3,7 @@ import { ProgramIcon } from "../ProgramIcon";
 import { activityLabel } from "../../core/workspace";
 type Props = Pick<
   SidebarProps,
-  | "settings"
+  | "preferences"
   | "onSelect"
   | "onContextWindow"
   | "onCloseWindow"
@@ -79,16 +79,16 @@ export function WindowNavigationItem({
         }
       }}
     >
-      {(props.settings?.tabIcons ?? 1) > 0 && (
+      {(props.preferences?.tabIcons ?? 1) > 0 && (
         <span
-          className={`terminal-glyph ${props.settings?.tabIconColors === "never" || (props.settings?.tabIconColors !== "always" && !selected) ? "monochrome" : ""}`}
+          className={`terminal-glyph ${props.preferences?.tabIconColors === "never" || (props.preferences?.tabIconColors !== "always" && !selected) ? "monochrome" : ""}`}
         >
           <ProgramIcon program={window.program} />
         </span>
       )}
       <span className="window-label">
         {window.label || "Terminal"}
-        {window.activity && props.settings?.notifications.showInTabs && (
+        {window.activity && props.preferences?.notifications.showInTabs && (
           <small className={`activity-caption ${window.activity.state}`}>
             {activityLabel(window.activity)}
             {window.activity.progress !== undefined
@@ -97,7 +97,7 @@ export function WindowNavigationItem({
           </small>
         )}
       </span>
-      {window.activity && props.settings?.notifications.showInTabs ? (
+      {window.activity && props.preferences?.notifications.showInTabs ? (
         <span
           className={`activity-status ${window.activity.state}`}
           aria-label={activityLabel(window.activity)}
@@ -105,17 +105,17 @@ export function WindowNavigationItem({
       ) : (
         selected && <span className="window-live-dot" aria-hidden="true" />
       )}
-      {(props.settings?.tabIcons ?? 1) > 1 &&
+      {(props.preferences?.tabIcons ?? 1) > 1 &&
         window.icons
-          ?.slice(1, props.settings?.tabIcons)
+          ?.slice(1, props.preferences?.tabIcons)
           .map((program, index) => (
             <span
-              className={`extra-program-icon ${props.settings?.tabIconColors === "always" || (props.settings?.tabIconColors === "active-tab" && selected) ? "" : "monochrome"}`}
+              className={`extra-program-icon ${props.preferences?.tabIconColors === "always" || (props.preferences?.tabIconColors === "active-tab" && selected) ? "" : "monochrome"}`}
               key={index}
             >
               <ProgramIcon
                 program={program}
-                shellTheme={props.settings?.shellIconTheme}
+                shellTheme={props.preferences?.shellIconTheme}
               />
             </span>
           ))}

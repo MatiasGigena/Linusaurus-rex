@@ -1,11 +1,23 @@
 import { useEffect, useRef, type RefObject } from "react";
-import type { PaneDivider, RexPane, Selection } from "../shared/types";
-import type { useWorkspace } from "./useWorkspace";
+import type {
+  PaneDivider,
+  RexPane,
+  Selection,
+  SessionView,
+} from "../shared/types";
+import {
+  SupersededSessionInspectionError,
+  type WorkspaceOperations,
+} from "../core/workspaceOperations";
+
+export type PaneGeometryOperations = Pick<WorkspaceOperations, "run"> & {
+  reloadSession(hostId: string, sessionId: string): Promise<SessionView>;
+};
 
 /** Pointer interactions for tiled split borders and floating layers. */
 export function usePaneGeometry(
   workspaceElement: RefObject<HTMLDivElement | null>,
-  ws: Pick<ReturnType<typeof useWorkspace>, "reloadSession" | "run">,
+  ws: PaneGeometryOperations,
   safely: (action: () => Promise<unknown>) => void,
 ) {
   const stopInteraction = useRef<() => void>(() => {});
@@ -38,7 +50,12 @@ export function usePaneGeometry(
             direction: divider.direction,
             ratio: sentRatio,
           });
-          await ws.reloadSession(where.hostId, where.sessionId);
+          await ws
+            .reloadSession(where.hostId, where.sessionId)
+            .catch((failure) => {
+              if (!(failure instanceof SupersededSessionInspectionError))
+                throw failure;
+            });
         } finally {
           inFlight = false;
           if (latest !== sentRatio) flush();
@@ -74,15 +91,47 @@ export function usePaneGeometry(
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up, { once: true });
   };
-  const moveFloating = (
+  const resizeDividerByKey = (
+    event: React.KeyboardEvent,
+    divider: PaneDivider,
+    where: Selection,
+  ) => {
+    if (
+      !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+    )
+      return;
+    event.preventDefault();
+    const ratio = Math.max(
+      0.05,
+      Math.min(
+        0.95,
+        divider.ratio +
+          (["ArrowRight", "ArrowDown"].includes(event.key) ? 0.05 : -0.05),
+      ),
+    );
+    safely(() =>
+      ws.run(where.hostId, () =>
+        window.rex.request("resizeDivider", {
+          hostId: where.hostId,
+          sessionId: where.sessionId,
+          ...divider,
+          ratio,
+        }),
+      ),
+    );
+  };
+  const startFloatingPaneInteraction = (
     event: React.PointerEvent,
     pane: RexPane,
     where: Selection,
-    resize = false,
+    mode: "move" | "resize",
   ) => {
     if (!pane.layerId || !workspaceElement.current) return;
     stopInteraction.current();
     const layerId = pane.layerId;
+    const wrapper = event.currentTarget.closest<HTMLElement>(
+      "[data-floating-block]",
+    );
     event.preventDefault();
     const bounds = workspaceElement.current.getBoundingClientRect();
     const start = {
@@ -94,22 +143,20 @@ export function usePaneGeometry(
     const move = (next: PointerEvent) => {
       const dx = (next.clientX - start.x) / bounds.width;
       const dy = (next.clientY - start.y) / bounds.height;
-      latest = resize
-        ? [
-            start.rect[0],
-            start.rect[1],
-            Math.max(0.15, Math.min(1 - start.rect[0], start.rect[2] + dx)),
-            Math.max(0.15, Math.min(1 - start.rect[1], start.rect[3] + dy)),
-          ]
-        : [
-            Math.max(0, Math.min(1 - start.rect[2], start.rect[0] + dx)),
-            Math.max(0, Math.min(1 - start.rect[3], start.rect[1] + dy)),
-            start.rect[2],
-            start.rect[3],
-          ];
-      const wrapper = document.querySelector<HTMLElement>(
-        `[data-floating-block="${CSS.escape(pane.id)}"]`,
-      );
+      latest =
+        mode === "resize"
+          ? [
+              start.rect[0],
+              start.rect[1],
+              Math.max(0.15, Math.min(1 - start.rect[0], start.rect[2] + dx)),
+              Math.max(0.15, Math.min(1 - start.rect[1], start.rect[3] + dy)),
+            ]
+          : [
+              Math.max(0, Math.min(1 - start.rect[2], start.rect[0] + dx)),
+              Math.max(0, Math.min(1 - start.rect[3], start.rect[1] + dy)),
+              start.rect[2],
+              start.rect[3],
+            ];
       if (wrapper)
         Object.assign(wrapper.style, {
           left: `${latest[0] * 100}%`,
@@ -139,5 +186,5 @@ export function usePaneGeometry(
     window.addEventListener("pointerup", up, { once: true });
   };
 
-  return { resizeDivider, moveFloating };
+  return { resizeDivider, resizeDividerByKey, startFloatingPaneInteraction };
 }

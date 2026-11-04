@@ -1,6 +1,7 @@
 import { buildPaletteCommands } from "./workspace/palette";
 import { sessionMenuItems, tabMenuItems } from "./workspace/contextMenus";
 import { useWorkspaceGestures } from "./hooks/useWorkspaceGestures";
+import { configuredShortcutEntries } from "./shared/actions";
 import { createHostSaver } from "./workspace/actions/hostActions";
 import { createServerActions } from "./workspace/actions/serverActions";
 import { pickDirectoryPath } from "./workspace/actions/directoryActions";
@@ -9,10 +10,9 @@ import {
   buildActivityFeed,
   enrichWindow,
 } from "./workspace/presentation";
-import { WorkspacePane } from "./components/WorkspacePane";
+import { WorkspaceLayout } from "./components/WorkspaceLayout";
 import { FormDialog, ConfirmDialog } from "./components/WorkspaceDialogs";
 import { useInterfaceAppearance } from "./hooks/useInterfaceAppearance";
-import { usePaneGeometry } from "./hooks/usePaneGeometry";
 import { createWorkspaceActions } from "./workspace/actions/createWorkspaceActions";
 import type { Form, Confirmation } from "./workspace/actions/context";
 import { useEffect, useRef, useState } from "react";
@@ -42,7 +42,6 @@ import { PairDeviceDialog } from "./components/PairDeviceDialog";
 import { DirectoryDialog } from "./components/DirectoryDialog";
 import { TabStrip } from "./components/TabStrip";
 import { NativeServicesDialog } from "./components/NativeServicesDialog";
-import { ActivePaneHighlight } from "./components/ActivePaneHighlight";
 import type { UpdateState } from "./shared/types";
 import "./linux.css";
 import { useWorkspace } from "./hooks/useWorkspace";
@@ -53,7 +52,7 @@ import {
   windowTitle,
   viewKey,
 } from "./core/workspace";
-import { type ClientEvent, type Host, type Selection } from "./shared/types";
+import { type ClientEvent, type Host } from "./shared/types";
 
 type Menu = { x: number; y: number; items: (ContextItem | null)[] };
 export default function App() {
@@ -98,7 +97,6 @@ export default function App() {
   const [collapsedSessions, setCollapsedSessions] = useState(new Set<string>());
   const [nativeFocused, setNativeFocused] = useState(document.hasFocus());
   const [sidebarPreviewWidth, setSidebarPreviewWidth] = useState<number>();
-  const [visited, setVisited] = useState<Selection[]>([]);
   const workspaceElement = useRef<HTMLDivElement>(null);
   const executeRef = useRef<
     (
@@ -130,12 +128,6 @@ export default function App() {
     rawWindow && selection
       ? enrichWindow(selection.hostId, selection.sessionId, rawWindow, metadata)
       : undefined;
-  const activePane =
-    activeWindow?.panes.find((pane) => pane.id === focusedPane) ||
-    activeWindow?.panes.find(
-      (pane) => pane.id === activeWindow.focusedBlockId,
-    ) ||
-    activeWindow?.panes[0];
   const toggleCollapse = (sessionId: string) =>
     setCollapsedSessions((previous) => {
       const next = new Set(previous);
@@ -146,28 +138,6 @@ export default function App() {
     void action().catch((failure) => ws.setError(errorMessage(failure)));
   const dispatch = (name: string, args: Record<string, unknown> = {}) =>
     safely(() => executeRef.current(name, args));
-
-  useEffect(() => {
-    if (selection && activeWindow)
-      setVisited((previous) =>
-        [
-          ...previous.filter(
-            (item) =>
-              !(
-                item.hostId === selection.hostId &&
-                item.sessionId === selection.sessionId &&
-                item.windowId === selection.windowId
-              ),
-          ),
-          selection,
-        ].slice(-12),
-      );
-  }, [
-    selection?.hostId,
-    selection?.sessionId,
-    selection?.windowId,
-    !!activeWindow,
-  ]);
 
   useEffect(() => {
     if (selection?.windowId)
@@ -242,8 +212,8 @@ export default function App() {
       const config = ws.settingsRef.current;
       if (!config) return;
       if ((event.target as Element)?.closest?.(".terminal-container")) return;
-      const shortcut = Object.entries(config.shortcuts).find(([, shortcut]) =>
-        matchesShortcut(event, shortcut),
+      const shortcut = configuredShortcutEntries(config.shortcuts).find(
+        ([, shortcut]) => matchesShortcut(event, shortcut),
       );
       if (shortcut) {
         event.preventDefault();
@@ -331,11 +301,6 @@ export default function App() {
       ),
     );
 
-  const { resizeDivider, moveFloating } = usePaneGeometry(
-    workspaceElement,
-    ws,
-    safely,
-  );
   const saveHost = createHostSaver(ws.operations, (hostId) =>
     setConnectionRevisions((previous) => ({
       ...previous,
@@ -383,7 +348,17 @@ export default function App() {
     >
       <Sidebar
         hosts={navHosts}
-        settings={settings}
+        preferences={{
+          sidebarWidth: settings.sidebarWidth,
+          tabStyle: settings.tabStyle,
+          tabIcons: settings.tabIcons,
+          tabIconColors: settings.tabIconColors,
+          shellIconTheme: settings.shellIconTheme,
+          notifications: {
+            includeIdle: settings.notifications.includeIdle,
+            showInTabs: settings.notifications.showInTabs,
+          },
+        }}
         width={sidebarPreviewWidth ?? settings.sidebarWidth}
         onResize={setSidebarPreviewWidth}
         onResizeEnd={(width) =>
@@ -537,324 +512,63 @@ export default function App() {
               </button>
             </div>
           )}
-        <div className="workspace-body" ref={workspaceElement}>
-          {activeWindow && selection ? (
-            <>
-              {[
-                ...visited.filter(
-                  (item) =>
-                    !(
-                      item.hostId === selection.hostId &&
-                      item.sessionId === selection.sessionId &&
-                      item.windowId === selection.windowId
-                    ),
-                ),
-                selection,
-              ].map((where) => {
-                const raw = views[
-                  viewKey(where.hostId, where.sessionId)
-                ]?.windows.find((window) => window.id === where.windowId);
-                if (!raw) return null;
-                const window = enrichWindow(
-                  where.hostId,
-                  where.sessionId,
-                  raw,
-                  metadata,
-                );
-                const visible =
-                  where.hostId === selection.hostId &&
-                  where.sessionId === selection.sessionId &&
-                  where.windowId === selection.windowId;
-                const connected = hosts.find(
-                  (host) => host.id === where.hostId,
-                )?.connected;
-                return (
-                  <div
-                    key={`${where.hostId}/${where.sessionId}/${where.windowId}`}
-                    className={`terminal-layout ${window.panes.length > 1 ? "has-splits" : ""}`}
-                    style={{
-                      position: "absolute",
-                      inset: 0,
-                      display: visible ? "block" : "none",
-                    }}
-                    aria-hidden={!visible}
-                  >
-                    {visible && settings.highlightActivePane && (
-                      <ActivePaneHighlight
-                        rect={activePane?.rect}
-                        animation={settings.highlightAnimation}
-                        inset={
-                          window.panes.length > 1
-                            ? settings.paneStyle === "compact"
-                              ? 1
-                              : 4
-                            : 0
-                        }
-                      />
-                    )}
-                    {window.panes.map((pane) => (
-                      <div
-                        key={pane.id}
-                        data-block-id={pane.id}
-                        data-floating-block={
-                          pane.layerKind === "floating" ? pane.id : undefined
-                        }
-                        data-inactive={visible && pane.id !== activePane?.id}
-                        className={
-                          pane.layerKind === "floating"
-                            ? "floating-pane-wrapper"
-                            : ""
-                        }
-                        style={{
-                          position: "absolute",
-                          left: `${pane.rect[0] * 100}%`,
-                          top: `${pane.rect[1] * 100}%`,
-                          width: `${pane.rect[2] * 100}%`,
-                          height: `${pane.rect[3] * 100}%`,
-                          padding:
-                            window.panes.length > 1
-                              ? settings.paneStyle === "compact"
-                                ? 1
-                                : 4
-                              : 0,
-                          zIndex: pane.layerKind === "floating" ? 20 : 1,
-                        }}
-                        onPointerEnter={() => {
-                          if (
-                            visible &&
-                            settings.focusFollowsMouse &&
-                            pane.id !== activePane?.id
-                          )
-                            safely(() =>
-                              ws.operations.focusPane({
-                                hostId: where.hostId,
-                                sessionId: where.sessionId,
-                                blockId: pane.id,
-                              }),
-                            );
-                        }}
-                      >
-                        {pane.layerKind === "floating" && (
-                          <div
-                            className="floating-drag-handle"
-                            title="Drag floating pane"
-                            onPointerDown={(event) =>
-                              moveFloating(event, pane, where)
-                            }
-                          />
-                        )}
-                        <WorkspacePane
-                          key={`${pane.id}/${settings.hosts.find((host) => host.id === where.hostId)?.endpoint || ""}/${connectionRevisions[where.hostId] || 0}`}
-                          pane={pane}
-                          terminalRef={{
-                            hostId: where.hostId,
-                            sessionId: where.sessionId,
-                            blockId: pane.id,
-                          }}
-                          settings={settings}
-                          focused={
-                            visible && !modalOpen && pane.id === activePane?.id
-                          }
-                          visible={visible && !!connected}
-                          showHeader={
-                            settings.showPaneHeaders &&
-                            (window.panes.length > 1 ||
-                              pane.layerKind === "floating")
-                          }
-                          onFocus={() => {
-                            if (visible && pane.id !== activePane?.id)
-                              safely(() =>
-                                ws.operations.focusPane({
-                                  hostId: where.hostId,
-                                  sessionId: where.sessionId,
-                                  blockId: pane.id,
-                                }),
-                              );
-                          }}
-                          onZoom={() =>
-                            dispatch("pane.zoom", {
-                              host_id: where.hostId,
-                              session_id: where.sessionId,
-                              block_id: pane.id,
-                            })
-                          }
-                          onClose={() =>
-                            dispatch("pane.close", {
-                              host_id: where.hostId,
-                              session_id: where.sessionId,
-                              block_id: pane.id,
-                            })
-                          }
-                          onAction={(command) =>
-                            dispatch(command, {
-                              host_id: where.hostId,
-                              session_id: where.sessionId,
-                              block_id: pane.id,
-                            })
-                          }
-                        />
-                        {pane.layerKind === "floating" && (
-                          <div
-                            className="floating-resize-handle"
-                            onPointerDown={(event) =>
-                              moveFloating(event, pane, where, true)
-                            }
-                          />
-                        )}
-                      </div>
-                    ))}
-                    {visible &&
-                      window.dividers?.map((divider, index) => {
-                        const [x, y, w, h] = divider.rect;
-                        const horizontal = divider.direction === "horizontal";
-                        return (
-                          <div
-                            key={index}
-                            role="separator"
-                            aria-label={
-                              horizontal ? "Resize columns" : "Resize rows"
-                            }
-                            aria-orientation={
-                              horizontal ? "vertical" : "horizontal"
-                            }
-                            aria-valuenow={Math.round(divider.ratio * 100)}
-                            tabIndex={0}
-                            className={`split-divider ${horizontal ? "vertical" : "horizontal"}`}
-                            style={
-                              horizontal
-                                ? {
-                                    left: `${(x + w * divider.ratio) * 100}%`,
-                                    top: `${y * 100}%`,
-                                    height: `${h * 100}%`,
-                                  }
-                                : {
-                                    top: `${(y + h * divider.ratio) * 100}%`,
-                                    left: `${x * 100}%`,
-                                    width: `${w * 100}%`,
-                                  }
-                            }
-                            onPointerDown={(event) =>
-                              resizeDivider(event, divider, where)
-                            }
-                            onKeyDown={(event) => {
-                              if (
-                                [
-                                  "ArrowLeft",
-                                  "ArrowRight",
-                                  "ArrowUp",
-                                  "ArrowDown",
-                                ].includes(event.key)
-                              ) {
-                                event.preventDefault();
-                                const ratio = Math.max(
-                                  0.05,
-                                  Math.min(
-                                    0.95,
-                                    divider.ratio +
-                                      (["ArrowRight", "ArrowDown"].includes(
-                                        event.key,
-                                      )
-                                        ? 0.05
-                                        : -0.05),
-                                  ),
-                                );
-                                safely(() =>
-                                  ws.run(where.hostId, () =>
-                                    globalThis.window.rex.request(
-                                      "resizeDivider",
-                                      {
-                                        hostId: where.hostId,
-                                        sessionId: where.sessionId,
-                                        ...divider,
-                                        ratio,
-                                      },
-                                    ),
-                                  ),
-                                );
-                              }
-                            }}
-                          />
-                        );
-                      })}
-                    {visible && window.minimizedLayers?.length ? (
-                      <div className="minimized-panes">
-                        {window.minimizedLayers.map((layer) => (
-                          <button
-                            key={layer.id}
-                            onClick={() =>
-                              dispatch("pane.restore_floating", {
-                                block_id: layer.blockId,
-                                layer_id: layer.id,
-                              })
-                            }
-                          >
-                            <TerminalSquare size={12} />
-                            {layer.label}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-              {!activeHost?.connected && (
-                <div className="disconnected-overlay">
-                  <AlertCircle size={20} />
-                  <span>
-                    {activeHost?.error || "Connection lost. Reconnecting…"}
-                  </span>
-                  <button
-                    className="button"
-                    onClick={() => safely(() => ws.refresh())}
-                  >
-                    Reconnect
-                  </button>
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="empty-state">
-              <div className="empty-terminal-icon">
-                <TerminalSquare size={30} />
-              </div>
-              <span className="eyebrow">LINUSAURUS REX</span>
-              <h1>
-                {hosts.some((host) => host.connected)
-                  ? "Make room for your next idea."
-                  : "Your workspace is waiting."}
-              </h1>
-              <p>
-                {hosts.some((host) => host.connected)
-                  ? "Choose a session, or start a fresh workspace. Your programs stay on Rex when this app closes."
-                  : activeHost?.error ||
-                    "Connect to your existing Rex server to bring your terminals together."}
-              </p>
-              <div className="empty-actions">
-                <button
-                  className="button button-primary"
-                  onClick={() => dispatch("session.new")}
-                >
-                  <Plus size={15} />
-                  New session
-                </button>
-                <button
-                  className="button"
-                  onClick={() => safely(() => ws.refresh())}
-                >
-                  <RefreshCw size={14} />
-                  Reconnect
-                </button>
-              </div>
+        <WorkspaceLayout
+          workspaceElement={workspaceElement}
+          selection={selection}
+          views={views}
+          hosts={hosts}
+          metadata={metadata}
+          settings={settings}
+          focusedPane={focusedPane}
+          modalOpen={modalOpen}
+          connectionRevisions={connectionRevisions}
+          operations={{
+            focusPane: ws.operations.focusPane,
+            run: ws.operations.run,
+            refresh: ws.operations.refresh,
+            reloadSession: ws.reloadSession,
+          }}
+          execute={(name, args) => executeRef.current(name, args)}
+          onError={ws.setError}
+        >
+          <div className="empty-state">
+            <div className="empty-terminal-icon">
+              <TerminalSquare size={30} />
+            </div>
+            <span className="eyebrow">LINUSAURUS REX</span>
+            <h1>
+              {hosts.some((host) => host.connected)
+                ? "Make room for your next idea."
+                : "Your workspace is waiting."}
+            </h1>
+            <p>
+              {hosts.some((host) => host.connected)
+                ? "Choose a session, or start a fresh workspace. Your programs stay on Rex when this app closes."
+                : activeHost?.error ||
+                  "Connect to your existing Rex server to bring your terminals together."}
+            </p>
+            <div className="empty-actions">
               <button
-                className="empty-palette"
-                onClick={() => setPalette("all")}
+                className="button button-primary"
+                onClick={() => dispatch("session.new")}
               >
-                <Command size={13} />
-                Find a session or command<kbd>Ctrl Shift P</kbd>
+                <Plus size={15} />
+                New session
+              </button>
+              <button
+                className="button"
+                onClick={() => safely(() => ws.refresh())}
+              >
+                <RefreshCw size={14} />
+                Reconnect
               </button>
             </div>
-          )}
-        </div>
+            <button className="empty-palette" onClick={() => setPalette("all")}>
+              <Command size={13} />
+              Find a session or command<kbd>Ctrl Shift P</kbd>
+            </button>
+          </div>
+        </WorkspaceLayout>
         {settings.showKeyHints &&
           ws.keyHints &&
           (ws.keyHints.prefix.length > 0 || ws.keyHints.mode) && (
