@@ -16,3 +16,13 @@ test('plugin calls require an explicit JSON object and preserve literal argument
   assert.throws(() => parseMethodArgs('{'), SyntaxError);
   assert.equal(formatBlockResult(undefined), 'null');
 });
+
+test('block results always provide display text when successful serialization omits a top-level value', () => {
+  for (const result of [Symbol('plugin value'), () => {}, { toJSON: () => undefined }]) {
+    assert.equal(formatBlockResult(result), 'null');
+  }
+  assert.equal(formatBlockResult({ value: 7, omitted: undefined }), '{\n  "value": 7\n}');
+  assert.equal(formatBlockResult([undefined]), '[\n  null\n]');
+  const failure = new Error('plugin serialization failed');
+  assert.throws(() => formatBlockResult({ toJSON() { throw failure; } }), error => error === failure);
+});

@@ -28,5 +28,5 @@ export function parseMethodArgs(text: string): Record<string, unknown> {
 }
 
 export function formatBlockResult(result: unknown): string {
-  return JSON.stringify(result ?? null, null, 2);
+  return JSON.stringify(result ?? null, null, 2) ?? 'null';
 }
