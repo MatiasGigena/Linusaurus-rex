@@ -105,6 +105,42 @@ test('session and pane operations own their wire requests and preserve results a
   }
 });
 
+test('terminal size decodes unknown dimensions before publishing them', async () => {
+  let response: unknown;
+  const { service } = mock(async () => response);
+  try {
+    for (const value of [
+      null,
+      [],
+      {},
+      { columns: '80', rows: 24 },
+      { columns: 80, rows: '24' },
+      { columns: 1.5, rows: 24 },
+      { columns: 80, rows: NaN },
+      { columns: Infinity, rows: 24 },
+      { columns: 0, rows: 24 },
+      { columns: 80, rows: -1 },
+      { columns: 65536, rows: 24 },
+      { columns: 80, rows: 65536 },
+    ]) {
+      response = value;
+      await assert.rejects(
+        service.terminalSize(local, 's', 'b'),
+        /invalid terminal size/i,
+      );
+    }
+    for (const columns of [1, 65535]) {
+      response = { columns, rows: columns, future: { enabled: true } };
+      assert.deepEqual(await service.terminalSize(local, 's', 'b'), {
+        columns,
+        rows: columns,
+      });
+    }
+  } finally {
+    service.dispose();
+  }
+});
+
 test('terminal input bytes go in a single control request without invoking a shell', async () => {
   const { calls, service } = mock(async () => ({}));
   const data = '-n\u0003\u001b[A\t\r\n$(touch /tmp/never) "quoted"';

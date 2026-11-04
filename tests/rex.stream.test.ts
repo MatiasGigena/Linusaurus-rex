@@ -8,6 +8,111 @@ import { RexControl, socketAddress } from '../electron/rex/control.js';
 
 const fragmented = (bytes: Buffer, size = 1) => Array.from({ length: Math.ceil(bytes.length / size) }, (_, index) => bytes.subarray(index * size, (index + 1) * size));
 
+test(
+  'data tickets are decoded before opening a socket and valid future fields remain compatible',
+  { timeout: 10000 },
+  async () => {
+    const server = new WebSocketServer({
+      port: 0,
+      host: '127.0.0.1',
+      handleProtocols: (protocols) =>
+        protocols.has('rex.control.v1')
+          ? 'rex.control.v1'
+          : 'rex.data.terminal.v1',
+    });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    let reply: unknown,
+      dataConnections = 0;
+    const hellos: Buffer[] = [];
+    server.on('connection', (socket, request) => {
+      if (request.url === '/api/control') {
+        socket.on('message', (bytes) => {
+          const message = JSON.parse(bytes.toString());
+          socket.send(
+            JSON.stringify(
+              message.type === 'hello'
+                ? {
+                    type: 'welcome',
+                    protocol: 'rex.control.v1',
+                    api_revision: 10,
+                  }
+                : {
+                    type: 'response',
+                    id: message.id,
+                    payload: message.method === 'data.connect' ? reply : {},
+                  },
+            ),
+          );
+        });
+      } else {
+        dataConnections++;
+        socket.once('message', (bytes) => {
+          hellos.push(Buffer.from(bytes as Buffer));
+          socket.close(4000);
+        });
+      }
+    });
+    const control = new RexControl(`http://127.0.0.1:${address.port}`);
+    try {
+      for (const value of [
+        null,
+        [],
+        {},
+        { ticket: 1 },
+        { ticket: '' },
+        { ticket: Array(16).fill(1) },
+        { ticket: 'short' },
+      ]) {
+        reply = value;
+        let finish!: (error: string) => void;
+        const failed = new Promise<string>((resolve) => {
+          finish = resolve;
+        });
+        const stream = new RexTerminalStream(async () => control, 's', 'b', {
+          frame: () => assert.fail('Malformed tickets cannot publish frames'),
+          error: finish,
+        });
+        try {
+          assert.match(await failed, /invalid terminal ticket/i);
+          assert.equal(
+            dataConnections,
+            0,
+            'Malformed RPC payloads must be refused before socket creation',
+          );
+        } finally {
+          stream.dispose();
+        }
+      }
+      const token = Buffer.alloc(16, 7);
+      reply = {
+        ticket: token.toString('base64url'),
+        future: { supported: true },
+      };
+      let finish!: () => void;
+      const closed = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const stream = new RexTerminalStream(async () => control, 's', 'b', {
+        frame: () => {},
+        error: finish,
+      });
+      try {
+        await closed;
+        assert.equal(dataConnections, 1);
+        assert.deepEqual(hellos, [Buffer.concat([Buffer.from([1]), token])]);
+      } finally {
+        stream.dispose();
+      }
+    } finally {
+      control.dispose();
+      for (const socket of server.clients) socket.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  },
+);
+
 test('snapshot framing locates FINISH across arbitrary frames and rejects oversized records', async () => {
   const terminal = await Terminal.open({ cols: 20, rows: 4 });
   try {

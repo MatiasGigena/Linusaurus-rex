@@ -47,6 +47,24 @@ function capturePage(value: unknown): { data: string; eof: boolean } {
   return { data: result.data, eof: result.eof ?? false };
 }
 
+function terminalSizeReply(value: unknown): { columns: number; rows: number } {
+  const message = 'Rex returned an invalid terminal size.';
+  const result = replyRecord(value, message);
+  const { columns, rows } = result;
+  if (
+    typeof columns !== 'number' ||
+    typeof rows !== 'number' ||
+    !Number.isInteger(columns) ||
+    !Number.isInteger(rows) ||
+    columns < 1 ||
+    columns > 65535 ||
+    rows < 1 ||
+    rows > 65535
+  )
+    throw new Error(message);
+  return { columns, rows };
+}
+
 export interface RexServiceOptions { apiRevisions?: { min: number; max: number }; controlFactory?: (endpoint: string, credentials?: RexCredentials, reconnectToken?: string, revisions?: { min: number; max: number }) => RexControl; credentials?: (host: RexHost) => Promise<RexCredentials | undefined>; onControl?: (host: RexHost, control: RexControl) => void | Promise<void>; onMetadata?: (host: RexHost, sessionId: string, blockId: string, metadata: Record<string, unknown>) => void }
 
 export class RexService {
@@ -273,7 +291,9 @@ export class RexService {
   }
 
   async terminalSize(host: RexHost, sessionId: string, blockId: string) {
-    return this.block<{ columns: number; rows: number }>(host, sessionId, blockId, 'size', {});
+    return terminalSizeReply(
+      await this.block(host, sessionId, blockId, 'size', {}),
+    );
   }
 
   async input(host: RexHost, sessionId: string, blockId: string, data: string): Promise<void> {
