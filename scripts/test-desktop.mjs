@@ -17,6 +17,7 @@ const fixtures = [
   "smoke",
   "boundary",
   "actions",
+  "startup",
   "services",
   "graphics",
   "layers",

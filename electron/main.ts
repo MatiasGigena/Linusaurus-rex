@@ -119,10 +119,11 @@ async function launch(options:LaunchOptions){
 let options:LaunchOptions|undefined;
 try{options=parseLaunchArgs(applicationArgs(process.argv));}catch(error){startupError(error);}
 if(options?.help){console.log(LAUNCH_HELP);app.exit(0);}
-else if(options&&!app.requestSingleInstanceLock())app.quit();
+else if(options&&!app.requestSingleInstanceLock({args:applicationArgs(process.argv)}))app.quit();
 else if(options){
-  app.on('second-instance',(_event,argv,cwd)=>{void(async()=>{const requested=parseLaunchArgs(applicationArgs(argv),cwd);if(requested.config&&requested.config!==preferencesPath)throw new Error('Quit the running app before selecting a different --config preferences file.');if(requested.endpoint||requested.session||requested.newSession||requested.block||requested.font||requested.fontSize||requested.windowSize)await launch(requested);else showWindow();})().catch(error=>console.error(`Linusaurus Rex: ${error instanceof Error?error.message:String(error)}`));});
-  app.whenReady().then(async()=>{preferencesPath=options!.config||join(app.getPath('userData'),'settings.json');store=new SettingsStore(preferencesPath);await store.load();store.onChange(applySettings);applySettings(store.get());await launch(options!);}).catch(startupError);
+  const startup=app.whenReady().then(async()=>{preferencesPath=options!.config||join(app.getPath('userData'),'settings.json');store=new SettingsStore(preferencesPath);await store.load();store.onChange(applySettings);applySettings(store.get());await launch(options!);});
+  void startup.catch(startupError);
+  app.on('second-instance',(_event,argv,cwd,data)=>{void(async()=>{await startup;const forwarded=data&&typeof data==='object'&&'args' in data?data.args:undefined;const args=Array.isArray(forwarded)&&forwarded.every(value=>typeof value==='string')?forwarded:applicationArgs(argv);const requested=parseLaunchArgs(args,cwd);if(requested.config&&requested.config!==preferencesPath)throw new Error('Quit the running app before selecting a different --config preferences file.');if(requested.endpoint||requested.session||requested.newSession||requested.block||requested.font||requested.fontSize||requested.windowSize)await launch(requested);else showWindow();})().catch(error=>console.error(`Linusaurus Rex: ${error instanceof Error?error.message:String(error)}`));});
   app.on('window-all-closed',()=>{if(!store?.get().closeToTray)app.quit();});
   app.on('before-quit',()=>{quitting=true;globalShortcut.unregisterAll();tray?.destroy();tray=undefined;for(const dispose of disposers.values())dispose();disposers.clear();});
 }
