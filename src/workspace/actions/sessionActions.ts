@@ -136,13 +136,12 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
       }
       case "session.close":
         if (!sessionId) return;
-        requestClose(
+        return requestClose(
           hostId,
           "Close this session?",
           "All tabs, panes and running programs in this session will close on the server.",
           () => window.rex.request("destroySession", { hostId, sessionId }),
         );
-        return;
       case "session.refresh":
         return workspace.refresh();
       case "session.collapse":

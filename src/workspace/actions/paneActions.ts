@@ -28,7 +28,7 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
     switch (name) {
       case "pane.close":
         requirePane();
-        requestClose(
+        return requestClose(
           hostId,
           "Close this pane?",
           "This terminal and its running program will close on the Rex server.",
@@ -53,7 +53,6 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
             }
           },
         );
-        return;
       case "pane.zoom":
         requirePane();
         return workspace.mutateHostAndRefresh(hostId, () =>

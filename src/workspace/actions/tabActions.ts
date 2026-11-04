@@ -48,7 +48,7 @@ export function createTabActions(dependencies: TabActionsDependencies) {
       }
       case "client.tab.close":
         if (!currentWindow) return;
-        requestClose(
+        return requestClose(
           hostId,
           "Close this tab?",
           `“${currentWindow.label}” and all of its running programs will close on the server.`,
@@ -59,7 +59,6 @@ export function createTabActions(dependencies: TabActionsDependencies) {
               windowId: currentWindow.id,
             }),
         );
-        return;
       case "client.tab.rename": {
         if (!currentWindow) return;
         const rename = async (label: string) => {

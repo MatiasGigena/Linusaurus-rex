@@ -159,7 +159,6 @@ export default function App() {
     setActivityOnly,
     setActivityOpen,
     setActivityGroup,
-    onError: ws.setError,
   });
 
   executeRef.current = execute;

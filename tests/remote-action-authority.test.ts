@@ -5,7 +5,10 @@ import { ClientFeatures } from "../electron/client/client.js";
 import type { RexControl, RexEvent } from "../electron/rex/control.js";
 import type { RexService } from "../electron/rex/service.js";
 import { createWorkspaceActions } from "../src/workspace/actions/createWorkspaceActions.js";
-import type { WorkspaceOperations } from "../src/core/workspaceOperations.js";
+import {
+  WorkspaceReconciliationError,
+  type WorkspaceOperations,
+} from "../src/core/workspaceOperations.js";
 import {
   DEFAULT_SETTINGS,
   type ClientEvent,
@@ -14,7 +17,13 @@ import {
   type SessionView,
 } from "../src/shared/types.js";
 
-function fixture(t: TestContext) {
+function fixture(
+  t: TestContext,
+  configuration: {
+    confirmClose?: boolean;
+    mutateHostAndRefresh?: WorkspaceOperations["mutateHostAndRefresh"];
+  } = {},
+) {
   const source = {
     id: "source",
     label: "Source",
@@ -29,6 +38,7 @@ function fixture(t: TestContext) {
     ...structuredClone(DEFAULT_SETTINGS),
     hosts: [source, target],
     remoteControl: true,
+    confirmClose: configuration.confirmClose ?? DEFAULT_SETTINGS.confirmClose,
   };
   const requests: { method: keyof RexMethods; args: object }[] = [];
   const selected: string[] = [];
@@ -42,6 +52,9 @@ function fixture(t: TestContext) {
     ) => Promise<RexMethods[K]["result"]>;
   }> = {
     createSession: async () => ({ sessionId: "created" }),
+    closeWindow: async () => {},
+    closePane: async () => {},
+    destroySession: async () => {},
   };
   const request: RexBridge["request"] = async (method, args) => {
     requests.push({ method, args });
@@ -53,7 +66,9 @@ function fixture(t: TestContext) {
     getSettings: () => settings,
     saveSettings: async (value) => value,
     refresh: async () => {},
-    mutateHostAndRefresh: async (_host, operation) => operation(),
+    mutateHostAndRefresh:
+      configuration.mutateHostAndRefresh ??
+      (async (_host, operation) => operation()),
     mutateSession: async (plan, operation) => {
       const result = await operation();
       const id =
@@ -101,7 +116,23 @@ function fixture(t: TestContext) {
               { id: "other-shared", label: "Shared" },
             ],
     })),
-    views: {},
+    views: {
+      "source/source-a": {
+        id: "source-a",
+        label: "Source session",
+        activeWindowId: "source-tab",
+        windows: [
+          {
+            id: "source-tab",
+            label: "Source tab",
+            focusedBlockId: "source-pane",
+            panes: [
+              { id: "source-pane", label: "Source pane", rect: [0, 0, 1, 1] },
+            ],
+          },
+        ],
+      },
+    },
     keymaps: {},
     focusedPane: undefined,
     selection: {
@@ -115,10 +146,10 @@ function fixture(t: TestContext) {
     setActivityOnly: discard,
     setActivityOpen: discard,
     setActivityGroup: discard,
-    onError: discard,
   });
   let incoming: ((event: RexEvent) => void) | undefined;
   let complete: ((reply: Record<string, unknown>) => void) | undefined;
+  const replies: Record<string, unknown>[] = [];
   const control = {
     onEvent: (listener: (event: RexEvent) => void) => {
       incoming = listener;
@@ -126,7 +157,10 @@ function fixture(t: TestContext) {
     },
     readyPublic: async () => ({ protocol: "rex.control.v1", api_revision: 10 }),
     call: async (method: string, args: Record<string, unknown>) => {
-      if (method === "client.reply") complete?.(args);
+      if (method === "client.reply") {
+        replies.push(args);
+        complete?.(args);
+      }
       return {};
     },
   } as unknown as RexControl;
@@ -166,6 +200,8 @@ function fixture(t: TestContext) {
     dialogs,
     target,
     requests,
+    responders,
+    replies,
     selected,
     selectionTargets,
     actions,
@@ -194,6 +230,121 @@ function fixture(t: TestContext) {
       }),
   };
 }
+
+function latch() {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
+
+for (const [action, method] of [
+  ["session.close", "destroySession"],
+  ["client.tab.close", "closeWindow"],
+  ["pane.close", "closePane"],
+] as const) {
+  test(`incoming ${action} replies only after the actual dispatcher write and reconciliation settle`, async (t) => {
+    const write = latch(),
+      enteredWrite = latch(),
+      refresh = latch(),
+      enteredRefresh = latch();
+    const mutateHostAndRefresh: WorkspaceOperations["mutateHostAndRefresh"] =
+      async (hostId, operation) => {
+        assert.equal(hostId, "source");
+        const result = await operation();
+        enteredRefresh.release();
+        await refresh.promise;
+        return result;
+      };
+    const current = fixture(t, { confirmClose: false, mutateHostAndRefresh });
+    current.responders[method] = async () => {
+      enteredWrite.release();
+      await write.promise;
+    };
+    const replying = current.perform(
+      { block_id: "source-pane" },
+      action,
+      "source-a",
+    );
+    await enteredWrite.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const earlyWriteReply = current.replies.length;
+    write.release();
+    await enteredRefresh.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const earlyRefreshReply = current.replies.length;
+    refresh.release();
+    const reply = await replying;
+    assert.equal(earlyWriteReply, 0);
+    assert.equal(earlyRefreshReply, 0);
+    assert.deepEqual(reply, { call_id: "remote-call", result: null });
+    assert.equal(current.requests.length, 1);
+    assert.equal(current.requests[0].method, method);
+    assert.equal(Reflect.get(current.requests[0].args, "hostId"), "source");
+  });
+}
+
+for (const stage of ["write", "refresh"] as const) {
+  test(`incoming close ${stage} failure returns an error reply instead of success`, async (t) => {
+    const cause = new Error("Close refused");
+    const failure =
+      stage === "refresh" ? new WorkspaceReconciliationError(cause) : cause;
+    const mutateHostAndRefresh: WorkspaceOperations["mutateHostAndRefresh"] =
+      async (_hostId, operation) => {
+        await operation();
+        throw failure;
+      };
+    const current = fixture(t, { confirmClose: false, mutateHostAndRefresh });
+    current.responders.closeWindow = async () => {
+      if (stage === "write") throw failure;
+    };
+    const reply = await current.perform({}, "client.tab.close", "source-a");
+    assert.deepEqual(reply, {
+      call_id: "remote-call",
+      error: { code: "refused", message: failure.message },
+    });
+    assert.equal(current.requests.length, 1);
+  });
+}
+
+test("incoming close honors current-host mutation admission without writing", async (t) => {
+  const current = fixture(t, {
+    confirmClose: false,
+    mutateHostAndRefresh: async () => {
+      throw new Error("The selected host is no longer configured.");
+    },
+  });
+  const reply = await current.perform({}, "session.close", "source-a");
+  assert.deepEqual(reply, {
+    call_id: "remote-call",
+    error: {
+      code: "refused",
+      message: "The selected host is no longer configured.",
+    },
+  });
+  assert.deepEqual(current.requests, []);
+});
+
+test("incoming close explicitly reports confirmation deferral and starts no early write", async (t) => {
+  const current = fixture(t);
+  const reply = await current.perform({}, "client.tab.close", "source-a");
+  assert.deepEqual(reply, {
+    call_id: "remote-call",
+    result: { status: "confirmation_required" },
+  });
+  assert.deepEqual(current.requests, []);
+  const confirmation =
+    current.dialogs.snapshot.confirmation?.dialog.confirmation;
+  assert.ok(confirmation);
+  await confirmation.submit();
+  assert.deepEqual(current.requests, [
+    {
+      method: "closeWindow",
+      args: { hostId: "source", sessionId: "source-a", windowId: "source-tab" },
+    },
+  ]);
+});
 
 test("incoming server actions cannot mutate another host, while same-host requests traverse the real dispatcher", async (t) => {
   const current = fixture(t);

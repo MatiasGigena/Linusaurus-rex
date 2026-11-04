@@ -29,7 +29,6 @@ export interface WorkspaceActionOptions {
   setActivityOnly: StateSetter<boolean>;
   setActivityOpen: StateSetter<boolean>;
   setActivityGroup: StateSetter<"session" | "priority">;
-  onError(message: string): void;
 }
 export interface ResolvedCommand {
   name: string;
@@ -165,4 +164,4 @@ export type RequestClose = (
   title: string,
   description: string,
   action: () => Promise<unknown>,
-) => void;
+) => Promise<void | { status: "confirmation_required" }>;

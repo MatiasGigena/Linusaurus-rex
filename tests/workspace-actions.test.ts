@@ -1,4 +1,7 @@
-import type { WorkspaceOperations } from "../src/core/workspaceOperations";
+import {
+  WorkspaceReconciliationError,
+  type WorkspaceOperations,
+} from "../src/core/workspaceOperations";
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import type { Dispatch, SetStateAction } from "react";
@@ -234,7 +237,6 @@ function fixture(t: TestContext) {
     setActivityOnly: discard,
     setActivityOpen: discard,
     setActivityGroup: discard,
-    onError: discard,
   };
   return {
     initial,
@@ -253,6 +255,7 @@ function fixture(t: TestContext) {
     saved,
     inspections,
     timeline,
+    workspace,
     responders,
     execute: (
       name: string,
@@ -607,7 +610,8 @@ test("destructive session, tab and pane actions wait for explicit confirmation",
   ] as const) {
     current.dialogs.close(current.dialogs.snapshot.confirmation);
     const before = current.requests.length;
-    await current.execute(action);
+    const result = await current.execute(action);
+    assert.deepEqual(result, { status: "confirmation_required" });
     assert.equal(current.requests.length, before);
     const confirmation = current.confirmation.get();
     assert.ok(confirmation);
@@ -616,6 +620,105 @@ test("destructive session, tab and pane actions wait for explicit confirmation",
     assert.equal(current.requests.at(-1)?.method, method);
   }
 });
+
+function gate() {
+  let open!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { promise, open };
+}
+
+for (const [action, method] of [
+  ["session.close", "destroySession"],
+  ["client.tab.close", "closeWindow"],
+  ["pane.close", "closePane"],
+] as const) {
+  test(`${action} waits for its write and reconciliation when confirmation is disabled`, async (t) => {
+    const current = fixture(t);
+    current.settings.set({
+      ...current.initial,
+      confirmClose: false,
+      autobalanceSplits: false,
+    });
+    const wrote = gate(),
+      releaseWrite = gate(),
+      refreshing = gate(),
+      releaseRefresh = gate();
+    current.responders[method] = async () => {
+      wrote.open();
+      await releaseWrite.promise;
+    };
+    const mutationHosts: string[] = [];
+    current.workspace.mutateHostAndRefresh = async (hostId, operation) => {
+      mutationHosts.push(hostId);
+      const result = await operation();
+      refreshing.open();
+      await releaseRefresh.promise;
+      return result;
+    };
+    let completed = false;
+    const closing = current.execute(action).then(() => {
+      completed = true;
+    });
+    await wrote.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const completedBeforeWrite = completed;
+    current.selection.set({
+      hostId: "remote",
+      sessionId: "remote-session",
+      windowId: "remote-session-first",
+    });
+    releaseWrite.open();
+    await refreshing.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const completedBeforeRefresh = completed;
+    releaseRefresh.open();
+    await closing;
+    assert.equal(
+      completedBeforeWrite,
+      false,
+      "a pending close must not be acknowledged",
+    );
+    assert.equal(
+      completedBeforeRefresh,
+      false,
+      "a successful write still awaits target reconciliation",
+    );
+    assert.deepEqual(mutationHosts, ["local"]);
+    assert.equal(current.requests[0].method, method);
+    assert.equal(Reflect.get(current.requests[0].args, "hostId"), "local");
+    assert.equal(current.confirmation.get(), undefined);
+  });
+}
+
+for (const stage of ["write", "refresh", "unavailable host"] as const) {
+  test(`immediate close preserves the original ${stage} rejection`, async (t) => {
+    const current = fixture(t);
+    current.settings.set({ ...current.initial, confirmClose: false });
+    const cause = Object.assign(new Error(`${stage} denied`), {
+      code: "DENIED",
+      method: stage,
+    });
+    const failure =
+      stage === "refresh" ? new WorkspaceReconciliationError(cause) : cause;
+    current.responders.closeWindow = async () => {
+      if (stage === "write") throw failure;
+    };
+    current.workspace.mutateHostAndRefresh = async (_hostId, operation) => {
+      if (stage === "unavailable host") throw failure;
+      const result = await operation();
+      if (stage === "refresh") throw failure;
+      return result;
+    };
+    const result = await current.execute("client.tab.close").then(
+      () => undefined,
+      (error) => error,
+    );
+    assert.equal(result, failure);
+    assert.equal(current.requests.length, stage === "unavailable host" ? 0 : 1);
+  });
+}
 
 test("new-tab fallback prompts for a session on the requested host before creating anything", async (t) => {
   const current = fixture(t);

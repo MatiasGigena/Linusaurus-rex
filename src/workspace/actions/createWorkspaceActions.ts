@@ -1,5 +1,4 @@
 import { dispatchTerminalCommandAsync } from "../../terminal/commands";
-import { errorMessage } from "../../core/workspace";
 import type { ClientEvent } from "../../shared/types";
 import {
   UNHANDLED,
@@ -26,8 +25,13 @@ const nativeActions = new Set([
 export function createWorkspaceActions(options: WorkspaceActionOptions) {
   const { workspace, settings } = options;
   if (!settings) return async () => undefined;
-  const requestClose: RequestClose = (hostId, title, description, action) => {
-    if (settings.confirmClose)
+  const requestClose: RequestClose = async (
+    hostId,
+    title,
+    description,
+    action,
+  ) => {
+    if (settings.confirmClose) {
       options.dialogs.open({
         kind: "confirmation",
         confirmation: {
@@ -38,10 +42,9 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
           },
         },
       });
-    else
-      void workspace
-        .mutateHostAndRefresh(hostId, action)
-        .catch((failure) => options.onError(errorMessage(failure)));
+      return { status: "confirmation_required" };
+    }
+    await workspace.mutateHostAndRefresh(hostId, action);
   };
   const handlers = [
     createSessionActions({
