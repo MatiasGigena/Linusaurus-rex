@@ -153,7 +153,11 @@ export class TerminalCommandBroker {
 
 export const terminalCommands = new TerminalCommandBroker();
 
-/** Resolves when the target accepts the command after its transport is ready. */
+/**
+ * Waits for the pane's executor to settle, propagating execution errors or pane
+ * closure. The 10-second handoff timeout only covers waiting for an available
+ * pane; once accepted, a command is never replayed on another registration.
+ */
 export function dispatchTerminalCommandAsync(
   command: string,
   target?: TerminalRef,
