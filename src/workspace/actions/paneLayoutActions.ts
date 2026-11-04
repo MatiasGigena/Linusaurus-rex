@@ -1,5 +1,6 @@
 import type { RexPane, LayoutActionArgs, RexMethods } from "../../shared/types";
 import { adjacentPane } from "../../core/workspace";
+import { WorkspaceReconciliationError } from "../../core/workspaceOperations";
 import {
   UNHANDLED,
   type PaneLayoutActionsDependencies,
@@ -76,6 +77,7 @@ export function createPaneLayoutActions(
             : args.direction;
         const direction =
           requested === "auto" ? auto : moveDirection(requested);
+        let balancingFailure: { cause: unknown } | undefined;
         const completed = await workspace.mutateSession(
           { hostId, sessionId },
           async () => {
@@ -84,13 +86,28 @@ export function createPaneLayoutActions(
               direction,
               ratio: typeof args.ratio === "number" ? args.ratio : undefined,
             });
-            if (settings.autobalanceSplits)
-              await window.rex.request("layoutAction", {
-                ...terminalRef,
-                operation: "balance",
-              });
+            if (settings.autobalanceSplits) {
+              try {
+                await window.rex.request("layoutAction", {
+                  ...terminalRef,
+                  operation: "balance",
+                });
+              } catch (cause) {
+                // The split is committed. Reconcile it even when this optional
+                // follow-up fails; recovery must never replay the split.
+                balancingFailure = { cause };
+              }
+            }
           },
         );
+        if (balancingFailure) {
+          const { cause } = balancingFailure;
+          const detail = cause instanceof Error ? cause.message : String(cause);
+          throw new WorkspaceReconciliationError(
+            cause,
+            `The split completed, but balancing the panes failed: ${detail} Refresh the layout to check the result; do not repeat the split.`,
+          );
+        }
         return completed.view;
       }
       case "pane.focus":

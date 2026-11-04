@@ -1,6 +1,7 @@
 import type { PaneDivider } from "../../shared/types";
 import { errorMessage } from "../../core/workspace";
 import { parseMethodArgs } from "../../terminal/blocks";
+import { WorkspaceReconciliationError } from "../../core/workspaceOperations";
 import {
   UNHANDLED,
   type PaneActionsDependencies,
@@ -51,9 +52,9 @@ export function createPaneActions(dependencies: PaneActionsDependencies) {
                   operation: "balance",
                 });
               } catch (failure) {
-                throw new Error(
+                throw new WorkspaceReconciliationError(
+                  failure,
                   `The pane closed, but balancing the remaining panes failed: ${errorMessage(failure)} Refresh the layout to check the result; do not repeat the closure.`,
-                  { cause: failure },
                 );
               }
             }

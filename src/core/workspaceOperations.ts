@@ -24,10 +24,11 @@ export class SupersededSessionInspectionError extends Error {
 export class WorkspaceReconciliationError extends Error {
   readonly code?: string;
   readonly method?: string;
-  constructor(cause: unknown) {
+  constructor(cause: unknown, completedChange?: string) {
     const detail = cause instanceof Error ? cause.message : String(cause);
     super(
-      `The change completed, but refreshing the workspace failed: ${detail} Refresh to check the result before repeating the change.`,
+      completedChange ??
+        `The change completed, but refreshing the workspace failed: ${detail} Refresh to check the result before repeating the change.`,
       { cause },
     );
     this.name = "WorkspaceReconciliationError";

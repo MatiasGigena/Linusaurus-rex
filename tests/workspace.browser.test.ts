@@ -893,6 +893,7 @@ for (const scenario of [
   "balanced",
   "unbalanced",
   "inspection rejects",
+  "balancing rejects",
 ] as const) {
   test(
     `dispatcher split completion is ordered through ${scenario}`,
@@ -929,11 +930,19 @@ for (const scenario of [
               false,
             );
             assert.equal(await mutationStatus(page), "pending");
-            await complete(page, balanced, undefined);
+            if (scenario === "balancing rejects")
+              await fail(page, balanced, "Split balance denied");
+            else await complete(page, balanced, undefined);
           }
           const inspected = await pending(page, "inspectSession", "one");
           assert.equal(await mutationStatus(page), "pending");
-          if (scenario === "inspection rejects") {
+          if (scenario === "balancing rejects") {
+            await complete(page, inspected, view("s", "Committed split"));
+            await expect.poll(() => mutationStatus(page)).toMatch(/split completed.*balanc.*failed/i);
+            assert.equal((await snapshot(page)).views["one/s"], "Committed split");
+            assert.equal(await page.evaluate("window.fixture.failureCause"), true);
+            assert.equal(await page.evaluate("window.fixture.failureMethod"), "layoutAction");
+          } else if (scenario === "inspection rejects") {
             await fail(page, inspected, "Split inspection failed");
             await assertReconciliationFailure(
               page,
