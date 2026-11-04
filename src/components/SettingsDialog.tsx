@@ -188,10 +188,12 @@ export function SettingsDialog({
                   label="Theme"
                   value={draft.theme}
                   choices={[
+                    ["system", "Follow system"],
+                    ["macos", "macOS Dark"],
+                    ["macos-light", "macOS Light"],
                     ["graphite", "Graphite"],
                     ["midnight", "Midnight"],
                     ["light", "Paper"],
-                    ["system", "Follow system"],
                   ]}
                   onChange={(value) =>
                     setDraft((previous) =>
@@ -213,7 +215,9 @@ export function SettingsDialog({
                   label="Light appearance palette"
                   value={draft.lightTheme}
                   choices={[
+                    ["macos-light", "macOS Light"],
                     ["light", "Paper"],
+                    ["macos", "macOS Dark"],
                     ["graphite", "Graphite"],
                     ["midnight", "Midnight"],
                   ]}
@@ -232,8 +236,10 @@ export function SettingsDialog({
                   label="Dark appearance palette"
                   value={draft.darkTheme}
                   choices={[
+                    ["macos", "macOS Dark"],
                     ["graphite", "Graphite"],
                     ["midnight", "Midnight"],
+                    ["macos-light", "macOS Light"],
                     ["light", "Paper"],
                   ]}
                   onChange={(value) =>

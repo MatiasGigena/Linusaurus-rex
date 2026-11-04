@@ -4,6 +4,22 @@ A Linux desktop client for an existing [Rex](https://www.superlogical.com/rex) s
 
 This independent, unofficial application uses Electron, React, xterm.js and the canonical libghostty-vt WASM snapshot decoder. [rex-rune](https://github.com/shuv1337/rex-rune) was consulted as an MIT-licensed reference. See the [feature-by-feature parity inventory](docs/CLIENT_PARITY.md) for the documented actions, settings, validation and remaining differences.
 
+## Appearance
+
+The default macOS theme follows the system between light and dark. Graphite, Midnight and Paper remain available in Settings → Appearance, alongside imported Ghostty and iTerm palettes.
+
+![Linusaurus Rex in the macOS dark theme](docs/screenshots/macos-dark.png)
+
+| macOS Light | Settings (macOS Dark) |
+| --- | --- |
+| ![Linusaurus Rex in the macOS light theme](docs/screenshots/macos-light.png) | ![Appearance settings in the macOS dark theme](docs/screenshots/macos-dark-settings.png) |
+
+The sidebar's **New session** button opens a session on the current host in one click; the chevron beside it holds the per-host, **Add host…** and **Program activity** options.
+
+![The New session menu in the macOS light theme](docs/screenshots/macos-light-new-menu.png)
+
+The theme uses San Francisco when it is installed and otherwise the bundled [Inter](https://rsms.me/inter/) (SIL Open Font License); Apple licenses SF Pro only for its own platforms.
+
 ## Features
 
 - Saved local/remote hosts, searchable session switcher, command palette, session/tab/pane management, drag-resizable splits, floating panes, zoom and multiple native windows.

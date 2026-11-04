@@ -50,6 +50,14 @@ test('invalid settings cannot replace working preferences', async (t) => {
   assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), DEFAULT_SETTINGS);
 });
 
+test('macOS theme names are accepted and unknown theme names are rejected', () => {
+  const chosen = validateSettings({ ...DEFAULT_SETTINGS, theme: 'macos-light', lightTheme: 'macos-light', darkTheme: 'macos' });
+  assert.equal(chosen.theme, 'macos-light');
+  assert.equal(chosen.lightTheme, 'macos-light');
+  assert.equal(chosen.darkTheme, 'macos');
+  assert.throws(() => validateSettings({ ...DEFAULT_SETTINGS, theme: 'aqua' }));
+});
+
 test('removing a host removes a stale selection and strips unknown fields', () => {
   const result = validateSettings({
     ...DEFAULT_SETTINGS,

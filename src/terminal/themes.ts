@@ -2,7 +2,18 @@ import type { ITheme, ITerminalOptions } from '@xterm/xterm';
 import type { Settings } from '../shared/types';
 import { resolvedImportedTheme } from '../core/themeLibrary';
 
-export const TERMINAL_THEMES: Record<'graphite' | 'midnight' | 'light', ITheme> = {
+export const TERMINAL_THEMES: Record<'macos' | 'macos-light' | 'graphite' | 'midnight' | 'light', ITheme> = {
+  // Apple system colors, softened slightly so long-running output stays comfortable to read.
+  macos: {
+    background: '#1e1e1e', foreground: '#e6e6e6', cursor: '#0a84ff', cursorAccent: '#ffffff', selectionBackground: '#3f638b',
+    black: '#2c2c2e', red: '#ff6961', green: '#4cd964', yellow: '#ffd426', blue: '#409cff', magenta: '#da8fff', cyan: '#70d7ff', white: '#d1d1d6',
+    brightBlack: '#8e8e93', brightRed: '#ff8a80', brightGreen: '#7ee08f', brightYellow: '#ffe16b', brightBlue: '#78b8ff', brightMagenta: '#e6b0ff', brightCyan: '#9ee3ff', brightWhite: '#ffffff',
+  },
+  'macos-light': {
+    background: '#ffffff', foreground: '#1d1d1f', cursor: '#007aff', cursorAccent: '#ffffff', selectionBackground: '#b3d7ff',
+    black: '#1d1d1f', red: '#c4211a', green: '#1f7a35', yellow: '#8f5300', blue: '#0057d9', magenta: '#8e3aac', cyan: '#00708f', white: '#8e8e93',
+    brightBlack: '#6e6e73', brightRed: '#d70015', brightGreen: '#248a3d', brightYellow: '#a05a00', brightBlue: '#0040dd', brightMagenta: '#a347c4', brightCyan: '#0071a4', brightWhite: '#3a3a3c',
+  },
   graphite: {
     background: '#353b41', foreground: '#c6cfd7', cursor: '#9bc5ab', selectionBackground: '#61757480',
     black: '#414951', red: '#d98282', green: '#87cba3', yellow: '#dfc17f', blue: '#81a9d5', magenta: '#b59bd2', cyan: '#7bc6ce', white: '#c9d3dc',

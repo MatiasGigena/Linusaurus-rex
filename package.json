@@ -29,6 +29,7 @@
     "test:update-live": "npm run build && node scripts/test-desktop.mjs update-live"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-image": "^0.9.0",
     "@xterm/addon-ligatures": "^0.10.0",

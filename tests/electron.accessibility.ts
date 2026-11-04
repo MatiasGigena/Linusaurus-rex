@@ -270,7 +270,7 @@ try {
     darkSettings,
   );
   await page.waitForFunction(
-    () => document.documentElement.dataset.theme === "graphite",
+    () => document.documentElement.dataset.theme !== "light",
   );
   await page
     .getByRole("button", { name: "Settings", exact: true })

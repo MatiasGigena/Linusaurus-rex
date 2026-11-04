@@ -31,6 +31,20 @@ test("system themes choose separate presets and honor a forced appearance", () =
   );
 });
 
+test("new installs follow the system between the macOS dark and light palettes", () => {
+  assert.equal(DEFAULT_SETTINGS.theme, "system");
+  assert.equal(terminalThemeName(DEFAULT_SETTINGS, false), "macos");
+  assert.equal(terminalThemeName(DEFAULT_SETTINGS, true), "macos-light");
+  assert.equal(
+    terminalServerTheme({ ...DEFAULT_SETTINGS, appearance: "dark" }).scheme,
+    "dark",
+  );
+  assert.equal(
+    terminalServerTheme({ ...DEFAULT_SETTINGS, appearance: "light" }).scheme,
+    "light",
+  );
+});
+
 test("extended theme colors round-trip to Xterm and the server palette protocol", () => {
   const settings = {
     ...DEFAULT_SETTINGS,

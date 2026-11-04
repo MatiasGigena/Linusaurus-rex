@@ -72,11 +72,17 @@ function applySettings(settings:Settings){
     tray.on('click',showWindow);
   }else if(!needsTray&&tray){tray.destroy();tray=undefined;}
 }
+/** Paint the window in the theme's base color before the renderer loads, so it never flashes Graphite grey. */
+function windowBackground(settings:ReturnType<typeof store.get>):string{
+  const dark=settings.appearance==='dark'||(settings.appearance!=='light'&&nativeTheme.shouldUseDarkColors);
+  const theme=settings.theme==='system'?(dark?settings.darkTheme:settings.lightTheme):settings.theme;
+  return({macos:'#1e1e1e','macos-light':'#ffffff',midnight:'#1e2430',light:'#f2f5f6'} as Record<string,string>)[theme]??'#30353b';
+}
 async function createWindow(initialSelection?:Selection,size?:{width:number;height:number}):Promise<void>{
   const url=rendererUrl();const settings=store.get();
   const window=new BrowserWindow({
     width:size?.width??1440,height:size?.height??900,minWidth:760,minHeight:480,
-    title:'Linusaurus Rex',backgroundColor:'#30353b',show:false,
+    title:'Linusaurus Rex',backgroundColor:windowBackground(settings),show:false,
     frame:false,autoHideMenuBar:true,icon:join(directory,'../resources/icon.png'),
     webPreferences:{preload:join(directory,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,allowRunningInsecureContent:false,spellcheck:false},
   });
