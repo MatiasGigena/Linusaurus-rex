@@ -1393,7 +1393,7 @@ export default function App() {
           <div className="dialog-actions">
             <button
               className="button"
-              onClick={() => void window.rex.writeClipboard(report.body)}
+              onClick={() => safely(() => window.rex.writeClipboard(report.body))}
             >
               Copy
             </button>

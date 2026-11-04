@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
-import { Copy, RefreshCw } from 'lucide-react';
-import { Dialog } from './Dialog';
-import { errorMessage } from '../core/workspace';
+import { useEffect, useState } from "react";
+import { Copy, RefreshCw } from "lucide-react";
+import { Dialog } from "./Dialog";
+import { errorMessage } from "../core/workspace";
 export function ConfigurationDialog({
   hostId,
   onClose,
@@ -11,16 +11,20 @@ export function ConfigurationDialog({
   onClose(): void;
   onReload(): void;
 }) {
-  const [info, setInfo] = useState<{ path: string; content?: string; editable?: boolean }>();
-  const [content, setContent] = useState('');
+  const [info, setInfo] = useState<{
+    path: string;
+    content?: string;
+    editable?: boolean;
+  }>();
+  const [content, setContent] = useState("");
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     void window.rex
-      .request('configInfo', { hostId })
+      .request("configInfo", { hostId })
       .then((value) => {
         setInfo(value);
-        setContent(value.content || '');
+        setContent(value.content || "");
       })
       .catch((failure) => setError(errorMessage(failure)));
   }, [hostId]);
@@ -40,7 +44,11 @@ export function ConfigurationDialog({
               className="icon-button"
               title="Copy config path"
               aria-label="Copy config path"
-              onClick={() => void window.rex.writeClipboard(info.path)}
+              onClick={() =>
+                void window.rex
+                  .writeClipboard(info.path)
+                  .catch((failure) => setError(errorMessage(failure)))
+              }
             >
               <Copy size={14} />
             </button>
@@ -57,8 +65,8 @@ export function ConfigurationDialog({
             />
           </label>
           <p className="form-hint">
-            Saving creates a backup of the previous local file. Remote configurations are edited on
-            their host.
+            Saving creates a backup of the previous local file. Remote
+            configurations are edited on their host.
           </p>
         </>
       )}
@@ -77,7 +85,7 @@ export function ConfigurationDialog({
           onClick={() => {
             setSaving(true);
             void window.rex
-              .request('reloadConfig', { hostId })
+              .request("reloadConfig", { hostId })
               .then(() => {
                 onReload();
                 onClose();
@@ -96,8 +104,8 @@ export function ConfigurationDialog({
             onClick={() => {
               setSaving(true);
               void window.rex
-                .request('writeConfig', { hostId, content })
-                .then(() => window.rex.request('reloadConfig', { hostId }))
+                .request("writeConfig", { hostId, content })
+                .then(() => window.rex.request("reloadConfig", { hostId }))
                 .then(() => {
                   onReload();
                   onClose();
@@ -106,7 +114,7 @@ export function ConfigurationDialog({
                 .finally(() => setSaving(false));
             }}
           >
-            {saving ? 'Saving…' : 'Save and reload'}
+            {saving ? "Saving…" : "Save and reload"}
           </button>
         )}
       </div>
