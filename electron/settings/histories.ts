@@ -1,4 +1,5 @@
 import type { Settings } from "../../src/shared/types.js";
+import { configuredShortcutEntries } from "../../src/shared/actions.js";
 import { validateTrustedLink } from "../features/links.js";
 import { identifier, record, string } from "../validation.js";
 
@@ -6,12 +7,13 @@ export function validateShortcuts(value: unknown): Settings["shortcuts"] {
   const shortcuts = record(value);
   if (Object.keys(shortcuts).length > 128)
     throw new Error("Too many shortcuts");
-  return Object.fromEntries(
+  const validated = Object.fromEntries(
     Object.entries(shortcuts).map(([key, shortcut]) => [
       identifier(key, "shortcut action"),
       string(shortcut, "shortcut", 120),
     ]),
   );
+  return Object.fromEntries(configuredShortcutEntries(validated));
 }
 
 export function validateTrustedLinks(value: unknown): string[] {

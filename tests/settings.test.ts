@@ -191,3 +191,48 @@ test("failed settings loads preserve the original file and refuse writes until r
   await reopened.load();
   assert.equal(reopened.get().fontSize, 18);
 });
+
+test("legacy shortcut keys normalize once with canonical overrides, disabled bindings and custom actions preserved", async (t) => {
+  const directory = await mkdtemp(
+    join(tmpdir(), "linusaurus-shortcuts-upgrade-"),
+  );
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "settings.json");
+  const input = {
+    ...structuredClone(DEFAULT_SETTINGS),
+    shortcuts: {
+      copy: "Ctrl+Alt+C",
+      "client.copy": "",
+      paste: "Ctrl+Alt+V",
+      "command-palette": "Super+P",
+      "plugin.example": "Super+E",
+    },
+  };
+  await writeFile(path, JSON.stringify(input));
+  const store = new SettingsStore(path);
+  await store.load();
+  const canonical = {
+    "client.copy": "",
+    "client.paste": "Ctrl+Alt+V",
+    "client.palette.toggle": "Super+P",
+    "plugin.example": "Super+E",
+  };
+  assert.deepEqual(store.get().shortcuts, canonical);
+  await store.set(store.get());
+  assert.deepEqual(
+    JSON.parse(await readFile(path, "utf8")).shortcuts,
+    canonical,
+  );
+  const reopened = new SettingsStore(path);
+  await reopened.load();
+  assert.deepEqual(reopened.get().shortcuts, canonical);
+  assert.equal(DEFAULT_SETTINGS.shortcuts["client.copy"], "Ctrl+Shift+C");
+  assert.equal(Object.hasOwn(DEFAULT_SETTINGS.shortcuts, "copy"), false);
+  const reversed = Object.fromEntries(
+    Object.entries(input.shortcuts).reverse(),
+  );
+  assert.deepEqual(
+    validateSettings({ ...input, shortcuts: reversed }).shortcuts,
+    canonical,
+  );
+});
