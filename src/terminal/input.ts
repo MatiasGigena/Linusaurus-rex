@@ -384,14 +384,10 @@ function registerClipboard(options: TerminalInputOptions) {
   const term = runtime.terminal;
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
-  const copy = () => {
-    if (term.hasSelection())
-      void window.rex
-        .writeClipboard(term.getSelection())
-        .then(() => {
-          if (!disposed) onCopied();
-        })
-        .catch(onError);
+  const copy = async () => {
+    if (!term.hasSelection()) return;
+    await window.rex.writeClipboard(term.getSelection());
+    if (!disposed) onCopied();
   };
   const clipboardPaste = (event: ClipboardEvent) => {
     if (!isVisible()) return;
@@ -410,7 +406,9 @@ function registerClipboard(options: TerminalInputOptions) {
       settings().copyOnSelect &&
       term.hasSelection()
     )
-      copyTimer = setTimeout(copy, 150);
+      copyTimer = setTimeout(() => {
+        void copy().catch(onError);
+      }, 150);
   });
 
   hostElement.addEventListener("paste", clipboardPaste, true);

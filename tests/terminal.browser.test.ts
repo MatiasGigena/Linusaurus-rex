@@ -15,9 +15,9 @@ import {getCachedTerminal} from '/src/terminal/runtime.ts';
 import {DEFAULT_SETTINGS} from '/src/shared/types.ts';
 const ref={hostId:'test',sessionId:'test',blockId:'test'};
 const requests=[],listeners=new Set(); let currentSubscription; let first=true; let clipboard='PASTE_FROM_CLIPBOARD';
-window.rex={request:async(method,args)=>{requests.push({method,args,contentAtSend:window.fixture?.term()?.buffer.active.getLine(0)?.translateToString(true)}); if(method==='key' && window.fixture?.deferNextKey){window.fixture.deferNextKey=false;await new Promise(resolve=>{window.fixture.releaseKey=resolve})} if(method==='key' && window.fixture?.failNextKey){const message=window.fixture.failNextKey;window.fixture.failNextKey=undefined;throw new Error(message)} if(method==='subscribe'){currentSubscription=args.subscriptionId;if(first){first=false;if(!location.search.includes('deferSnapshot'))setTimeout(()=>emit({kind:'snapshot',data:'alpha alpha\\r\\nready> ',cols:80,rows:24}),10)}} return method==='key'?{handled:true}:undefined},onTerminal:cb=>{listeners.add(cb);return()=>listeners.delete(cb)},onCommand:()=>()=>{},readClipboard:async()=>{if(window.fixture?.deferClipboard){window.fixture.deferClipboard=false;await new Promise(resolve=>{window.fixture.releaseClipboard=resolve})}return clipboard},writeClipboard:async text=>{clipboard=text}};
+window.rex={request:async(method,args)=>{requests.push({method,args,contentAtSend:window.fixture?.term()?.buffer.active.getLine(0)?.translateToString(true)}); if(method==='paste' && window.fixture?.deferNextPaste){window.fixture.deferNextPaste=false;await new Promise((resolve,reject)=>{window.fixture.releasePaste=resolve;window.fixture.rejectPaste=reject})} if(method==='key' && window.fixture?.requestServerPaste){window.fixture.requestServerPaste=false;await window.fixture.commandAsync('paste',ref,'queued');window.fixture.serverPasteReplied=true} if(method==='key' && window.fixture?.deferNextKey){window.fixture.deferNextKey=false;await new Promise(resolve=>{window.fixture.releaseKey=resolve})} if(method==='key' && window.fixture?.failNextKey){const message=window.fixture.failNextKey;window.fixture.failNextKey=undefined;throw new Error(message)} if(method==='subscribe'){currentSubscription=args.subscriptionId;if(first){first=false;if(!location.search.includes('deferSnapshot'))setTimeout(()=>emit({kind:'snapshot',data:'alpha alpha\\r\\nready> ',cols:80,rows:24}),10)}} return method==='key'?{handled:true}:undefined},onTerminal:cb=>{listeners.add(cb);return()=>listeners.delete(cb)},onCommand:()=>()=>{},readClipboard:async()=>{if(window.fixture?.deferClipboard){window.fixture.deferClipboard=false;await new Promise(resolve=>{window.fixture.releaseClipboard=resolve})}return clipboard},writeClipboard:async text=>{if(window.fixture?.deferClipboardWrite){window.fixture.deferClipboardWrite=false;await new Promise((resolve,reject)=>{window.fixture.releaseClipboardWrite=resolve;window.fixture.rejectClipboardWrite=reject})}clipboard=text}};
 function emit(frame){for(const fn of listeners)fn({subscriptionId:currentSubscription,...frame})}
-let update,show,mount; function Fixture(){const [settings,setSettings]=React.useState(DEFAULT_SETTINGS),[visible,setVisible]=React.useState(true),[mounted,setMounted]=React.useState(!location.search.includes('deferMount'));update=patch=>setSettings(s=>({...s,...patch}));show=setVisible;mount=setMounted;return mounted&&React.createElement(TerminalPane,{pane:{id:'test',label:'Test terminal',rect:[0,0,1,1]},terminalRef:ref,settings,visible,focused:true,showHeader:false,onFocus(){},onClose(){},onZoom(){}})}
+let update,show,mount; function Fixture(){const [settings,setSettings]=React.useState(DEFAULT_SETTINGS),[visible,setVisible]=React.useState(true),[mounted,setMounted]=React.useState(!location.search.includes('deferMount'));update=patch=>setSettings(s=>({...s,...patch}));show=setVisible;mount=setMounted;return mounted&&React.createElement(TerminalPane,{pane:{id:'test',label:'Test terminal',rect:[0,0,1,1]},terminalRef:ref,settings,visible,focused:true,showHeader:false,onFocus(){},onClose(){},onZoom(){},async onAction(command){window.fixture.actionCommand=command;if(window.fixture.deferAction){window.fixture.deferAction=false;await new Promise((resolve,reject)=>{window.fixture.releaseAction=resolve;window.fixture.rejectAction=reject})}}})}
 createRoot(document.getElementById('root')).render(React.createElement(Fixture));
 window.fixture={requests,emit,update:patch=>update(patch),show:value=>show(value),mount:value=>mount(value),subscribers:()=>listeners.size,runtime:()=>getCachedTerminal(ref),term:()=>getCachedTerminal(ref)?.terminal,command:dispatchTerminalCommand,commandAsync:dispatchTerminalCommandAsync,async flush(){const term=getCachedTerminal(ref).terminal;await new Promise(resolve=>term.write('',resolve));await document.fonts.ready;await new Promise(resolve=>{const listener=term.onRender(()=>{listener.dispose();resolve()});term.refresh(0,term.rows-1)})}};
 </script></body></html>`;
@@ -96,11 +96,54 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     await page.evaluate(() => { (window as any).fixture.deferNextKey = true; });
     await page.keyboard.down('d');
     await page.waitForFunction(() => typeof (window as any).fixture.releaseKey === 'function');
-    await page.evaluate(() => (window as any).fixture.commandAsync('paste'));
-    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((request: any) => request.method === 'paste').length), beforeDeferredKey, 'acceptance must not deadlock behind the key RPC that requested the client action');
+    await page.evaluate(() => (window as any).fixture.commandAsync('paste', undefined, 'queued'));
+    assert.equal(await page.evaluate(() => (window as any).fixture.requests.filter((request: any) => request.method === 'paste').length), beforeDeferredKey, 'a server action acknowledges validated queue admission so its held key RPC can finish');
     await page.evaluate(() => (window as any).fixture.releaseKey());
     await page.keyboard.up('d');
     await page.waitForFunction((count) => (window as any).fixture.requests.filter((request: any) => request.method === 'paste').length === count + 1, beforeDeferredKey);
+    const beforeServerPaste = await page.evaluate(() => (window as any).fixture.requests.filter((request: any) => request.method === 'paste').length);
+    await page.evaluate(() => { (window as any).fixture.requestServerPaste = true; });
+    await page.keyboard.press('r');
+    await page.waitForFunction(() => (window as any).fixture.serverPasteReplied === true);
+    await page.waitForFunction((count) => (window as any).fixture.requests.filter((request: any) => request.method === 'paste').length === count + 1, beforeServerPaste);
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      f.deferNextPaste = true;
+      f.pasteCompletion = 'waiting';
+      void f.commandAsync('paste').then(() => { f.pasteCompletion = 'completed'; }, (failure: Error) => { f.pasteCompletion = failure.message; });
+    });
+    await page.waitForFunction(() => typeof (window as any).fixture.rejectPaste === 'function');
+    assert.equal(await page.evaluate(() => (window as any).fixture.pasteCompletion), 'waiting', 'an ordinary paste must wait for the underlying RPC');
+    await page.evaluate(() => (window as any).fixture.rejectPaste(new Error('Paste action refused')));
+    await page.waitForFunction(() => (window as any).fixture.pasteCompletion === 'Paste action refused');
+    await page.getByText('Paste action refused', { exact: true }).waitFor();
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      f.deferAction = true;
+      f.actionCompletion = 'waiting';
+      void f.commandAsync('clear-terminal').then(() => { f.actionCompletion = 'completed'; }, (failure: Error) => { f.actionCompletion = failure.message; });
+    });
+    await page.waitForFunction(() => typeof (window as any).fixture.rejectAction === 'function');
+    assert.equal(await page.evaluate(() => (window as any).fixture.actionCompletion), 'waiting', 'terminal action handoffs must await the parent executor');
+    assert.equal(await page.evaluate(() => (window as any).fixture.actionCommand), 'pane.clear_content');
+    await page.evaluate(() => (window as any).fixture.rejectAction(new Error('Clear action refused')));
+    await page.waitForFunction(() => (window as any).fixture.actionCompletion === 'Clear action refused');
+    await page.getByText('Clear action refused', { exact: true }).waitFor();
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'output', data: '\x1b]133;C\x07copy-output\r\n\x1b]133;D\x07' }));
+    await page.waitForFunction(() => !!(window as any).fixture.runtime().outputMarkers.end);
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      f.deferClipboardWrite = true;
+      f.copyCompletion = 'waiting';
+      void f.commandAsync('copy-last-output').then(() => { f.copyCompletion = 'completed'; }, (failure: Error) => { f.copyCompletion = failure.message; });
+    });
+    await page.waitForFunction(() => typeof (window as any).fixture.rejectClipboardWrite === 'function');
+    assert.equal(await page.evaluate(() => (window as any).fixture.copyCompletion), 'waiting', 'copy-last-output must wait for clipboard completion');
+    await page.evaluate(() => (window as any).fixture.rejectClipboardWrite(new Error('Clipboard write refused')));
+    await page.waitForFunction(() => (window as any).fixture.copyCompletion === 'Clipboard write refused');
+    await page.getByText('Clipboard write refused', { exact: true }).waitFor();
+    await page.evaluate(() => (window as any).fixture.emit({ kind: 'snapshot', data: 'alpha alpha\r\nready> ' }));
+    await page.waitForFunction(() => (window as any).fixture.term().buffer.active.getLine(1)?.translateToString(true) === 'ready> ');
     await page.evaluate(() => { (window as any).fixture.failNextKey = 'Lua action failed: deliberate test failure'; });
     await page.keyboard.press('b');
     await page.getByText('Lua action failed: deliberate test failure').waitFor();

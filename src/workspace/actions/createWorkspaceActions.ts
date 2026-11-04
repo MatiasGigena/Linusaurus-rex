@@ -133,7 +133,13 @@ export function createWorkspaceActions(options: WorkspaceActionOptions) {
         throw new Error("The target pane is no longer available.");
       if (!displayedContext || options.focusedPane !== blockId)
         workspace.select(hostId, sessionId, currentWindow.id, blockId);
-      await dispatchTerminalCommandAsync(command, terminalRef);
+      // A server can request paste while awaiting the key RPC ahead of it.
+      // Acknowledge that validated enqueue so the reverse RPC can unblock.
+      const completion =
+        event?.type === "action" && name === "client.paste"
+          ? "queued"
+          : "settled";
+      await dispatchTerminalCommandAsync(command, terminalRef, completion);
     };
     if (nativeActions.has(name))
       return window.rex.request("invokeAction", {

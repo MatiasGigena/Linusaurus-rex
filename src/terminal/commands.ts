@@ -1,15 +1,21 @@
 import type { TerminalRef } from "../shared/types";
 
 const HANDOFF_TIMEOUT_MS = 10_000;
+export type TerminalCommandCompletion = "settled" | "queued";
 interface PaneCommands {
   available(): boolean;
   focused(): boolean;
-  execute(command: string, signal: AbortSignal): Promise<void>;
+  execute(
+    command: string,
+    signal: AbortSignal,
+    completion: TerminalCommandCompletion,
+  ): Promise<void>;
   onError(failure: unknown): void;
 }
 interface PendingCommand {
   key: string;
   command: string;
+  completion: TerminalCommandCompletion;
   controller: AbortController;
   timer?: ReturnType<typeof setTimeout>;
   owner?: RegisteredPane;
@@ -45,7 +51,11 @@ export class TerminalCommandBroker {
     };
   }
 
-  dispatch(command: string, target?: TerminalRef): Promise<void> {
+  dispatch(
+    command: string,
+    target?: TerminalRef,
+    completion: TerminalCommandCompletion = "settled",
+  ): Promise<void> {
     const key = target
       ? targetKey(target)
       : [...this.panes.values()].find(
@@ -57,6 +67,7 @@ export class TerminalCommandBroker {
       const pending: PendingCommand = {
         key,
         command,
+        completion,
         resolve,
         reject,
         controller: new AbortController(),
@@ -102,7 +113,11 @@ export class TerminalCommandBroker {
       try {
         pending.controller.signal.throwIfAborted();
         void pane.commands
-          .execute(pending.command, pending.controller.signal)
+          .execute(
+            pending.command,
+            pending.controller.signal,
+            pending.completion,
+          )
           .then(() => this.finish(pending), failed);
       } catch (failure) {
         failed(failure);
@@ -157,12 +172,17 @@ export const terminalCommands = new TerminalCommandBroker();
  * Waits for the pane's executor to settle, propagating execution errors or pane
  * closure. The 10-second handoff timeout only covers waiting for an available
  * pane; once accepted, a command is never replayed on another registration.
+ * Settled completion awaits underlying work. Source-bound server paste actions
+ * may request queued completion to break a key RPC -> client action -> input
+ * cycle; they validate readiness/clipboard before acknowledging queue admission,
+ * with later send errors reported locally. Other commands still await their work.
  */
 export function dispatchTerminalCommandAsync(
   command: string,
   target?: TerminalRef,
+  completion: TerminalCommandCompletion = "settled",
 ): Promise<void> {
-  return terminalCommands.dispatch(command, target);
+  return terminalCommands.dispatch(command, target, completion);
 }
 
 export function dispatchTerminalCommand(

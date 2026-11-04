@@ -3,12 +3,13 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { AlertCircle, ArrowDown, ArrowUp, CaseSensitive, ChevronDown, ChevronUp, Copy, Maximize2, Regex, Search, TerminalSquare, X } from 'lucide-react';
 import type { RexPane, Settings, TerminalRef } from '../shared/types';
+import { canonicalActionName } from '../shared/actions';
 import { acquireTerminal, releaseTerminal, type TerminalRuntime } from './runtime';
 import { registerTerminalInput, type TerminalMenu } from './input';
 import { terminalOptions, terminalServerTheme } from './themes';
 import { applicationLinks, linkProtocol } from './links';
 import { TerminalVisuals } from './visuals';
-import { terminalCommands } from './commands';
+import { terminalCommands, type TerminalCommandCompletion } from './commands';
 import { TerminalFrameWriter } from './frame-writer';
 import '@xterm/xterm/css/xterm.css';
 import './terminal.css';
@@ -17,7 +18,7 @@ const MAX_PASTE_BYTES = 1024 * 1024;
 
 export interface TerminalPaneProps {
   pane: RexPane; terminalRef: TerminalRef; settings: Settings; focused: boolean; visible?: boolean; showHeader: boolean;
-  onFocus(): void; onZoom(): void; onClose(): void; onAction?(command: string): void; onTitle?(title: string): void; onBell?(): void;
+  onFocus(): void; onZoom(): void; onClose(): void; onAction?(command: string): Promise<unknown>; onTitle?(title: string): void; onBell?(): void;
   onNotification?(title: string, body?: string): void;
 }
 
@@ -32,6 +33,89 @@ function synchronizeTheme(runtime: TerminalRuntime, ref: TerminalRef, settings: 
     if (runtime.serverThemeSignature === signature) runtime.serverThemeSignature = undefined;
     onError(`Theme sync failed: ${displayError(failure)}`);
   });
+}
+
+function createPromptNavigator(runtime: TerminalRuntime) {
+  const term = runtime.terminal;
+  let markerPosition: TerminalRuntime["prompts"][number] | undefined;
+  let markerViewport = -1;
+  return (direction: "previous" | "next") => {
+    const buffer = term.buffer.active;
+    const logicalMarker =
+      markerPosition &&
+      !markerPosition.isDisposed &&
+      markerViewport === buffer.viewportY
+        ? markerPosition
+        : undefined;
+    // A prompt inside the last screen cannot be scrolled to the very top.
+    // Keep its marker as the logical position so the next jump still advances.
+    const line = logicalMarker
+      ? logicalMarker.line
+      : buffer.viewportY === buffer.baseY
+        ? buffer.baseY + buffer.cursorY
+        : buffer.viewportY;
+    const markers = runtime.prompts.filter((marker) => !marker.isDisposed);
+    const marker =
+      direction === "previous"
+        ? markers.filter((item) => item.line < line).at(-1)
+        : markers.find((item) => item.line > line);
+    if (marker) {
+      term.scrollToLine(marker.line);
+      markerPosition = marker;
+      markerViewport = term.buffer.active.viewportY;
+    }
+  };
+}
+
+function registerTerminalLinks(
+  runtime: TerminalRuntime,
+  settings: () => Settings,
+  onError: (failure: unknown) => void,
+) {
+  const term = runtime.terminal;
+  const openLink = (url: string) => {
+    const kind = linkProtocol(url);
+    if (!kind) {
+      onError(new Error("This link protocol is not permitted."));
+      return;
+    }
+    if (
+      (kind === "web" && !settings().openLinks) ||
+      (kind === "app" && settings().appLinks === "never")
+    )
+      return;
+    void window.rex.request("openExternal", { url }).catch(onError);
+  };
+  const handler: NonNullable<typeof term.options.linkHandler> = {
+    activate: (_event, text) => openLink(text),
+    allowNonHttpProtocols: true,
+  };
+  term.options.linkHandler = handler;
+  const links = new WebLinksAddon((_event, url) => openLink(url), {
+    hover: (_event, url) => {
+      runtime.element.title = settings().openLinks ? url.slice(0, 4096) : "";
+    },
+    leave: () => {
+      runtime.element.title = "";
+    },
+  });
+  term.loadAddon(links);
+  const appLinks = term.registerLinkProvider({
+    provideLinks(line, done) {
+      if (settings().appLinks === "never") {
+        done(undefined);
+        return;
+      }
+      done(applicationLinks(term, line, (_event, uri) => openLink(uri)));
+    },
+  });
+  return () => {
+    links.dispose();
+    appLinks.dispose();
+    if (term.options.linkHandler === handler)
+      term.options.linkHandler = undefined;
+    runtime.element.title = "";
+  };
 }
 
 export function TerminalPane(props: TerminalPaneProps) {
@@ -77,8 +161,6 @@ export function TerminalPane(props: TerminalPaneProps) {
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let resizeAnimation = 0;
-    let promptNavigationMarker: TerminalRuntime['prompts'][number] | undefined;
-    let promptNavigationViewport = -1;
     let lastSize = '';
     const commandWaiters = new Set<{ resolve(generation: number): void; reject(failure: Error): void; timer: ReturnType<typeof setTimeout> }>();
     const ref = { hostId, sessionId, blockId };
@@ -132,11 +214,13 @@ export function TerminalPane(props: TerminalPaneProps) {
       }
     };
     // A failed send invalidates later queued input; none is retried after reconnect.
-    const enqueue = (send: () => Promise<unknown>) => {
-      if (!online || !isVisible() || disposed) return false;
+    const enqueueCompletion = (send: () => Promise<unknown>): Promise<void> | undefined => {
+      if (!online || !isVisible() || disposed) return;
       const inputGeneration = generation;
-      inputQueue = inputQueue.then(async () => {
-        if (disposed || !online || generation !== inputGeneration) return;
+      const completion = inputQueue.then(async () => {
+        if (disposed || !online || generation !== inputGeneration) {
+          throw new Error('The terminal connection changed before queued input could be sent.');
+        }
         try {
           await send();
         } catch (failure) {
@@ -148,10 +232,15 @@ export function TerminalPane(props: TerminalPaneProps) {
             generation++;
             if (!disposed) setError(text);
           }
+          throw failure;
         }
       });
-      return true;
+      // Recover the queue tail without swallowing the explicit caller's result.
+      // Browser input and acknowledged server paste still report send errors above.
+      inputQueue = completion.catch(() => {});
+      return completion;
     };
+    const enqueue = (send: () => Promise<unknown>) => !!enqueueCompletion(send);
     const sendSize = () => {
       if (disposed || !isVisible() || !document.hasFocus() || !hostElement.isConnected || hostElement.clientWidth === 0 || hostElement.clientHeight === 0) return;
       if (settingsRef.current.smoothResize) runtime.fit.fit();
@@ -192,14 +281,17 @@ export function TerminalPane(props: TerminalPaneProps) {
         }
       },
     });
-    const paste = async (text?: string, commandGeneration?: number, signal?: AbortSignal) => {
+    const paste = async (text?: string, commandGeneration?: number, signal?: AbortSignal, completion: TerminalCommandCompletion = 'settled') => {
       const readyGeneration = commandGeneration ?? await waitForCommands(signal);
       const value = text ?? await window.rex.readClipboard();
       signal?.throwIfAborted();
       if (new TextEncoder().encode(value).length > MAX_PASTE_BYTES) throw new Error('Paste is larger than the 1 MiB input limit.');
-      if (generation !== readyGeneration || !commandReady || !enqueue(() => window.rex.request('paste', { ...ref, text: value }))) {
+      if (generation !== readyGeneration || !commandReady) {
         throw new Error('The terminal connection changed before paste could be accepted.');
       }
+      const sent = enqueueCompletion(() => window.rex.request('paste', { ...ref, text: value }));
+      if (!sent) throw new Error('The terminal connection changed before paste could be accepted.');
+      if (completion === 'settled') await sent;
     };
     const input = registerTerminalInput({
       runtime, hostElement, ref,
@@ -245,20 +337,11 @@ export function TerminalPane(props: TerminalPaneProps) {
       }
       if (callbacks.current.focused && isVisible() && document.activeElement === document.body) term.focus();
     });
-    const promptNavigation = (direction: 'previous' | 'next') => {
-      const buffer = term.buffer.active;
-      const logicalMarker = promptNavigationMarker && !promptNavigationMarker.isDisposed && promptNavigationViewport === buffer.viewportY ? promptNavigationMarker : undefined;
-      // A prompt inside the last screen cannot be scrolled to the very top.
-      // Keep its marker as the logical position so the next jump still advances.
-      const line = logicalMarker ? logicalMarker.line : buffer.viewportY === buffer.baseY ? buffer.baseY + buffer.cursorY : buffer.viewportY;
-      const markers = runtime.prompts.filter((marker) => !marker.isDisposed);
-      const marker = direction === 'previous' ? markers.filter((item) => item.line < line).at(-1) : markers.find((item) => item.line > line);
-      if (marker) { term.scrollToLine(marker.line); promptNavigationMarker = marker; promptNavigationViewport = term.buffer.active.viewportY; }
-    };
-    const handleCommand = (command: string, commandGeneration: number, signal?: AbortSignal) => {
+    const promptNavigation = createPromptNavigator(runtime);
+    const handleCommand = (command: string, commandGeneration: number, signal: AbortSignal | undefined, completion: TerminalCommandCompletion) => {
       switch (command) {
-        case 'copy': input.copy(); break;
-        case 'paste': return paste(undefined, commandGeneration, signal);
+        case 'copy': return input.copy();
+        case 'paste': return paste(undefined, commandGeneration, signal, completion);
         case 'select-all': term.selectAll(); break;
         case 'find': setSearchOpen(true); break;
         case 'find-next': setSearchOpen(true); searchOperation.current(false); break;
@@ -271,29 +354,31 @@ export function TerminalPane(props: TerminalPaneProps) {
         case 'scroll-line-down': term.scrollLines(1); break;
         case 'scroll-page-up': term.scrollPages(-1); break;
         case 'scroll-page-down': term.scrollPages(1); break;
-        case 'clear-content': case 'clear-scrollback': case 'clear-terminal':
+        case 'clear-content': case 'clear-scrollback': case 'clear-terminal': {
           // The server emits the precise VT operation retaining the current
           // line. Applying a second local clear would corrupt its coordinates.
-          if (callbacks.current.onAction) callbacks.current.onAction('clear-content-server');
-          else enqueue(() => window.rex.request('invokeAction', { ...ref, action: 'com.superlogical.terminal.clear' }));
-          break;
+          if (callbacks.current.onAction) return callbacks.current.onAction('pane.clear_content');
+          const cleared = enqueueCompletion(() => window.rex.request('invokeAction', { ...ref, action: 'com.superlogical.terminal.clear' }));
+          if (!cleared) throw new Error('The terminal pane is no longer available for this command.');
+          return cleared;
+        }
         case 'copy-last-output': {
           const { start, end } = runtime.outputMarkers;
           if (start && !start.isDisposed) {
             const lines: string[] = [];
             for (let line = start.line; line <= (end && !end.isDisposed ? end.line : term.buffer.active.baseY + term.buffer.active.cursorY); line++) lines.push(term.buffer.active.getLine(line)?.translateToString(true) || '');
-            void window.rex.writeClipboard(lines.join('\n').trimEnd()).catch((failure: unknown) => setError(displayError(failure)));
+            return window.rex.writeClipboard(lines.join('\n').trimEnd());
           }
           break;
         }
-        default: callbacks.current.onAction?.(command);
+        default: return callbacks.current.onAction?.(canonicalActionName(command));
       }
     };
-    const executeCommand = async (command: string, signal?: AbortSignal) => {
+    const executeCommand = async (command: string, signal?: AbortSignal, completion: TerminalCommandCompletion = 'settled') => {
       const commandGeneration = await waitForCommands(signal);
       signal?.throwIfAborted();
       if (disposed || !online || !commandReady || commandGeneration !== generation) throw new Error('The terminal connection changed before the command could be accepted.');
-      await handleCommand(command, commandGeneration, signal);
+      await handleCommand(command, commandGeneration, signal, completion);
     };
     commandRef.current = (command) => { void executeCommand(command).catch(reportCommandError); };
     const commandRegistration = terminalCommands.register(ref, {
@@ -320,22 +405,7 @@ export function TerminalPane(props: TerminalPaneProps) {
         } catch { /* A desktop may have no audio output. */ }
       }
     });
-    const openLink = (url: string) => {
-      const kind = linkProtocol(url);
-      if (!kind) { setError('This link protocol is not permitted.'); return; }
-      if ((kind === 'web' && !settingsRef.current.openLinks) || (kind === 'app' && settingsRef.current.appLinks === 'never')) return;
-      void window.rex.request('openExternal', { url }).catch((failure: unknown) => setError(displayError(failure)));
-    };
-    term.options.linkHandler = { activate: (_event, text) => openLink(text), allowNonHttpProtocols: true };
-    const links = new WebLinksAddon((_event, url) => openLink(url), {
-      hover: (_event, url) => { runtime.element.title = settingsRef.current.openLinks ? url.slice(0, 4096) : ''; },
-      leave: () => { runtime.element.title = ''; },
-    });
-    term.loadAddon(links);
-    const appLinks = term.registerLinkProvider({ provideLinks(line, done) {
-      if (settingsRef.current.appLinks === 'never') { done(undefined); return; }
-      done(applicationLinks(term, line, (_event, uri) => openLink(uri)));
-    } });
+    const disposeLinks = registerTerminalLinks(runtime, () => settingsRef.current, reportCommandError);
     const resultsListener = runtime.search.onDidChangeResults((results) => { if (!disposed) setSearchResults(results); });
     const observer = new ResizeObserver(sendSize); observer.observe(hostElement);
     const visibility = () => { if (!document.hidden && isVisible()) { lastSize = ''; sendSize(); } };
@@ -381,8 +451,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       input.dispose();
       titleListener.dispose();
       bellListener.dispose();
-      links.dispose();
-      appLinks.dispose();
+      disposeLinks();
       resultsListener.dispose();
       commandRegistration.dispose();
       writer.dispose();
@@ -494,14 +563,14 @@ export function TerminalPane(props: TerminalPaneProps) {
       <button role="menuitem" onClick={() => menuCommand('previous-prompt')}>Previous prompt</button>
       <button role="menuitem" onClick={() => menuCommand('next-prompt')}>Next prompt</button>
       <button role="menuitem" onClick={() => menuCommand('clear-terminal')}>Clear terminal and scrollback</button>
-      <button role="menuitem" onClick={() => menuCommand('reset-terminal')}>Reset terminal…</button>
+      <button role="menuitem" onClick={() => menuCommand('pane.reset_terminal')}>Reset terminal…</button>
       <div role="separator" />
-      <button role="menuitem" onClick={() => menuCommand('font-increase')}>Increase font size</button>
-      <button role="menuitem" onClick={() => menuCommand('font-decrease')}>Decrease font size</button>
-      <button role="menuitem" onClick={() => menuCommand('font-reset')}>Reset font size</button>
+      <button role="menuitem" onClick={() => menuCommand('client.font.increase')}>Increase font size</button>
+      <button role="menuitem" onClick={() => menuCommand('client.font.decrease')}>Decrease font size</button>
+      <button role="menuitem" onClick={() => menuCommand('client.font.reset')}>Reset font size</button>
       <div role="separator" />
-      <button role="menuitem" onClick={() => menuCommand('split-right')}>Split right</button>
-      <button role="menuitem" onClick={() => menuCommand('split-below')}>Split below</button>
+      <button role="menuitem" onClick={() => menuCommand('pane.split.right')}>Split right</button>
+      <button role="menuitem" onClick={() => menuCommand('pane.split.down')}>Split below</button>
       <button role="menuitem" onClick={() => { setMenu(undefined); onZoom(); }}>Toggle pane zoom</button>
       <button role="menuitem" className="terminal-menu-danger" onClick={() => { setMenu(undefined); onClose(); }}>Close pane</button>
     </div>}
