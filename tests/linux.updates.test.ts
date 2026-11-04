@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createHash } from "node:crypto";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -217,6 +218,170 @@ test("development builds cannot replace their checkout", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("download cleanup failure retains the primary error, publishes failure and permits retry", async (t) => {
+  for (const failure of ["write", "verification"] as const) {
+    await t.test(failure, async () => {
+      const directory = await mkdtemp(
+        join(tmpdir(), "linusaurus-update-cleanup-"),
+      );
+      const partial = join(directory, `${release.assets[0].name}.part`);
+      const phases: string[] = [];
+      let obstructed = false;
+      let validManifest = failure === "write";
+      const obstruct = () => {
+        mkdirSync(partial);
+        writeFileSync(join(partial, "preserve"), "unrelated file");
+        obstructed = true;
+      };
+      if (failure === "write") obstruct();
+      const manager = new LinuxUpdateManager({
+        directory,
+        version: "0.2.0",
+        development: true,
+        fetch: async (url) =>
+          fixtureFetch(
+            `${validManifest ? hash : "0".repeat(64)}  ${release.assets[0].name}\n`,
+          )(url),
+        changed(state) {
+          phases.push(state.phase);
+          if (
+            !obstructed &&
+            state.phase === "downloading" &&
+            state.bytes === bytes.length
+          ) {
+            // The real writer has finished this chunk. Another actor replaces
+            // its path before verification and cleanup; the open handle stays valid.
+            renameSync(partial, `${partial}.held`);
+            obstruct();
+          }
+        },
+      });
+      try {
+        assert.equal((await manager.check()).phase, "available");
+        let rejected: unknown;
+        try {
+          await manager.download();
+        } catch (error) {
+          rejected = error;
+        }
+        assert.deepEqual(
+          {
+            phase: manager.status().phase,
+            canApply: manager.status().canApply,
+            aggregate: rejected instanceof AggregateError,
+          },
+          { phase: "error", canApply: false, aggregate: true },
+        );
+        assert.ok(rejected instanceof AggregateError);
+        assert.equal(rejected.errors.length, 2);
+        const [primary, cleanup] = rejected.errors;
+        assert.ok(primary instanceof Error);
+        assert.ok(cleanup instanceof Error);
+        assert.equal(rejected.cause, primary);
+        assert.match(
+          primary.message,
+          failure === "write" ? /EISDIR.*open/ : /SHA-256\/size verification/,
+        );
+        assert.match(cleanup.message, /directory|EISDIR/i);
+        assert.ok(manager.status().error?.includes(primary.message));
+        assert.ok(manager.status().error?.includes(cleanup.message));
+        assert.equal(phases.at(-1), "error");
+        assert.equal(
+          await readFile(join(partial, "preserve"), "utf8"),
+          "unrelated file",
+        );
+
+        await rm(partial, { recursive: true });
+        validManifest = true;
+        assert.equal((await manager.download()).phase, "ready");
+        assert.equal(phases.at(-1), "ready");
+      } finally {
+        manager.dispose();
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test(
+  "download cancellation preserves canceled state unless partial cleanup itself fails",
+  { timeout: 10_000 },
+  async (t) => {
+    for (const obstructed of [false, true]) {
+      await t.test(
+        obstructed ? "cleanup failure" : "clean cancellation",
+        async () => {
+          const directory = await mkdtemp(
+            join(tmpdir(), "linusaurus-update-cancel-"),
+          );
+          const partial = join(directory, `${release.assets[0].name}.part`);
+          let began: () => void = () => {};
+          const written = new Promise<void>((resolve) => {
+            began = resolve;
+          });
+          const manager = new LinuxUpdateManager({
+            directory,
+            version: "0.2.0",
+            development: true,
+            fetch: async (url, init) => {
+              if (!String(url).endsWith(".AppImage"))
+                return fixtureFetch()(url);
+              return new Response(
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(bytes.subarray(0, 1));
+                    init?.signal?.addEventListener(
+                      "abort",
+                      () => {
+                        controller.error(
+                          new DOMException("Transfer canceled", "AbortError"),
+                        );
+                      },
+                      { once: true },
+                    );
+                  },
+                }),
+              );
+            },
+            changed(state) {
+              if (state.phase === "downloading" && state.bytes === 1) began();
+            },
+          });
+          try {
+            await manager.check();
+            const pending = manager.download();
+            await written;
+            if (obstructed) {
+              renameSync(partial, `${partial}.held`);
+              mkdirSync(partial);
+            }
+            const canceled = manager.cancel();
+            assert.equal(canceled.phase, "idle");
+            if (obstructed) {
+              await assert.rejects(pending, (error: unknown) => {
+                assert.ok(error instanceof AggregateError);
+                assert.ok(error.cause instanceof Error);
+                assert.equal(error.cause.name, "AbortError");
+                assert.equal(error.errors[0], error.cause);
+                return true;
+              });
+              assert.equal(manager.status().phase, "error");
+              assert.match(manager.status().error ?? "", /cleanup also failed/);
+            } else {
+              assert.deepEqual(await pending, canceled);
+              assert.deepEqual(manager.status(), canceled);
+              await assert.rejects(readFile(partial), { code: "ENOENT" });
+            }
+          } finally {
+            manager.dispose();
+            await rm(directory, { recursive: true, force: true });
+          }
+        },
+      );
+    }
+  },
+);
 
 test("Debian updates open the verified package with the native installer hook", async () => {
   const directory = await mkdtemp(join(tmpdir(), "linusaurus-update-deb-"));

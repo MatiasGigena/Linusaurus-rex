@@ -265,7 +265,9 @@ export class LinuxUpdateManager {
    * Transfer/verification failures resolve with a published phase="error" state;
    * after cancel() publishes its state, the aborted transfer resolves to the
    * current state when abort handling and cleanup settle. Rejects while a check/
-   * download is active, without a selected release, or if cleanup itself fails.
+   * download is active, without a selected release, or with an AggregateError if
+   * cleanup also fails. That aggregate preserves the primary failure as cause;
+   * a cleanup failure publishes phase="error" even during cancellation.
    */
   async download() {
     if (this.controller)
@@ -310,7 +312,6 @@ export class LinuxUpdateManager {
         await file.close();
       }
       if (bytes !== selected.asset.size || hash.digest("hex") !== expected) {
-        await rm(temporary, { force: true });
         throw new Error("The update failed SHA-256/size verification.");
       }
       await rename(temporary, path);
@@ -321,7 +322,23 @@ export class LinuxUpdateManager {
         error: undefined,
       });
     } catch (error) {
-      if (path) await rm(`${path}.part`, { force: true });
+      if (path) {
+        try {
+          await rm(`${path}.part`, { force: true });
+        } catch (cleanupError) {
+          const failure = new AggregateError(
+            [error, cleanupError],
+            `The update failed: ${error instanceof Error ? error.message : String(error)} Partial-file cleanup also failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+            { cause: error },
+          );
+          this.publish({
+            phase: "error",
+            canApply: false,
+            error: failure.message,
+          });
+          throw failure;
+        }
+      }
       if (this.controller.signal.aborted) return this.status();
       return this.publish({
         phase: "error",
