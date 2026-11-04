@@ -26,7 +26,11 @@ const sameColors = (
 };
 const slot = (appearance: ThemeAppearance) =>
   appearance === "light" ? "lightThemeId" : "darkThemeId";
-/** Normalize legacy input once, retaining inactive palettes as named entries. */
+/**
+ * Copy and normalize legacy input, retaining inactive palettes as named entries.
+ * Throws if an additional legacy entry would exceed MAX_PERSISTED_LIBRARY_THEMES;
+ * never drops palettes or changes the input to make room.
+ */
 export function migrateThemeLibrary(
   settings: Settings & LegacyThemePalettes,
 ): Settings {
@@ -77,6 +81,7 @@ export function migrateThemeLibrary(
   return next;
 }
 
+/** Return the selected palette, or undefined for an empty or missing identifier. */
 export function resolvedImportedTheme(
   settings: Settings,
   appearance: ThemeAppearance,
@@ -99,6 +104,10 @@ export function uniqueThemeName(
   return `${base.slice(0, 72)} ${suffix}`;
 }
 
+/**
+ * Select a saved theme and enable system appearance; an empty id clears the slot.
+ * Throws for a nonempty identifier absent from the library.
+ */
 export function selectLibraryTheme(
   settings: Settings,
   appearance: ThemeAppearance,
@@ -113,6 +122,11 @@ export function selectLibraryTheme(
   };
 }
 
+/**
+ * Append a theme, optionally selecting it. Throws at MAX_LIBRARY_THEMES capacity,
+ * for an empty/duplicate id or colors with no entries, or if the trimmed name is
+ * outside 1–80 characters, contains controls or duplicates a name ignoring case.
+ */
 export function saveLibraryTheme(
   settings: Settings,
   name: string,
@@ -148,6 +162,10 @@ export function saveLibraryTheme(
   return next;
 }
 
+/**
+ * Rename an existing id; throws if it is missing or the name fails the same
+ * trimmed length, control-character or case-insensitive uniqueness rules as save.
+ */
 export function renameLibraryTheme(
   settings: Settings,
   id: string,
@@ -176,6 +194,7 @@ export function renameLibraryTheme(
   };
 }
 
+/** Remove an id and clear its appearance slots; missing ids are accepted. */
 export function deleteLibraryTheme(settings: Settings, id: string): Settings {
   const next = {
     ...settings,
