@@ -27,7 +27,7 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
       setActivityOpen,
       setActivityGroup,
     } = dependencies;
-    const { name, args, hostId } = context;
+    const { name, args, hostId, sourceHostId } = context;
     switch (name) {
       case "client.palette.toggle":
         setPalette((previous) => (previous ? undefined : "all"));
@@ -118,6 +118,10 @@ export function createClientActions(dependencies: ClientActionsDependencies) {
             host.label === String(args.host || ""),
         );
         if (next) {
+          if (sourceHostId !== undefined && next.id !== sourceHostId)
+            throw new Error(
+              "A server-originated action cannot navigate to another host.",
+            );
           const first = hosts.find((host) => host.id === next.id)?.sessions[0];
           if (first) workspace.select(next.id, first.id);
           else setEditingHost(next);

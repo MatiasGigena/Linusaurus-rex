@@ -67,6 +67,7 @@ export interface ResolvedCommand {
   args: Record<string, unknown>;
   event?: ClientEvent;
   hostId: string;
+  sourceHostId: string | undefined;
   sessionId: string;
   currentView: SessionView | undefined;
   currentWindow: RexWindow | undefined;
@@ -85,7 +86,7 @@ export const UNHANDLED = Symbol("unhandled workspace action");
 
 export type SessionActionsTarget = Pick<
   ResolvedCommand,
-  "name" | "args" | "hostId" | "sessionId" | "currentView"
+  "name" | "args" | "hostId" | "sourceHostId" | "sessionId" | "currentView"
 >;
 export type SessionActionsDependencies = Pick<
   WorkspaceActionOptions,
@@ -164,7 +165,7 @@ export type PaneLayoutActionsDependencies = Pick<
 
 export type ClientActionsTarget = Pick<
   ResolvedCommand,
-  "name" | "args" | "hostId"
+  "name" | "args" | "hostId" | "sourceHostId"
 >;
 export type ClientActionsDependencies = Pick<
   WorkspaceActionOptions,

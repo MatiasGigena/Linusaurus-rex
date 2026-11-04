@@ -13,13 +13,22 @@ export function resolveCommandTarget(
   const { hosts, views, selection, focusedPane } = state;
   const activeHost =
     hosts.find((host) => host.id === selection?.hostId) || hosts[0];
-  const hostId = String(
-    args.host_id ||
-      (event && "hostId" in event ? event.hostId : undefined) ||
-      selection?.hostId ||
-      activeHost?.id ||
-      "local",
-  );
+  const sourceHostId = event?.type === "action" ? event.hostId : undefined;
+  if (
+    sourceHostId !== undefined &&
+    args.host_id !== undefined &&
+    args.host_id !== sourceHostId
+  )
+    throw new Error("A server-originated action cannot target another host.");
+  const hostId =
+    sourceHostId ??
+    String(
+      args.host_id ||
+        (event && "hostId" in event ? event.hostId : undefined) ||
+        selection?.hostId ||
+        activeHost?.id ||
+        "local",
+    );
   const selectionMatchesHost = selection?.hostId === hostId;
   const sessionId = String(
     args.session_id ||
@@ -71,6 +80,7 @@ export function resolveCommandTarget(
     args,
     event,
     hostId,
+    sourceHostId,
     sessionId,
     currentView,
     currentWindow,

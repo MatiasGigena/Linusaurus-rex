@@ -16,7 +16,12 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
       setCollapsedSessions,
       requestClose,
     } = dependencies;
-    const { name, args, hostId, sessionId, currentView } = context;
+    const { name, args, hostId, sourceHostId, sessionId, currentView } =
+      context;
+    const navigationHosts =
+      sourceHostId === undefined
+        ? hosts
+        : hosts.filter((host) => host.id === sourceHostId);
     switch (name) {
       case "session.switch":
         setPalette("sessions");
@@ -61,7 +66,7 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
         const target = String(
           args.session_id || args.session || args.label || "",
         );
-        const matches = hosts.flatMap((host) =>
+        const matches = navigationHosts.flatMap((host) =>
           host.sessions
             .filter(
               (session) => session.id === target || session.label === target,
@@ -89,7 +94,7 @@ export function createSessionActions(dependencies: SessionActionsDependencies) {
       }
       case "session.next":
       case "session.previous": {
-        const all = hosts.flatMap((host) =>
+        const all = navigationHosts.flatMap((host) =>
           host.sessions.map((session) => ({
             hostId: host.id,
             sessionId: session.id,

@@ -514,6 +514,8 @@ export class ClientFeatures {
     if (this.disposed) throw new Error("The client window was closed.");
     if (!this.acceptsHost(host))
       throw new Error("The host connection is no longer authorized.");
+    if (args.host_id !== undefined && args.host_id !== host.id)
+      throw new Error("A server-originated action cannot target another host.");
     const control = this.controls.get(host.id);
     const native = await this.hooks.native?.(name, args, {
       host,
