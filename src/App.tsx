@@ -2509,7 +2509,7 @@ export default function App() {
             {view?.label || "No session"}
             <ChevronRight size={11} />
             {activeWindow
-              ? `${activeWindow.panes.length} panes`
+              ? `${activeWindow.panes.length} ${activeWindow.panes.length === 1 ? "pane" : "panes"}`
               : "Ready when you are"}
           </span>
           <button
