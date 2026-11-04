@@ -1,4 +1,5 @@
 import type { Form, Confirmation } from "./context";
+import type { ServerActionArgs, ServerActionCommand } from "../../shared/types";
 interface ServerActionUI {
   setDiagnostics(value: boolean): void;
   setForm(form: Form): void;
@@ -9,14 +10,21 @@ export function createServerActions(
   hostId: string,
   { setDiagnostics, setForm, setConfirmation, setReport }: ServerActionUI,
 ) {
-  return (action: string, args: Record<string, unknown> = {}) => {
+  return (...[action, args]: ServerActionCommand) => {
     if (action === "tailscale.rename") {
       setDiagnostics(false);
       setForm({
         title: "Change Tailscale hostname",
         description:
           "This changes the selected Rex server’s advertised hostname.",
-        fields: [{ name: "hostname", label: "Hostname", required: true }],
+        fields: [
+          {
+            name: "hostname",
+            label: "Hostname",
+            required: true,
+            value: args?.hostname,
+          },
+        ],
         submit: async (values) => {
           await window.rex.request("serverAction", {
             hostId: hostId,
@@ -34,13 +42,13 @@ export function createServerActions(
         "This changes remote access on the selected server. Existing terminal programs are retained.",
       label: "Apply change",
       submit: async () => {
+        const change: ServerActionArgs =
+          action === "tailscale.enable"
+            ? { action, args: { allow_tailnet_members: false, ...args } }
+            : { action };
         const result = await window.rex.request("serverAction", {
-          hostId: hostId,
-          action: action as "tailscale.enable",
-          args:
-            action === "tailscale.enable"
-              ? { allow_tailnet_members: false, ...args }
-              : args,
+          hostId,
+          ...change,
         });
         setReport({
           title: "Server response",

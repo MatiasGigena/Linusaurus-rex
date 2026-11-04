@@ -3,11 +3,12 @@ import { Copy, ExternalLink, RefreshCw } from "lucide-react";
 import { Dialog } from "./Dialog";
 import { errorMessage } from "../core/workspace";
 import { decodeServerDetails, type ServerDetails } from "../core/serverDetails";
+import type { ServerActionCommand } from "../shared/types";
 interface DiagnosticsDialogProps {
   hostId?: string;
   endpoint?: string;
   onClose(): void;
-  onServerAction(action: string, args?: Record<string, unknown>): void;
+  onServerAction(...request: ServerActionCommand): void;
 }
 export function DiagnosticsDialog(props: DiagnosticsDialogProps) {
   return (

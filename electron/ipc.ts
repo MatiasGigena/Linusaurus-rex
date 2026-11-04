@@ -52,6 +52,7 @@ import { resolveCurrentAppImage } from "./updates/update-target.js";
 import { LinuxUpdateManager } from "./updates/updates.js";
 import { ExternalLinks } from "./features/external-links.js";
 import { terminalThemeRequest } from "./features/terminal-theme.js";
+import { parseServerAction } from "./features/server-action.js";
 
 type SenderEvent = IpcMainInvokeEvent | IpcMainEvent;
 type Options = {
@@ -485,22 +486,11 @@ class WindowContext {
     if (method === "reloadConfig")
       return this.rex.callMethod(host, "server.config_reload", {});
     if (method === "serverAction") {
-      const action = identifier(args.action, "server action");
-      if (
-        ![
-          "status",
-          "tailscale.enable",
-          "tailscale.disable",
-          "tailscale.login",
-          "tailscale.logout",
-          "tailscale.rename",
-        ].includes(action)
-      )
-        throw new Error("Unsupported server action.");
+      const action = parseServerAction(args);
       return this.rex.callMethod(
         host,
-        `server.${action}`,
-        args.args === undefined ? {} : record(args.args),
+        `server.${action.action}`,
+        action.args ?? {},
       );
     }
     if (method === "createSession")

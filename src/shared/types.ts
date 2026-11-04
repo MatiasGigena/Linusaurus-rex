@@ -295,6 +295,25 @@ export type ClientEvent =
   | { type: "keymap"; hostId: string; keymap: KeymapResult }
   | { type: "settings"; settings: Settings }
   | { type: "update"; state: UpdateState };
+export interface TailscaleEnableOptions {
+  hostname?: string;
+  control_url?: string;
+  advertise_tags?: string[];
+  allow_tailnet_members?: boolean;
+}
+export type ServerActionArgs =
+  | { action: "tailscale.rename"; args: { hostname: string } }
+  | { action: "tailscale.enable"; args?: TailscaleEnableOptions }
+  | {
+      action: "status" | "tailscale.disable" | "tailscale.login" | "tailscale.logout";
+      args?: never;
+    };
+/** Interactive rename can collect its required hostname before issuing the RPC. */
+export type ServerActionCommand =
+  | [action: "tailscale.rename", args?: { hostname: string }]
+  | [action: "tailscale.enable", args?: TailscaleEnableOptions]
+  | [action: "tailscale.disable" | "tailscale.login" | "tailscale.logout"];
+
 export interface UpdateState {
   phase:
     | "idle"
@@ -586,17 +605,7 @@ export interface RexMethods {
   reloadConfig: { args: { hostId: string }; result: unknown };
   writeConfig: { args: { hostId: string; content: string }; result: void };
   serverAction: {
-    args: {
-      hostId: string;
-      action:
-        | "status"
-        | "tailscale.enable"
-        | "tailscale.disable"
-        | "tailscale.login"
-        | "tailscale.logout"
-        | "tailscale.rename";
-      args?: Record<string, unknown>;
-    };
+    args: { hostId: string } & ServerActionArgs;
     result: unknown;
   };
   diagnostics: { args: { hostId?: string }; result: Record<string, unknown> };
