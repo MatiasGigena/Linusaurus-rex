@@ -9,6 +9,7 @@ import {
   shell,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
+  type WebContents,
 } from "electron";
 import { readFile } from "node:fs/promises";
 import { realpathSync, statSync } from "node:fs";
@@ -188,12 +189,14 @@ class WindowContext {
   private notices: DesktopNotifications;
   private links: ExternalLinks;
   private stopSettings?: () => void;
+  private readonly contents: WebContents;
   constructor(
     readonly window: BrowserWindow,
     readonly store: SettingsStore,
     readonly allowedUrl: string,
     private options: Options,
   ) {
+    this.contents = window.webContents;
     this.rex = new RexService({
       credentials: hostCredentials.get,
       onControl: (host, control) => this.features.bindControl(host, control),
@@ -273,9 +276,9 @@ class WindowContext {
         void this.features.preferencesChanged().catch(() => {});
       previousSettings = settings;
     });
-    window.webContents.on("before-input-event", this.interaction);
-    window.webContents.on("input-event", this.interaction);
-    window.webContents.on("did-start-loading", this.clearSubscriptions);
+    this.contents.on("before-input-event", this.interaction);
+    this.contents.on("input-event", this.interaction);
+    this.contents.on("did-start-loading", this.clearSubscriptions);
     window.on("focus", this.visibility);
     window.on("blur", this.visibility);
     window.on("hide", this.visibility);
@@ -805,15 +808,14 @@ class WindowContext {
     this.rex.dispose();
     this.integrations.dispose();
     this.notices.dispose();
-    this.window.webContents.removeListener(
-      "before-input-event",
-      this.interaction,
-    );
-    this.window.webContents.removeListener("input-event", this.interaction);
-    this.window.webContents.removeListener(
-      "did-start-loading",
-      this.clearSubscriptions,
-    );
+    if (!this.contents.isDestroyed()) {
+      this.contents.removeListener("before-input-event", this.interaction);
+      this.contents.removeListener("input-event", this.interaction);
+      this.contents.removeListener(
+        "did-start-loading",
+        this.clearSubscriptions,
+      );
+    }
     this.window.removeListener("focus", this.visibility);
     this.window.removeListener("blur", this.visibility);
     this.window.removeListener("hide", this.visibility);
@@ -833,6 +835,7 @@ class WindowContext {
     this.subscriptions.clear();
   };
   private visibility = () => {
+    if (this.disposed || this.window.isDestroyed()) return;
     this.features.setContext({
       ...this.context.selection,
       visible:

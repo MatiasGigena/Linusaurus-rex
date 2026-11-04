@@ -196,7 +196,39 @@ try {
     });
   });
   await expect.poll(clientCount).toBe(2);
+  const closeFailures: string[] = [];
+  let closeCompleted = false;
+  const stderr = app.process().stderr;
+  assert.ok(stderr);
+  const observeClose = (bytes: Buffer) => {
+    const message = bytes.toString();
+    if (message.includes("BOUNDARY_MAIN_EXCEPTION"))
+      closeFailures.push(message);
+    if (message.includes("BOUNDARY_WINDOW_CLOSED")) closeCompleted = true;
+  };
+  stderr.on("data", observeClose);
+  await app.evaluate(({ BrowserWindow }, ownerId) => {
+    process.on("uncaughtExceptionMonitor", (error) =>
+      console.error("BOUNDARY_MAIN_EXCEPTION", error.stack || error.message),
+    );
+    const closing = BrowserWindow.getAllWindows().find(
+      (window) => window.id !== ownerId,
+    );
+    if (!closing) throw new Error("The second test window is missing");
+    closing.once("closed", () => console.error("BOUNDARY_WINDOW_CLOSED"));
+  }, windowId);
   await second.close();
+  await expect
+    .poll(() => closeCompleted || closeFailures.length > 0)
+    .toBeTruthy();
+  stderr.removeListener("data", observeClose);
+  // Electron's native exception dialog blocks graceful shutdown after a fatal cleanup error.
+  if (closeFailures.length) app.process().kill("SIGKILL");
+  assert.deepEqual(
+    closeFailures,
+    [],
+    "Closing a registered window must dispose its context without an uncaught main-process exception",
+  );
   await expect.poll(clientCount).toBe(1);
 
   const opened = app.waitForEvent("window");
