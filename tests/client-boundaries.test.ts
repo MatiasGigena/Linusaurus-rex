@@ -245,3 +245,174 @@ test("malformed activity snapshots cannot crash subsequent live notifications", 
   });
   assert.ok(events.some((event) => event.type === "notification"));
 });
+
+function preferenceFixture() {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const hosts = [
+    { id: "first", label: "First", endpoint: "unix:///first.sock" },
+    { id: "second", label: "Second", endpoint: "unix:///second.sock" },
+  ];
+  settings.hosts = hosts;
+  const emitted: ClientEvent[] = [];
+  const desktop: ClientEvent[] = [];
+  const calls: { hostId: string; method: string; payload: object }[] = [];
+  const failures = new Set<string>();
+  const connected = new Map<string, () => void>();
+  const controls = new Map<string, RexControl>();
+  let saved = false;
+  const keymap = () => ({
+    actions: [],
+    bindings: [{ keys: [saved ? "y" : "x"], action: "client.sidebar.toggle" }],
+    modes: [],
+    warnings: [],
+  });
+  const service = {
+    control: async (host: { id: string }) => {
+      const control = controls.get(host.id);
+      assert.ok(control);
+      return control;
+    },
+    callMethod: async (
+      host: { id: string },
+      method: string,
+      payload: object,
+    ) => {
+      calls.push({ hostId: host.id, method, payload });
+      if (failures.has(`${host.id}:${method}`))
+        throw new Error("keymap rejected");
+      return keymap();
+    },
+  } as unknown as RexService;
+  let features: ClientFeatures;
+  features = new ClientFeatures(service, {
+    settings: () => settings,
+    notify: (event) => desktop.push(event),
+    emit: (event) => {
+      emitted.push(event);
+      if (event.type === "status" && event.connected)
+        connected.get(event.hostId)?.();
+      if (event.type === "action")
+        features.reply(event.requestId, { ok: true });
+    },
+  });
+  return {
+    settings,
+    hosts,
+    features,
+    emitted,
+    desktop,
+    calls,
+    failures,
+    controls,
+    save() {
+      saved = true;
+      settings.clientLabel = "Saved label";
+      settings.shortcuts = { "client.sidebar.toggle": "y" };
+    },
+    connect(host: (typeof hosts)[number]) {
+      const control = {
+        connected: true,
+        onEvent: () => () => {},
+        readyPublic: async () => ({
+          protocol: "rex.control.v1",
+          api_revision: 10,
+        }),
+        attach: async () => {},
+        call: async (method: string, payload: object) => {
+          calls.push({ hostId: host.id, method, payload });
+          if (failures.has(`${host.id}:${method}`))
+            throw new Error("label rejected");
+          return method === "client.keymap" ? keymap() : {};
+        },
+      } as unknown as RexControl;
+      controls.set(host.id, control);
+      return new Promise<void>((resolve) => {
+        connected.set(host.id, resolve);
+        features.bindControl(host, control);
+      });
+    },
+  };
+}
+
+test("saved preference failures are reported per host while other operations and hosts continue", async () => {
+  const fixtureValue = preferenceFixture();
+  const { features, hosts, calls, failures, emitted, desktop } = fixtureValue;
+  try {
+    await Promise.all(hosts.map((host) => fixtureValue.connect(host)));
+    calls.length = 0;
+    fixtureValue.save();
+    failures.add("first:client.set_label");
+    failures.add("first:client.keymap");
+    await features.preferencesChanged();
+    assert.ok(
+      calls.some(
+        (call) => call.hostId === "first" && call.method === "client.keymap",
+      ),
+    );
+    assert.ok(
+      calls.some(
+        (call) =>
+          call.hostId === "second" && call.method === "client.set_label",
+      ),
+    );
+    assert.ok(
+      calls.some(
+        (call) => call.hostId === "second" && call.method === "client.keymap",
+      ),
+    );
+    const notices = emitted.filter((event) => event.type === "notification");
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].hostId, "first");
+    assert.match(notices[0].body, /saved.*could not apply/);
+    assert.match(notices[0].body, /Client label: label rejected/);
+    assert.match(notices[0].body, /Keyboard shortcuts: keymap rejected/);
+    assert.match(notices[0].body, /retried.*reconnects/);
+    assert.equal(desktop.length, 1);
+    const previousActions = emitted.filter(
+      (event) => event.type === "action",
+    ).length;
+    await features.input(hosts[0], "key", "session", "pane", key("x"));
+    assert.equal(
+      emitted.filter((event) => event.type === "action").length,
+      previousActions + 1,
+      "A rejected preference update preserves the active keymap",
+    );
+    failures.clear();
+    calls.length = 0;
+    await fixtureValue.connect(hosts[0]);
+    const label = calls.find((call) => call.method === "client.set_label");
+    assert.deepEqual(label?.payload, { label: "Saved label" });
+    const configuration = calls.find((call) => call.method === "client.keymap");
+    assert.match(JSON.stringify(configuration?.payload), /"keys":\["y"\]/);
+    await features.input(hosts[0], "key", "session", "pane", key("y"));
+    assert.equal(
+      emitted.filter((event) => event.type === "action").length,
+      previousActions + 2,
+    );
+  } finally {
+    features.dispose();
+  }
+});
+
+test("disconnected hosts retry the latest saved shortcuts when their next control connects", async () => {
+  const fixtureValue = preferenceFixture();
+  try {
+    await fixtureValue.connect(fixtureValue.hosts[0]);
+    const control = fixtureValue.controls.get("first");
+    assert.ok(control);
+    Object.defineProperty(control, "connected", { value: false });
+    fixtureValue.save();
+    await fixtureValue.features.preferencesChanged();
+    fixtureValue.calls.length = 0;
+    await fixtureValue.connect(fixtureValue.hosts[0]);
+    const configuration = fixtureValue.calls.find(
+      (call) => call.method === "client.keymap",
+    );
+    assert.match(JSON.stringify(configuration?.payload), /"keys":\["y"\]/);
+    assert.ok(
+      !fixtureValue.emitted.some((event) => event.type === "notification"),
+    );
+  } finally {
+    fixtureValue.features.dispose();
+  }
+});

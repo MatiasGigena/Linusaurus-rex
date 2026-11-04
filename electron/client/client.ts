@@ -11,7 +11,11 @@ import type {
 } from "../../src/shared/types.js";
 import type { RexService } from "../rex/service.js";
 import type { RexControl, RexEvent } from "../rex/control.js";
-import { CLIENT_ACTIONS, SHORTCUT_ACTIONS, serverShortcut } from "../features/actions.js";
+import {
+  CLIENT_ACTIONS,
+  SHORTCUT_ACTIONS,
+  serverShortcut,
+} from "../features/actions.js";
 import { ActivityRegistry } from "./activity.js";
 import { KeymapRouter } from "./keymap.js";
 import { normalizeKeymap } from "./keymap-data.js";
@@ -395,17 +399,47 @@ export class ClientFeatures {
     else pending.resolve(result ?? null);
   }
   async preferencesChanged() {
-    for (const [hostId, control] of this.controls) {
-      const host = this.hooks
-        .settings()
-        .hosts.find((host) => host.id === hostId);
-      if (!host || !control.connected) continue;
-      await control
-        .call("client.set_label", { label: this.hooks.settings().clientLabel })
-        .catch(() => {});
-      await this.configure(host).catch(() => {});
-    }
+    const settings = this.hooks.settings();
+    // Remember desired preferences even for disconnected hosts. Rebinding a
+    // control must retry them rather than reuse its last accepted keymap.
+    for (const host of settings.hosts)
+      this.configured.set(host.id, this.defaultConfiguration());
+    await Promise.all(
+      [...this.controls].map(async ([hostId, control]) => {
+        const host = settings.hosts.find((host) => host.id === hostId);
+        if (!host || !control.connected) return;
+        const failures: string[] = [];
+        try {
+          await control.call("client.set_label", {
+            label: settings.clientLabel,
+          });
+        } catch (error) {
+          failures.push(
+            `Client label: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        try {
+          await this.configure(host);
+        } catch (error) {
+          failures.push(
+            `Keyboard shortcuts: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        if (!failures.length) return;
+        const event: Extract<ClientEvent, { type: "notification" }> = {
+          type: "notification",
+          id: randomUUID(),
+          hostId: host.id,
+          kind: "error",
+          title: `Preferences could not be applied to ${host.label}`,
+          body: `Your preferences were saved, but this host could not apply all changes. ${failures.join("; ")}. They will be retried when the host reconnects.`,
+        };
+        this.hooks.emit(event);
+        this.hooks.notify(event);
+      }),
+    );
   }
+
   dispose() {
     this.disposed = true;
     for (const pending of this.pending.values()) {
