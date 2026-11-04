@@ -191,7 +191,12 @@ export class TerminalCommandSession {
           connectionGeneration === this.connectionGeneration
         ) {
           const message = terminalErrorMessage(failure);
+          // A typed RPC rejection proves that the control connection responded.
+          // Its application error text can mention a network or closed resource.
+          const serverRejected =
+            failure instanceof Error && failure.name === "RexRequestError";
           if (
+            !serverRejected &&
             /connection|socket|network|disconnected|closed|timed out|ECONN|EPIPE|transport|handshake|\bEOF\b/i.test(
               message,
             )

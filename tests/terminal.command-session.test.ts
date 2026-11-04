@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { TerminalCommandSession } from "../src/terminal/command-session.js";
+import { RexRequestError } from "../electron/rex/control.js";
 
 function deferred() {
   let resolve!: () => void;
@@ -40,6 +41,37 @@ function harness() {
     },
   };
 }
+
+test("an explicit server rejection mentioning a network keeps the responding connection available", async (t) => {
+  const h = harness();
+  t.after(() => h.session.dispose());
+  h.render();
+  const original = new RexRequestError(
+    "Lua action: network request denied",
+    "lua_error",
+    "terminal.key",
+  );
+  await assert.rejects(
+    h.session.sendCommand(
+      async () => {
+        throw original;
+      },
+      await h.session.waitUntilReady(),
+    ),
+    (failure) => failure === original,
+  );
+  assert.equal(h.session.isOnline, true);
+  let sent = 0;
+  await h.session.sendCommand(
+    async () => {
+      sent++;
+    },
+    await h.session.waitUntilReady(),
+  );
+  assert.equal(sent, 1);
+  assert.deepEqual(h.connected, [true]);
+  assert.equal(h.errors.at(-1), original.message);
+});
 
 test("late action and clipboard failures reject their callers without replacing current feedback", async (t) => {
   const h = harness();
