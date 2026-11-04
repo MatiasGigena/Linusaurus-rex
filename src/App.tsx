@@ -1,3 +1,5 @@
+import { reorderWorkspaceTab } from "./workspace/actions/tabActions";
+import { persistSidebarWidth } from "./workspace/actions/clientActions";
 import { ActivityPanel } from "./components/ActivityPanel";
 import { NoticeStack } from "./components/NoticeStack";
 import { buildPaletteCommands } from "./workspace/palette";
@@ -289,14 +291,12 @@ export default function App() {
     beforeWindowId?: string,
   ) =>
     safely(() =>
-      ws.run(hostId, () =>
-        window.rex.request("reorderWindow", {
-          hostId,
-          sessionId,
-          windowId,
-          beforeWindowId,
-        }),
-      ),
+      reorderWorkspaceTab(ws.operations, {
+        hostId,
+        sessionId,
+        windowId,
+        beforeWindowId,
+      }),
     );
 
   const saveHost = createHostSaver(ws.operations, (hostId) =>
@@ -362,11 +362,7 @@ export default function App() {
         onResizeEnd={(width) =>
           safely(async () => {
             try {
-              if (!settings.preserveWindowWidth)
-                await window.rex.request("resizeWindow", {
-                  deltaWidth: width - settings.sidebarWidth,
-                });
-              await ws.saveSettings({ ...settings, sidebarWidth: width });
+              await persistSidebarWidth(ws.operations, settings, width);
             } finally {
               setSidebarPreviewWidth(undefined);
             }

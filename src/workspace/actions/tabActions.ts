@@ -4,6 +4,19 @@ import {
   type TabActionsTarget,
 } from "./context";
 
+import type { WorkspaceOperations } from "../../core/workspaceOperations";
+import type { RexMethods } from "../../shared/types";
+
+export function reorderWorkspaceTab(
+  workspace: Pick<WorkspaceOperations, "run">,
+  target: RexMethods["reorderWindow"]["args"],
+): Promise<void> {
+  const request = { ...target };
+  return workspace.run(request.hostId, () =>
+    window.rex.request("reorderWindow", request),
+  );
+}
+
 export function createTabActions(dependencies: TabActionsDependencies) {
   return async function tabActions(
     context: TabActionsTarget,
@@ -147,14 +160,12 @@ export function createTabActions(dependencies: TabActionsDependencies) {
           return;
         const beforeWindowId =
           target < index ? windows[target].id : windows[target + 1]?.id;
-        return workspace.run(hostId, () =>
-          window.rex.request("reorderWindow", {
-            hostId,
-            sessionId,
-            windowId: currentWindow.id,
-            beforeWindowId,
-          }),
-        );
+        return reorderWorkspaceTab(workspace, {
+          hostId,
+          sessionId,
+          windowId: currentWindow.id,
+          beforeWindowId,
+        });
       }
       case "client.tab.move_to_new_window": {
         if (!currentWindow) return;

@@ -1,11 +1,24 @@
 import { DEFAULT_SETTINGS, type Settings } from "../../shared/types";
 import { saveLibraryTheme, uniqueThemeName } from "../../core/themeLibrary";
 import type { SettingsTab } from "../../components/preferences/types";
+import type { WorkspaceOperations } from "../../core/workspaceOperations";
 import {
   UNHANDLED,
   type ClientActionsDependencies,
   type ClientActionsTarget,
 } from "./context";
+
+export async function persistSidebarWidth(
+  workspace: Pick<WorkspaceOperations, "saveSettings">,
+  settings: Settings,
+  width: number,
+): Promise<void> {
+  if (!settings.preserveWindowWidth)
+    await window.rex.request("resizeWindow", {
+      deltaWidth: width - settings.sidebarWidth,
+    });
+  await workspace.saveSettings({ ...settings, sidebarWidth: width });
+}
 
 export function createClientActions(dependencies: ClientActionsDependencies) {
   return async function clientActions(
