@@ -43,7 +43,13 @@ import {
 } from "./core/workspace";
 import { type ClientEvent } from "./shared/types";
 
-type Menu = { x: number; y: number; items: (ContextItem | null)[] };
+type Menu = {
+  x: number;
+  y: number;
+  hostId: string;
+  endpoint?: string;
+  items: (ContextItem | null)[];
+};
 export default function App() {
   const ws = useWorkspace();
   const {
@@ -110,13 +116,49 @@ export default function App() {
     void action().catch((failure) => ws.setError(errorMessage(failure)));
   const dispatch = (name: string, args: Record<string, unknown> = {}) =>
     safely(() => executeRef.current(name, args));
+  const menuDispatch =
+    (hostId: string, endpoint: string | undefined) =>
+    (name: string, args?: Record<string, unknown>) => {
+      if (
+        !ws.settingsRef.current?.hosts.some(
+          (host) => host.id === hostId && host.endpoint === endpoint,
+        )
+      ) {
+        setMenu(undefined);
+        return;
+      }
+      dispatch(name, args);
+    };
 
   useEffect(() => {
-    if (selection?.windowId)
-      void window.rex
-        .request("focusWindow", selection)
-        .catch((failure) => ws.setError(errorMessage(failure)));
-  }, [selection?.hostId, selection?.sessionId, selection?.windowId]);
+    if (!selection?.windowId) return;
+    let current = true;
+    const hostId = selection.hostId;
+    const endpoint = ws.settingsRef.current?.hosts.find(
+      (host) => host.id === hostId,
+    )?.endpoint;
+    void window.rex.request("focusWindow", selection).catch((failure) => {
+      const currentSelection = ws.getSelection();
+      if (
+        current &&
+        currentSelection?.hostId === selection.hostId &&
+        currentSelection.sessionId === selection.sessionId &&
+        currentSelection.windowId === selection.windowId &&
+        ws.settingsRef.current?.hosts.some(
+          (host) => host.id === hostId && host.endpoint === endpoint,
+        )
+      )
+        ws.setError(errorMessage(failure));
+    });
+    return () => {
+      current = false;
+    };
+  }, [
+    selection?.hostId,
+    selection?.sessionId,
+    selection?.windowId,
+    ws.getSelection,
+  ]);
   useWorkspaceGestures(workspaceElement, settings, activeWindow, dispatch);
   useEffect(() => {
     const focus = () => setNativeFocused(true);
@@ -131,6 +173,15 @@ export default function App() {
   useEffect(() => {
     ws.publishUiBusy(modalOpen || !!menu);
   }, [modalOpen, menu, ws.publishUiBusy]);
+  useEffect(() => {
+    if (
+      menu &&
+      !settings?.hosts.some(
+        (host) => host.id === menu.hostId && host.endpoint === menu.endpoint,
+      )
+    )
+      setMenu(undefined);
+  }, [menu, settings?.hosts]);
   useEffect(() => {
     if (!window.rex) return;
     void window.rex
@@ -223,29 +274,46 @@ export default function App() {
     event: React.MouseEvent,
     hostId: string,
     sessionId: string,
-  ) =>
+  ) => {
+    const endpoint = ws.settingsRef.current?.hosts.find(
+      (host) => host.id === hostId,
+    )?.endpoint;
     setMenu({
       x: event.clientX,
       y: event.clientY,
+      hostId,
+      endpoint,
       items: sessionMenuItems({
         hostId,
         sessionId,
         collapsedSessions,
         toggleCollapse,
-        dispatch,
+        dispatch: menuDispatch(hostId, endpoint),
       }),
     });
+  };
   const openTabMenu = (
     event: React.MouseEvent,
     hostId: string,
     sessionId: string,
     windowId: string,
-  ) =>
+  ) => {
+    const endpoint = ws.settingsRef.current?.hosts.find(
+      (host) => host.id === hostId,
+    )?.endpoint;
     setMenu({
       x: event.clientX,
       y: event.clientY,
-      items: tabMenuItems({ hostId, sessionId, windowId, dispatch }),
+      hostId,
+      endpoint,
+      items: tabMenuItems({
+        hostId,
+        sessionId,
+        windowId,
+        dispatch: menuDispatch(hostId, endpoint),
+      }),
     });
+  };
   const reorder = (
     hostId: string,
     sessionId: string,

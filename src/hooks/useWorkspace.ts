@@ -52,6 +52,11 @@ export function useWorkspace() {
   const initialized = useRef(false);
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
+  // Server actions update intent synchronously, before React commits selection.
+  const getSelection = useCallback(
+    (): Readonly<Selection> | undefined => selectionRef.current,
+    [],
+  );
   const actionHandler = useRef<
     (
       name: string,
@@ -610,6 +615,7 @@ export function useWorkspace() {
     busy,
     loading,
     settingsRef,
+    getSelection,
     actionHandler,
     setError,
     setFocusedPane,
