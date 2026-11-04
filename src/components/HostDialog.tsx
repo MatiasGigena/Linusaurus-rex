@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { Dialog } from "./Dialog";
 import type { Host } from "../shared/types";
@@ -9,15 +9,26 @@ export type Credentials = {
   password?: string;
   token?: string;
 };
-export function HostDialog({
-  host,
-  onSave,
-  onClose,
-}: {
+type HostDialogProps = {
   host?: Host;
   onSave(host: Host, credentials?: Credentials): Promise<void>;
   onClose(): void;
-}) {
+};
+type CredentialDiscovery =
+  | { phase: "pending" }
+  | { phase: "known"; stored: boolean; secureStorageAvailable: boolean }
+  | { phase: "failed"; message: string };
+
+export function HostDialog(props: HostDialogProps) {
+  return (
+    <HostForm
+      key={JSON.stringify([props.host?.id, props.host?.endpoint])}
+      {...props}
+    />
+  );
+}
+
+function HostForm({ host, onSave, onClose }: HostDialogProps) {
   const [label, setLabel] = useState(host?.label || "");
   const [endpoint, setEndpoint] = useState(host?.endpoint || "");
   const [auth, setAuth] = useState<"none" | "basic" | "token">("none");
@@ -36,20 +47,40 @@ export function HostDialog({
   const [startupCommand, setStartupCommand] = useState(
     host?.startupCommand || "",
   );
-  const [stored, setStored] = useState(false);
-  const [secure, setSecure] = useState<boolean>();
+  const [savedDiscovery, setDiscovery] = useState<
+    CredentialDiscovery | undefined
+  >(() => (host ? { phase: "pending" } : undefined));
+  const [discoveryRevision, setDiscoveryRevision] = useState(0);
+  const [forgetting, setForgetting] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
   useEffect(() => {
-    if (host)
-      void window.rex
-        .request("credentialStatus", { hostId: host.id })
-        .then((status) => {
-          setStored(status.stored);
-          setSecure(status.secureStorageAvailable);
-        })
-        .catch(() => {});
-  }, [host]);
+    if (!host) return;
+    let active = true;
+    setDiscovery({ phase: "pending" });
+    void window.rex
+      .request("credentialStatus", { hostId: host.id })
+      .then((status) => {
+        if (active) setDiscovery({ phase: "known", ...status });
+      })
+      .catch((failure) => {
+        if (active)
+          setDiscovery({ phase: "failed", message: errorMessage(failure) });
+      });
+    return () => {
+      active = false;
+    };
+  }, [host?.id, host?.endpoint, discoveryRevision]);
+  const endpointChanged = host && endpoint.trim() !== host.endpoint;
+  const discovery = endpointChanged ? undefined : savedDiscovery;
+  const stored = discovery?.phase === "known" && discovery.stored;
   return (
     <Dialog
       title={host ? "Edit host" : "Connect another host"}
@@ -60,6 +91,7 @@ export function HostDialog({
         onSubmit={(event) => {
           event.preventDefault();
           if (saving) return;
+          setError(undefined);
           setSaving(true);
           const credentials =
             auth === "basic"
@@ -85,8 +117,11 @@ export function HostDialog({
             },
             credentials,
           )
-            .then(onClose)
+            .then(() => {
+              if (mounted.current) onClose();
+            })
             .catch((failure) => {
+              if (!mounted.current) return;
               setError(errorMessage(failure));
               setSaving(false);
             });
@@ -152,7 +187,9 @@ export function HostDialog({
             <option value="none">
               {stored
                 ? "Keep saved credentials"
-                : "Rex peer / Tailscale access"}
+                : !host || discovery?.phase === "known"
+                  ? "Rex peer / Tailscale access"
+                  : "Keep authentication unchanged"}
             </option>
             <option value="basic">HTTP gateway username and password</option>
             <option value="token">HTTP gateway bearer token</option>
@@ -203,21 +240,63 @@ export function HostDialog({
             <button
               className="text-button"
               type="button"
-              onClick={() =>
+              disabled={forgetting || saving}
+              onClick={() => {
+                setError(undefined);
+                setForgetting(true);
                 void window.rex
                   .request("removeCredentials", { hostId: host.id })
-                  .then(() => setStored(false))
-                  .catch((failure) => setError(errorMessage(failure)))
-              }
+                  .then(() => {
+                    if (mounted.current)
+                      setDiscovery((previous) =>
+                        previous?.phase === "known"
+                          ? { ...previous, stored: false }
+                          : previous,
+                      );
+                  })
+                  .catch((failure) => {
+                    if (mounted.current) setError(errorMessage(failure));
+                  })
+                  .finally(() => {
+                    if (mounted.current) setForgetting(false);
+                  });
+              }}
             >
-              Forget
+              {forgetting ? "Forgetting…" : "Forget"}
             </button>
           </div>
         )}
+        {endpointChanged && (
+          <p className="form-hint">
+            Save the new endpoint to check its saved credentials.
+          </p>
+        )}
+        {host && discovery?.phase === "pending" && (
+          <p className="form-hint" role="status">
+            Checking saved credentials and system keyring…
+          </p>
+        )}
+        {discovery?.phase === "failed" && (
+          <div className="form-error" role="alert">
+            <p>Saved credentials could not be checked: {discovery.message}</p>
+            <button
+              className="text-button"
+              type="button"
+              onClick={() => setDiscoveryRevision((previous) => previous + 1)}
+            >
+              Retry credential check
+            </button>
+          </div>
+        )}
+        {discovery?.phase === "known" && !discovery.stored && (
+          <p className="form-hint">No credentials are saved for this host.</p>
+        )}
         <p className="form-hint">
-          {secure === false
-            ? "Unlock or enable a system keyring before saving credentials."
-            : "Saved credentials are encrypted with the system keyring. TLS certificates are verified for HTTPS/WSS."}
+          {discovery?.phase === "known"
+            ? discovery.secureStorageAvailable
+              ? "Saved credentials are encrypted with the system keyring. TLS certificates are verified for HTTPS/WSS."
+              : "Unlock or enable a system keyring before saving credentials."
+            : "HTTP gateway credentials require a system keyring. TLS certificates are verified for HTTPS/WSS."}
         </p>
         {error && (
           <p className="form-error" role="alert">
