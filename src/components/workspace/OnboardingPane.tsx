@@ -12,6 +12,11 @@ import {
 import type { TerminalPaneProps } from "../../terminal/TerminalPane";
 import { errorMessage } from "../../core/workspace";
 import { configuredShortcut } from "../../shared/actions";
+import type { WorkspaceOperations } from "../../core/workspaceOperations";
+
+type OnboardingPaneProps = TerminalPaneProps & {
+  workspace: Pick<WorkspaceOperations, "getSettings" | "saveSettings">;
+};
 
 const STEPS = [
   "welcome",
@@ -21,7 +26,7 @@ const STEPS = [
   "practice",
   "done",
 ];
-export function OnboardingPane(props: TerminalPaneProps) {
+export function OnboardingPane(props: OnboardingPaneProps) {
   const { hostId, sessionId, blockId } = props.terminalRef;
   const endpoint = props.settings.hosts.find(
     (host) => host.id === hostId,
@@ -42,7 +47,8 @@ function OnboardingTutorial({
   onFocus,
   onClose,
   onAction,
-}: TerminalPaneProps) {
+  workspace,
+}: OnboardingPaneProps) {
   const [step, setStep] = useState("welcome");
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -210,8 +216,12 @@ function OnboardingTutorial({
                     disabled={busy}
                     onClick={() =>
                       void run(async () => {
-                        const latest = await window.rex.getSettings();
-                        await window.rex.setSettings({
+                        const latest = workspace.getSettings();
+                        if (!latest)
+                          throw new Error(
+                            "Workspace settings are not available.",
+                          );
+                        await workspace.saveSettings({
                           ...latest,
                           theme,
                           lightThemeId: "",

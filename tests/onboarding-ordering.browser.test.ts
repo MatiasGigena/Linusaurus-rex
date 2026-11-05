@@ -22,6 +22,86 @@ interface OnboardingFixture {
   fail(id: number): void;
 }
 const options = { skip: process.env.TERMINAL_UI_TEST !== "1", timeout: 30_000 };
+
+test(
+  "onboarding appearance uses workspace settings ownership through the retained pane tree",
+  options,
+  async () => {
+    const appearance = `
+import React from'react';import{createRoot}from'react-dom/client';
+import{WorkspaceLayout}from'/src/components/workspace/WorkspaceLayout.tsx';import{DEFAULT_SETTINGS}from'/src/shared/types.ts';
+import'/src/styles.css';import'/src/advanced.css';
+let settings={...structuredClone(DEFAULT_SETTINGS),hosts:[{id:'host',label:'Host',endpoint:'unix:///host.sock'}],lightThemeId:'old-light',darkThemeId:'old-dark'};
+const f=window.fixture={saved:[],directReads:0,directWrites:0,fail:false,patch(value){settings={...settings,...value};}};
+window.rex={request:async()=>({step:'appearance'}),getSettings:async()=>{f.directReads++;return settings;},setSettings:async next=>{f.directWrites++;settings=next;return next;}};
+const view={id:'session',label:'Session',activeWindowId:'window',windows:[{id:'window',label:'Tutorial',panes:[{id:'tutorial',label:'Tutorial',creator:'com.superlogical.onboarding',rect:[0,0,1,1]}]}]};
+function Fixture(){const[current,setSettings]=React.useState(settings);const element=React.useRef(null);
+ const operations={getSettings:()=>settings,async saveSettings(next){f.saved.push(next);if(f.fail)throw new Error('Workspace settings refused');settings=next;setSettings(next);return next;},async refresh(){},async focusPane(){},async mutateHostAndRefresh(host,action){return action();},async reloadSession(){return view;}};
+ return React.createElement('main',{style:{width:900,height:600}},React.createElement(WorkspaceLayout,{workspaceElement:element,selection:{hostId:'host',sessionId:'session',windowId:'window'},views:{'host/session':view},hosts:[{id:'host',connected:true}],metadata:{},settings:current,modalOpen:false,connectionRevisions:{},operations,execute:async()=>{},onError(message){throw new Error(message);}},null));}
+createRoot(document.getElementById('root')).render(React.createElement(Fixture));`;
+    await withBrowserFixture(
+      "onboarding-settings-owner",
+      appearance,
+      async (page) => {
+        type AppearanceFixture = {
+          fixture: {
+            saved: {
+              theme: string;
+              fontSize: number;
+              lightThemeId: string;
+              darkThemeId: string;
+            }[];
+            directReads: number;
+            directWrites: number;
+            fail: boolean;
+            patch(value: object): void;
+          };
+        };
+        await expect(
+          page.getByRole("heading", { name: "Make the terminal yours" }),
+        ).toBeVisible();
+        await page.evaluate(() =>
+          (window as unknown as AppearanceFixture).fixture.patch({
+            fontSize: 22,
+          }),
+        );
+        await page
+          .getByRole("button", { name: "Midnight", exact: true })
+          .click();
+        await expect(
+          page.getByRole("button", { name: "Midnight", exact: true }),
+        ).toHaveAttribute("aria-pressed", "true");
+        const saved = await page.evaluate(
+          () => (window as unknown as AppearanceFixture).fixture.saved,
+        );
+        assert.equal(saved.length, 1);
+        assert.equal(saved[0].theme, "midnight");
+        assert.equal(saved[0].fontSize, 22);
+        assert.equal(saved[0].lightThemeId, "");
+        assert.equal(saved[0].darkThemeId, "");
+        await page.evaluate(() => {
+          (window as unknown as AppearanceFixture).fixture.fail = true;
+        });
+        await page
+          .getByRole("button", { name: "Graphite", exact: true })
+          .click();
+        await expect(page.getByRole("alert")).toHaveText(
+          "Workspace settings refused",
+        );
+        await expect(
+          page.getByRole("button", { name: "Midnight", exact: true }),
+        ).toHaveAttribute("aria-pressed", "true");
+        assert.deepEqual(
+          await page.evaluate(() => {
+            const f = (window as unknown as AppearanceFixture).fixture;
+            return [f.directReads, f.directWrites];
+          }),
+          [0, 0],
+        );
+      },
+    );
+  },
+);
 async function request(page: Page, method: string, after = 0) {
   await expect
     .poll(() =>

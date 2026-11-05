@@ -15,7 +15,10 @@ interface WorkspaceWindowProps {
   focusedPane?: string;
   modalOpen: boolean;
   connectionRevision: number;
-  operations: Pick<WorkspaceOperations, "focusPane">;
+  operations: Pick<
+    WorkspaceOperations,
+    "focusPane" | "getSettings" | "saveSettings"
+  >;
   interactions: ReturnType<typeof usePaneGeometry>;
   execute(name: string, args: Record<string, unknown>): Promise<unknown>;
   onError(message: string): void;
@@ -124,6 +127,7 @@ export function WorkspaceWindow({
             />
           )}
           <WorkspacePane
+            workspace={operations}
             key={`${pane.id}/${settings.hosts.find((host) => host.id === where.hostId)?.endpoint || ""}/${connectionRevision}`}
             pane={pane}
             terminalRef={{

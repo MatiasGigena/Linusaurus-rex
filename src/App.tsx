@@ -412,6 +412,8 @@ export default function App() {
           modalOpen={modalOpen}
           connectionRevisions={connectionRevisions}
           operations={{
+            getSettings: ws.operations.getSettings,
+            saveSettings: ws.operations.saveSettings,
             focusPane: ws.operations.focusPane,
             mutateHostAndRefresh: ws.operations.mutateHostAndRefresh,
             refresh: ws.operations.refresh,

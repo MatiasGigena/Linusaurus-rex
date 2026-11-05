@@ -26,7 +26,10 @@ interface WorkspaceLayoutProps {
   modalOpen: boolean;
   connectionRevisions: Partial<Record<string, number>>;
   operations: PaneGeometryOperations &
-    Pick<WorkspaceOperations, "focusPane" | "refresh">;
+    Pick<
+      WorkspaceOperations,
+      "focusPane" | "refresh" | "getSettings" | "saveSettings"
+    >;
   execute(name: string, args: Record<string, unknown>): Promise<unknown>;
   onError(message: string): void;
   children: ReactNode;
@@ -108,7 +111,7 @@ export function WorkspaceLayout({
                 focusedPane={focusedPane}
                 modalOpen={modalOpen}
                 connectionRevision={connectionRevisions[where.hostId] || 0}
-                operations={{ focusPane: operations.focusPane }}
+                operations={operations}
                 interactions={interactions}
                 execute={execute}
                 onError={onError}
