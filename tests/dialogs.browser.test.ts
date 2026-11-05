@@ -16,8 +16,8 @@ window.rex={request:async(method,args)=>{
  fixture.calls.push({method,args});
  if(method==='serverAction'){if(fixture.statusError)throw Error(fixture.statusError);return fixture.status;}
  if(method==='configInfo'){if(fixture.configError)throw Error(fixture.configError);return fixture.config;}
- if(method==='writeConfig'){if(fixture.writeError)throw Error(fixture.writeError);return;}
- if(method==='reloadConfig'){if(fixture.reloadError)throw Error(fixture.reloadError);return;}
+ if(method==='writeConfig'){if(fixture.writeError)throw Error(fixture.writeError);if(fixture.holdWrite)return new Promise(resolve=>fixture.finishWrite=resolve);return;}
+ if(method==='reloadConfig'){if(fixture.reloadError)throw Error(fixture.reloadError);if(fixture.holdReload)return new Promise(resolve=>fixture.finishReload=resolve);return;}
  if(method==='blockInfo'){if(fixture.methodsError)throw Error(fixture.methodsError);return fixture.methods;}
  if(method==='callBlock'){if(fixture.callError)throw Error(fixture.callError);if(fixture.holdCall)return new Promise(resolve=>fixture.finishCall=resolve);return {answer:42};}
  if(method==='openExternal'||method==='pickPath')return null;
@@ -216,3 +216,119 @@ test(
     );
   },
 );
+
+test(
+  "configuration recovery retries reload without rewriting the saved file",
+  { skip: process.env.TERMINAL_UI_TEST !== "1", timeout: 30_000 },
+  async () => {
+    await withBrowserFixture(
+      "configuration-reload-recovery",
+      source,
+      async (page) => {
+        await page.evaluate(
+          "window.fixture.config.editable=true;window.fixture.reloadError='Lua reload rejected';window.fixture.open('config')",
+        );
+        const editor = page.getByRole("textbox", { name: "Lua configuration" });
+        await expect(editor).toHaveValue("-- original");
+        await editor.fill("-- saved edit");
+        await page
+          .getByRole("button", { name: "Save and reload", exact: true })
+          .click();
+        await expect(page.getByRole("alert")).toContainText(
+          "Lua reload rejected",
+        );
+        await page.evaluate(
+          "window.fixture.reloadError='Reload still unavailable'",
+        );
+        await page.locator(".button-primary").click();
+        await expect(page.getByRole("alert")).toContainText(
+          "Reload still unavailable",
+        );
+        assert.equal(
+          await page.evaluate(
+            "window.fixture.calls.filter(call=>call.method==='writeConfig').length",
+          ),
+          1,
+        );
+        await expect(editor).toHaveAttribute("readonly", "");
+        await expect(editor).toHaveValue("-- saved edit");
+        await expect(page.getByRole("alert")).toContainText("saved");
+        await page.evaluate("window.fixture.reloadError=''");
+        await page
+          .getByRole("button", { name: "Retry reload", exact: true })
+          .click();
+        await expect(page.getByRole("dialog")).toHaveCount(0);
+        assert.equal(
+          await page.evaluate(
+            "window.fixture.calls.filter(call=>call.method==='writeConfig').length",
+          ),
+          1,
+        );
+        assert.equal(
+          await page.evaluate(
+            "window.fixture.calls.filter(call=>call.method==='reloadConfig').length",
+          ),
+          3,
+        );
+        assert.equal(await page.evaluate("window.fixture.reloaded"), 1);
+        assert.equal(await page.evaluate("window.fixture.closed"), 1);
+      },
+    );
+  },
+);
+
+for (const phase of ["write", "reload"] as const) {
+  test(
+    `configuration ${phase} completion cannot continue into a replacement dialog`,
+    { skip: process.env.TERMINAL_UI_TEST !== "1", timeout: 30_000 },
+    async () => {
+      await withBrowserFixture(
+        `configuration-${phase}-lifetime`,
+        source,
+        async (page) => {
+          await page.evaluate(
+            `window.fixture.config.editable=true;window.fixture.${phase === "write" ? "holdWrite" : "holdReload"}=true;window.fixture.open('config')`,
+          );
+          await expect(
+            page.getByRole("textbox", { name: "Lua configuration" }),
+          ).toHaveValue("-- original");
+          await page
+            .getByRole("button", { name: "Save and reload", exact: true })
+            .click();
+          await expect
+            .poll(() =>
+              page.evaluate(
+                `typeof window.fixture.${phase === "write" ? "finishWrite" : "finishReload"}`,
+              ),
+            )
+            .toBe("function");
+          await page
+            .getByRole("button", { name: "Close", exact: true })
+            .click();
+          await page.evaluate("window.fixture.open('config')");
+          await expect(
+            page.getByRole("textbox", { name: "Lua configuration" }),
+          ).toHaveValue("-- original");
+          await page.evaluate(
+            `window.fixture.${phase === "write" ? "finishWrite" : "finishReload"}()`,
+          );
+          await page.evaluate(
+            () =>
+              new Promise<void>((resolve) =>
+                requestAnimationFrame(() => resolve()),
+              ),
+          );
+          await expect(page.getByRole("dialog")).toBeVisible();
+          assert.equal(await page.evaluate("window.fixture.reloaded"), 0);
+          assert.equal(await page.evaluate("window.fixture.closed"), 1);
+          assert.equal(
+            await page.evaluate(
+              "window.fixture.calls.filter(call=>call.method==='reloadConfig').length",
+            ),
+            phase === "write" ? 0 : 1,
+          );
+        },
+      );
+    },
+  );
+}
