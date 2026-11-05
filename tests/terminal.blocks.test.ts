@@ -4,7 +4,7 @@ import {
   formatBlockResult,
   inspectMethods,
   parseMethodArgs,
-} from "../src/terminal/blocks.js";
+} from "../src/blocks/methods.js";
 
 test("plugin method discovery handles array and older dictionary schemas", () => {
   assert.deepEqual(

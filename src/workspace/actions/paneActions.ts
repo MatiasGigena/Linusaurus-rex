@@ -1,6 +1,6 @@
 import type { PaneDivider } from "../../shared/types";
 import { errorMessage } from "../../core/workspace";
-import { parseMethodArgs } from "../../terminal/blocks";
+import { parseMethodArgs } from "../../blocks/methods";
 import { WorkspaceReconciliationError } from "../../core/workspaceOperations";
 import {
   UNHANDLED,

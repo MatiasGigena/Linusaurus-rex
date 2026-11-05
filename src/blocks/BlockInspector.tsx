@@ -9,8 +9,8 @@ import {
   X,
 } from "lucide-react";
 import type { RexPane, Settings, TerminalRef } from "../shared/types";
-import { formatBlockResult, inspectMethods, parseMethodArgs } from "./blocks";
-import "./terminal.css";
+import { formatBlockResult, inspectMethods, parseMethodArgs } from "./methods";
+import "../terminal/terminal.css";
 
 // String preview bounds count decoded UTF-16 units rather than response bytes.
 const MAX_PREVIEW_CHARACTERS = 256 * 1024;

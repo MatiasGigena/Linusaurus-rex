@@ -1,5 +1,5 @@
 import { TerminalPane, type TerminalPaneProps } from "../../terminal/TerminalPane";
-import { BlockInspector } from "../../terminal/BlockInspector";
+import { BlockInspector } from "../../blocks/BlockInspector";
 import { OnboardingPane } from "./OnboardingPane";
 
 export function WorkspacePane(props: TerminalPaneProps) {
