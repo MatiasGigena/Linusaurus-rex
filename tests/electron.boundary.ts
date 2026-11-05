@@ -695,6 +695,20 @@ try {
     "undefined",
     "production preload must not expose the bridge in subframes",
   );
+  // The owner window is created hidden and shown on `ready-to-show`, which
+  // `firstWindow()` does not wait for. Establish visibility first so the
+  // check below proves the forged hide was refused rather than never needed.
+  const owner = app;
+  await expect
+    .poll(
+      () =>
+        owner.evaluate(
+          ({ BrowserWindow }, id) => BrowserWindow.fromId(id)?.isVisible(),
+          windowId,
+        ),
+      { message: "The trusted window must be shown after launch" },
+    )
+    .toBe(true);
   // Electron does not expose Node/preload APIs in production subframes. Use
   // its actual WebFrameMain object to exercise the installed handlers as well.
   const frameRejection = await app.evaluate(
