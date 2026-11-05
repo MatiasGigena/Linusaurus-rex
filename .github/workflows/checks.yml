@@ -64,5 +64,8 @@ jobs:
           echo "$rex_tools" >> "$GITHUB_PATH"
           echo "REX_EXECUTABLE=$rex_tools/rex" >> "$GITHUB_ENV"
 
+      - name: Run installed Rex integration regressions
+        run: node scripts/test-desktop.mjs --isolated-rex rex-integration
+
       - name: Run production Electron authorization tests
         run: npm run test:boundary

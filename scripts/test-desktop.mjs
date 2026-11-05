@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 const fixtures = [
   "smoke",
   "boundary",
+  "rex-integration",
   "actions",
   "startup",
   "services",
@@ -35,6 +36,12 @@ if (names.length === 1 && names[0] === "--help") {
 }
 if (!names.length || names.some((name) => !fixtures.includes(name))) {
   console.error(`${usage}\nChoose one or more named desktop fixtures.`);
+  process.exit(1);
+}
+if (names.includes("rex-integration") && !isolatedRex) {
+  console.error(
+    "rex-integration requires --isolated-rex to own its test server.",
+  );
   process.exit(1);
 }
 if (
@@ -309,11 +316,19 @@ try {
   for (const name of names) {
     if (interrupted) break;
     console.log(`RUN desktop:${name}`);
-    active = spawn(
-      process.execPath,
-      [tsx, join(root, `tests/electron.${name}.ts`)],
-      { cwd: root, env: environment, stdio: "inherit", detached: true },
-    );
+    active =
+      name === "rex-integration"
+        ? spawn("npm", ["run", "test:integration"], {
+            cwd: root,
+            env: environment,
+            stdio: "inherit",
+            detached: true,
+          })
+        : spawn(
+            process.execPath,
+            [tsx, join(root, `tests/electron.${name}.ts`)],
+            { cwd: root, env: environment, stdio: "inherit", detached: true },
+          );
     const completion = exited(active, `desktop:${name}`);
     void completion.catch(() => {});
     await remember(active.pid);
