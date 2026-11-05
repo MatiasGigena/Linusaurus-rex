@@ -707,6 +707,130 @@ function gate() {
   return { promise, open };
 }
 
+function floatingPanes(current: ReturnType<typeof fixture>) {
+  const view = current.views["local/local-session"];
+  view.windows[0].panes = ["one", "two", "three"].map((id) => ({
+    id,
+    label: id,
+    rect: [0, 0, 1, 1],
+    layerKind: "floating",
+    layerId: `layer-${id}`,
+  }));
+}
+
+test("bulk minimize awaits its captured session reconciliation", async (t) => {
+  const current = fixture(t);
+  floatingPanes(current);
+  const read = gate();
+  let inspecting = false,
+    completed = false;
+  const mutate = current.workspace.mutateSession;
+  current.workspace.mutateSession = async (plan, operation) => {
+    const result = await mutate(plan, operation);
+    inspecting = true;
+    await read.promise;
+    return result;
+  };
+  const pending = current.execute("pane.minimize_all_floating").then(() => {
+    completed = true;
+  });
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(inspecting, true);
+    assert.equal(completed, false);
+    assert.deepEqual(current.inspections, [
+      { hostId: "local", sessionId: "local-session", selectActive: undefined },
+    ]);
+    assert.equal(current.requests.length, 3);
+  } finally {
+    read.open();
+    await pending;
+  }
+});
+
+for (const inspectionFails of [false, true]) {
+  test(`bulk minimize reconciles partial success without replay when inspection fails=${inspectionFails}`, async (t) => {
+    const current = fixture(t);
+    floatingPanes(current);
+    const failure = Object.assign(new Error("Second minimize denied"), {
+      code: "DENIED",
+      method: "session.minimize_layer",
+    });
+    let writes = 0,
+      inspected = false;
+    current.responders.layoutAction = async () => {
+      if (++writes === 2) throw failure;
+    };
+    const mutate = current.workspace.mutateSession;
+    current.workspace.mutateSession = async (plan, operation) => {
+      const result = await mutate(plan, operation);
+      inspected = true;
+      if (inspectionFails) throw new Error("Inspection unavailable");
+      return result;
+    };
+    await assert.rejects(
+      current.execute("pane.minimize_all_floating"),
+      (error) => {
+        assert.ok(error instanceof WorkspaceReconciliationError);
+        assert.equal(error.cause, failure);
+        assert.equal(error.code, "DENIED");
+        assert.match(error.message, /minimized.*remaining|remaining.*minimiz/i);
+        if (inspectionFails)
+          assert.match(error.message, /Inspection unavailable/);
+        return true;
+      },
+    );
+    assert.equal(inspected, true);
+    assert.equal(writes, 2);
+    await current.workspace.refresh();
+    assert.equal(
+      writes,
+      2,
+      "Recovery must read state without replaying either minimize",
+    );
+  });
+}
+
+test("bulk minimize preserves its first write failure and refuses replacement endpoints between writes", async (t) => {
+  const current = fixture(t);
+  floatingPanes(current);
+  const failure = new Error("First minimize denied");
+  current.responders.layoutAction = async () => {
+    throw failure;
+  };
+  await assert.rejects(
+    current.execute("pane.minimize_all_floating"),
+    (error) => error === failure,
+  );
+  assert.deepEqual(current.inspections, []);
+  const started = gate(),
+    release = gate();
+  current.responders.layoutAction = async () => {
+    started.open();
+    await release.promise;
+  };
+  const pending = current.execute("pane.minimize_all_floating");
+  const rejected = assert.rejects(pending, /host configuration changed/i);
+  await started.promise;
+  current.settings.set({
+    ...current.settings.get(),
+    hosts: current.settings
+      .get()
+      .hosts.map((host) =>
+        host.id === "local"
+          ? { ...host, endpoint: "https://replacement.test" }
+          : host,
+      ),
+  });
+  release.open();
+  await rejected;
+  assert.equal(
+    current.requests.length,
+    2,
+    "Only the first attempted write in each run may reach a server",
+  );
+});
+
 for (const [action, method] of [
   ["session.close", "destroySession"],
   ["client.tab.close", "closeWindow"],

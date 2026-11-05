@@ -1,5 +1,5 @@
 import type { RexPane, LayoutActionArgs, RexMethods } from "../../shared/types";
-import { adjacentPane } from "../../core/workspace";
+import { adjacentPane, errorMessage } from "../../core/workspace";
 import { WorkspaceReconciliationError } from "../../core/workspaceOperations";
 import {
   UNHANDLED,
@@ -332,17 +332,44 @@ export function createPaneLayoutActions(
       }
       case "pane.minimize_all_floating": {
         if (!currentWindow) return;
-        for (const pane of currentWindow.panes.filter(
+        const panes = currentWindow.panes.filter(
           (pane) => pane.layerKind === "floating" && Boolean(pane.layerId),
-        ))
-          await window.rex.request("layoutAction", {
-            hostId,
-            sessionId,
-            blockId: pane.id,
-            operation: "minimize",
-            layerId: pane.layerId || "",
+        );
+        let minimized = 0;
+        let partialFailure: { cause: unknown } | undefined;
+        let inspectionFailure: { cause: unknown } | undefined;
+        try {
+          await workspace.mutateSession({ hostId, sessionId }, async () => {
+            for (const pane of panes) {
+              try {
+                assertCurrentHost();
+                await window.rex.request("layoutAction", {
+                  hostId,
+                  sessionId,
+                  blockId: pane.id,
+                  operation: "minimize",
+                  layerId: pane.layerId || "",
+                });
+                minimized++;
+              } catch (cause) {
+                if (!minimized) throw cause;
+                // Reconcile the committed panes before reporting the later
+                // failure. Recovery must read, never replay the batch.
+                partialFailure = { cause };
+                break;
+              }
+            }
           });
-        return workspace.refresh();
+        } catch (cause) {
+          if (!partialFailure) throw cause;
+          inspectionFailure = { cause };
+        }
+        if (partialFailure)
+          throw new WorkspaceReconciliationError(
+            partialFailure.cause,
+            `${minimized} floating ${minimized === 1 ? "pane was" : "panes were"} minimized, but the remaining panes could not be minimized: ${errorMessage(partialFailure.cause)}.${inspectionFailure ? ` Refreshing the layout also failed: ${errorMessage(inspectionFailure.cause)}.` : ""} Refresh the layout to check the result; do not repeat the batch.`,
+          );
+        return;
       }
       default:
         return UNHANDLED;
