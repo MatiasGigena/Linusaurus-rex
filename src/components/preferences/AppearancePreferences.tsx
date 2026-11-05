@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Section, Toggle, Select, Range, Color } from "./Controls";
 import { ThemeLibrary } from "./ThemeLibrary";
-import { type Settings } from "../../shared/types";
 import type { PreferencesEditor } from "./types";
 
 export function AppearancePreferences({
@@ -30,7 +29,7 @@ export function AppearancePreferences({
                 ? { ...previous, theme: "system" }
                 : {
                     ...previous,
-                    theme: value as Settings["theme"],
+                    theme: value,
                     lightThemeId: "",
                     darkThemeId: "",
                   },
@@ -51,7 +50,7 @@ export function AppearancePreferences({
             setDraft((previous) => ({
               ...previous,
               theme: "system",
-              lightTheme: value as Settings["lightTheme"],
+              lightTheme: value,
               lightThemeId: "",
             }))
           }
@@ -70,7 +69,7 @@ export function AppearancePreferences({
             setDraft((previous) => ({
               ...previous,
               theme: "system",
-              darkTheme: value as Settings["darkTheme"],
+              darkTheme: value,
               darkThemeId: "",
             }))
           }
@@ -110,9 +109,7 @@ export function AppearancePreferences({
             ["dark", "Dark"],
             ["light", "Light"],
           ]}
-          onChange={(value) =>
-            update("appearance", value as Settings["appearance"])
-          }
+          onChange={(value) => update("appearance", value)}
         />
         <Range
           label="Interface zoom"
@@ -131,9 +128,7 @@ export function AppearancePreferences({
             ["right", "Right sidebar"],
             ["top", "Above terminals"],
           ]}
-          onChange={(value) =>
-            update("tabStyle", value as Settings["tabStyle"])
-          }
+          onChange={(value) => update("tabStyle", value)}
         />
         <Toggle
           label="Fill the horizontal tab bar"
@@ -156,9 +151,7 @@ export function AppearancePreferences({
             ["active-tab", "Active tab"],
             ["never", "Never"],
           ]}
-          onChange={(value) =>
-            update("tabIconColors", value as Settings["tabIconColors"])
-          }
+          onChange={(value) => update("tabIconColors", value)}
         />
         <Toggle
           label="Tint interface with terminal theme"
@@ -173,9 +166,7 @@ export function AppearancePreferences({
             ["theme", "Theme background and foreground"],
             ["accent", "Theme accent"],
           ]}
-          onChange={(value) =>
-            update("shellIconTheme", value as Settings["shellIconTheme"])
-          }
+          onChange={(value) => update("shellIconTheme", value)}
         />
       </Section>
       <Section title="NAMED THEMES">
@@ -189,9 +180,7 @@ export function AppearancePreferences({
             ["comfortable", "Comfortable"],
             ["compact", "Compact"],
           ]}
-          onChange={(value) =>
-            update("paneStyle", value as Settings["paneStyle"])
-          }
+          onChange={(value) => update("paneStyle", value)}
         />
         <Toggle
           label="Show pane headers"
@@ -210,9 +199,7 @@ export function AppearancePreferences({
             ["pane", "Pane background"],
             ["extend", "Extend edge-cell backgrounds"],
           ]}
-          onChange={(value) =>
-            update("paddingColor", value as Settings["paddingColor"])
-          }
+          onChange={(value) => update("paddingColor", value)}
         />
         <Range
           label="Horizontal padding"
@@ -256,12 +243,7 @@ export function AppearancePreferences({
             ["move", "Move"],
             ["instant", "Instant"],
           ]}
-          onChange={(value) =>
-            update(
-              "highlightAnimation",
-              value as Settings["highlightAnimation"],
-            )
-          }
+          onChange={(value) => update("highlightAnimation", value)}
         />
         <Select
           label="Fade inactive pane elements"
@@ -271,12 +253,7 @@ export function AppearancePreferences({
             ["surfaces", "Pane surfaces"],
             ["both", "Surfaces and content"],
           ]}
-          onChange={(value) =>
-            update(
-              "inactivePaneFadeTarget",
-              value as Settings["inactivePaneFadeTarget"],
-            )
-          }
+          onChange={(value) => update("inactivePaneFadeTarget", value)}
         />
         <Range
           label="Fade inactive panes"
@@ -309,9 +286,7 @@ export function AppearancePreferences({
             ["swipe", "Horizontal swipe"],
             ["alt-swipe", "Alt + swipe"],
           ]}
-          onChange={(value) =>
-            update("sidebarGesture", value as Settings["sidebarGesture"])
-          }
+          onChange={(value) => update("sidebarGesture", value)}
         />
         <Select
           label="Animation"
@@ -321,9 +296,7 @@ export function AppearancePreferences({
             ["natural", "Natural"],
             ["off", "Off"],
           ]}
-          onChange={(value) =>
-            update("animation", value as Settings["animation"])
-          }
+          onChange={(value) => update("animation", value)}
         />
       </Section>
       <Section title="WINDOW">

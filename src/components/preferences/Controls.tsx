@@ -63,16 +63,16 @@ export function Text({
     </label>
   );
 }
-export function Select({
+export function Select<const Value extends string>({
   label,
   value,
   choices,
   onChange,
 }: {
   label: string;
-  value: string;
-  choices: (readonly [string, string])[];
-  onChange(value: string): void;
+  value: Value;
+  choices: readonly (readonly [Value, string])[];
+  onChange(value: Value): void;
 }) {
   return (
     <label className="settings-row">
@@ -81,7 +81,13 @@ export function Select({
         className="form-select"
         aria-label={label}
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => {
+          const choice = choices.find(
+            ([id]) => id === event.currentTarget.value,
+          );
+          if (choice) onChange(choice[0]);
+          else event.currentTarget.value = value;
+        }}
       >
         {choices.map(([id, text]) => (
           <option key={id} value={id}>

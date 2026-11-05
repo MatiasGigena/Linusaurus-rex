@@ -119,3 +119,43 @@ test(
     );
   },
 );
+
+test(
+  "preference selects accept listed values and reject injected DOM options",
+  { skip: process.env.TERMINAL_UI_TEST !== "1", timeout: 30_000 },
+  async () => {
+    await withBrowserFixture(
+      "preference-select-validation",
+      source,
+      async (page) => {
+        for (const [tab, label, valid] of [
+          ["Notifications", "In-app notification position", "bottom-left"],
+          ["Appearance", "Theme", "graphite"],
+          ["Terminal", "Font style", "italic"],
+        ]) {
+          await page.getByRole("button", { name: tab, exact: true }).click();
+          const select = page.getByLabel(label, { exact: true });
+          await select.selectOption(valid);
+          await select.evaluate((element) => {
+            const option = document.createElement("option");
+            option.value = "unknown-option";
+            option.textContent = "Unknown option";
+            element.append(option);
+          });
+          await select.selectOption("unknown-option");
+        }
+        await page
+          .getByRole("button", { name: "Save settings", exact: true })
+          .click();
+        await expect(page.getByRole("dialog")).toHaveCount(0);
+        const saved = await page.evaluate(
+          () => (window as unknown as Fixture).fixture.saved,
+        );
+        assert.ok(saved);
+        assert.equal(saved.notifications.position, "bottom-left");
+        assert.equal(saved.theme, "graphite");
+        assert.equal(saved.fontStyle, "italic");
+      },
+    );
+  },
+);

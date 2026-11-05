@@ -91,12 +91,7 @@ export function NotificationPreferences({
             ["bottom-center", "Bottom center"],
             ["bottom-left", "Bottom left"],
           ]}
-          onChange={(value) =>
-            updateNotification(
-              "position",
-              value as Settings["notifications"]["position"],
-            )
-          }
+          onChange={(value) => updateNotification("position", value)}
         />
       </Section>
       <Section title="CHANNELS BY ACTIVITY">

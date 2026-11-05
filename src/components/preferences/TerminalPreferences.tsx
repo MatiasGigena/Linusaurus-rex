@@ -1,5 +1,4 @@
 import { Section, Toggle, Text, Select, Range, Color } from "./Controls";
-import { type Settings } from "../../shared/types";
 import type { PreferencesEditor } from "./types";
 import { useState } from "react";
 import { errorMessage } from "../../core/workspace";
@@ -144,9 +143,7 @@ export function TerminalPreferences({
             ["italic", "Italic"],
             ["oblique", "Oblique"],
           ]}
-          onChange={(value) =>
-            update("fontStyle", value as Settings["fontStyle"])
-          }
+          onChange={(value) => update("fontStyle", value)}
         />
         <Toggle
           label="Font smoothing"
@@ -166,9 +163,7 @@ export function TerminalPreferences({
             ["font", "Only when a bold face is available"],
             ["never", "Never render bold"],
           ]}
-          onChange={(value) =>
-            update("boldPolicy", value as Settings["boldPolicy"])
-          }
+          onChange={(value) => update("boldPolicy", value)}
         />
         <Select
           label="Italic text policy"
@@ -178,9 +173,7 @@ export function TerminalPreferences({
             ["font", "Only when an italic face is available"],
             ["never", "Never render italic"],
           ]}
-          onChange={(value) =>
-            update("italicPolicy", value as Settings["italicPolicy"])
-          }
+          onChange={(value) => update("italicPolicy", value)}
         />
         <Range
           label="Bold weight"
@@ -264,9 +257,7 @@ export function TerminalPreferences({
             ["comet", "Comet"],
             ["blaze", "Blaze"],
           ]}
-          onChange={(value) =>
-            update("cursorEffect", value as Settings["cursorEffect"])
-          }
+          onChange={(value) => update("cursorEffect", value)}
         />
         <Select
           label="Cursor style"
@@ -276,9 +267,7 @@ export function TerminalPreferences({
             ["bar", "Bar"],
             ["underline", "Underline"],
           ]}
-          onChange={(value) =>
-            update("cursorStyle", value as Settings["cursorStyle"])
-          }
+          onChange={(value) => update("cursorStyle", value)}
         />
         <Toggle
           label="Blink cursor"
@@ -364,9 +353,7 @@ export function TerminalPreferences({
             ["always", "Always open"],
             ["never", "Never open"],
           ]}
-          onChange={(value) =>
-            update("appLinks", value as Settings["appLinks"])
-          }
+          onChange={(value) => update("appLinks", value)}
         />
         {draft.trustedLinks.length > 0 && (
           <div className="trusted-links">
