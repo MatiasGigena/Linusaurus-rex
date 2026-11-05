@@ -45,14 +45,7 @@ test(
         host: "127.0.0.1",
         port: 0,
         hmr: false,
-        watch: {
-          ignored: [
-            "**/dist/**",
-            "**/dist-electron/**",
-            "**/release/**",
-            "**/test-results*/**",
-          ],
-        },
+        watch: null,
       },
     });
     await server.listen();

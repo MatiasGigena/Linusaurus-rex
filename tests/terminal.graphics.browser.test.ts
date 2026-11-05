@@ -40,14 +40,7 @@ test(
         host: "127.0.0.1",
         port: 0,
         hmr: false,
-        watch: {
-          ignored: [
-            "**/dist/**",
-            "**/dist-electron/**",
-            "**/release/**",
-            "**/test-results*/**",
-          ],
-        },
+        watch: null,
       },
     });
     await server.listen();
@@ -643,11 +636,14 @@ test(
             ox = (2 * cw - 2 * scale) / 2,
             oy = 9 * ch + (2 * ch - 2 * scale) / 2,
             context = (canvas as HTMLCanvasElement).getContext("2d")!;
+          // Bilinear upscaling blends neighbouring texels between their
+          // centres, so sample each quadrant's outer half, where filtering
+          // clamps to the pure texel colour regardless of subpixel metrics.
           return [
-            [0.5, 0.5],
-            [1.5, 0.5],
-            [0.5, 1.5],
-            [1.5, 1.5],
+            [0.25, 0.25],
+            [1.75, 0.25],
+            [0.25, 1.75],
+            [1.75, 1.75],
           ].map(([x, y]) =>
             Array.from(
               context.getImageData(

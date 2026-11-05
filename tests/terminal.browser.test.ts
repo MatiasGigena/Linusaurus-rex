@@ -30,7 +30,7 @@ test('terminal appends streams, retains selection/settings, routes mouse/keys, a
     resolveId(id) { if (id === '\0terminal-test-fixture') return id; },
     load(id) { if (id === '\0terminal-test-fixture') return source; },
     configureServer(vite) { vite.middlewares.use('/terminal-fixture', (request, response) => { response.setHeader('Content-Type', 'text/html'); void vite.transformIndexHtml(request.url || '/terminal-fixture', html).then(content => response.end(content)); }); },
-  }], server: { host: '127.0.0.1', port: 5189, hmr: false, watch: { ignored: ['**/dist/**', '**/dist-electron/**'] } } });
+  }], server: { host: '127.0.0.1', port: 5189, hmr: false, watch: null } });
   await server.listen();
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true });
   const page = await browser.newPage({ viewport: { width: 900, height: 560 } });
