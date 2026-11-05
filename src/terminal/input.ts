@@ -349,7 +349,9 @@ function registerPointer(options: TerminalInputOptions) {
       const lines =
         event.deltaMode === WheelEvent.DOM_DELTA_LINE
           ? event.deltaY
-          : event.deltaY / lineHeight;
+          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? event.deltaY * term.rows
+            : event.deltaY / lineHeight;
       term.scrollLines(
         Math.sign(lines) * Math.max(1, Math.round(Math.abs(lines))),
       );

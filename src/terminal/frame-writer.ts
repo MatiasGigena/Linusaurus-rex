@@ -125,8 +125,10 @@ export class TerminalFrameWriter {
     try {
       parts = frame.data ? this.runtime.kitty.framer.push(frame.data) : [];
     } catch (failure) {
+      this.writing = false;
+      this.replaying = false;
+      this.clearPending();
       this.callbacks.error(failure, "frame");
-      complete();
       return;
     }
     this.writeParts(parts, 0, complete);

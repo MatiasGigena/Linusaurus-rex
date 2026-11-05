@@ -88,10 +88,11 @@ export function keyboardPayload(event: KeyboardLike, layout?: ReadonlyMap<string
   if (text && event.shiftKey) consumed.push('shift');
   if (text && altGraph) consumed.push('ctrl', 'alt');
   const mapped = layout?.get(event.code);
-  const base = mapped && [...mapped].length === 1 ? mapped
-    : printable && (!event.shiftKey || /^\p{L}$/u.test(event.key)) ? event.key.toLowerCase()
-      : /^Digit[0-9]$/.test(event.code) ? event.code.slice(-1)
-        : basePunctuation[event.code] || '';
+  let base: string;
+  if (mapped && [...mapped].length === 1) base = mapped;
+  else if (printable && (!event.shiftKey || /^\p{L}$/u.test(event.key))) base = event.key.toLowerCase();
+  else if (/^Digit[0-9]$/.test(event.code)) base = event.code.slice(-1);
+  else base = basePunctuation[event.code] || '';
   return {
     key, mods: keyModifiers(event), consumed_mods: consumed.join('+'), text,
     unshifted_codepoint: base.codePointAt(0) ?? 0, composing: false,

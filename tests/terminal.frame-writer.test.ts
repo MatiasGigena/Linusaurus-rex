@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { TerminalFrameWriter } from "../src/terminal/frame-writer.js";
 import { TerminalBoundary } from "../src/terminal/boundary.js";
-import { KittyFramer } from "../src/terminal/kitty-protocol.js";
+import {
+  KittyFramer,
+  MAX_KITTY_SEQUENCE_LENGTH,
+} from "../src/terminal/kitty-protocol.js";
 import type { TerminalRuntime } from "../src/terminal/runtime.js";
 
 function harness(command: (data: string) => Promise<string> = async () => "") {
@@ -156,6 +159,43 @@ test("an image rejection reports the error and continues later terminal output",
   assert.deepEqual(h.writes, ["after"]);
   h.finishWrite();
   assert.equal(h.completed.length, 1);
+  h.writer.dispose();
+});
+
+test("a fatal queued snapshot never reports rendered completion and permits a fresh snapshot", () => {
+  const h = harness();
+  h.writer.enqueue({ subscriptionId: "test", kind: "output", data: "busy" }, 1);
+  h.writer.enqueue(
+    {
+      subscriptionId: "test",
+      kind: "snapshot",
+      data: "\x1b_G" + "x".repeat(MAX_KITTY_SEQUENCE_LENGTH + 1),
+    },
+    2,
+  );
+  h.finishWrite();
+  assert.equal(h.errors.length, 1);
+  assert.match(String(h.errors[0]), /exceeds 24 MiB/);
+  assert.deepEqual(
+    h.completed.map((frame) => frame.generation),
+    [1],
+  );
+  assert.equal(h.writer.replayingSnapshot, false);
+  assert.equal(h.writer.hasPendingSnapshot, false);
+  h.writer.enqueue(
+    { subscriptionId: "test", kind: "snapshot", data: "fresh" },
+    3,
+  );
+  assert.equal(
+    h.writes.at(-1),
+    "fresh",
+    "failed bookkeeping cannot block recovery",
+  );
+  h.finishWrite();
+  assert.deepEqual(
+    h.completed.map((frame) => frame.generation),
+    [1, 3],
+  );
   h.writer.dispose();
 });
 

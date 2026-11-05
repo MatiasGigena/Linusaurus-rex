@@ -12,7 +12,8 @@ const style=document.createElement('style');style.textContent='html,body,#root{h
 const ref={hostId:'subscription',sessionId:'session',blockId:'pane'},settings={...DEFAULT_SETTINGS,cursorBlink:false},listeners=new Set(),calls=[],pending=new Map();let subscription,streams=0,mount,nextId=0;
 function emit(frame,id=subscription){for(const listener of listeners)listener({subscriptionId:id,...frame});}
 const f=window.fixture={calls,emit,mount:value=>mount(value),listeners:()=>listeners.size,term:()=>getCachedTerminal(ref).terminal,holdUnsubscribe:false,pending:()=>[...pending.keys()],async completeUnsubscribes(){for(const[id,item]of pending){pending.delete(id);item.resolve();await item.promise;}},blockImage(){const kitty=getCachedTerminal(ref).kitty,command=kitty.command;kitty.command=()=>{kitty.command=command;f.imageStarted=true;return new Promise(resolve=>{f.releaseImage=resolve;});};f.imageStarted=false;emit({kind:'output',data:'\\x1b_Gheld\\x1b\\\\'});},overflow(){emit({kind:'output',data:'x'.repeat(16*1024*1024+1)});},paste:()=>dispatchTerminalCommandAsync('paste',ref)};
-window.rex={request(method,args){const id=++nextId;calls.push({id,method,args});if(method==='subscribe'){subscription=args.subscriptionId;const stream=++streams;requestAnimationFrame(()=>emit({kind:'snapshot',data:'ready-'+stream+' ',cols:80,rows:24}));}if(method==='unsubscribe'&&f.holdUnsubscribe){let resolve;const promise=new Promise(yes=>{resolve=yes;});pending.set(id,{resolve,promise});return promise;}return Promise.resolve();},onTerminal:listener=>{listeners.add(listener);return()=>listeners.delete(listener);},onCommand:()=>()=>{},readClipboard:async()=>'PASTED',writeClipboard:async()=>{}};
+f.setReporting=value=>{settings.mouseReporting=value;};f.fatalSnapshot=()=>emit({kind:'snapshot',data:'\\x1b_G'+'x'.repeat(24*1024*1024+1)});
+window.rex={request(method,args){const id=++nextId;calls.push({id,method,args});if(method==='subscribe'){subscription=args.subscriptionId;const stream=++streams;requestAnimationFrame(()=>{if(!f.holdSnapshots)emit({kind:'snapshot',data:'ready-'+stream+' ',cols:80,rows:24});});}if(method==='unsubscribe'&&f.holdUnsubscribe){let resolve;const promise=new Promise(yes=>{resolve=yes;});pending.set(id,{resolve,promise});return promise;}return Promise.resolve();},onTerminal:listener=>{listeners.add(listener);return()=>listeners.delete(listener);},onCommand:()=>()=>{},readClipboard:async()=>'PASTED',writeClipboard:async()=>{}};
 function Fixture(){const[mounted,setMounted]=React.useState(true);mount=setMounted;return mounted?React.createElement(TerminalPane,{pane:{id:'pane',label:'Subscription',rect:[0,0,1,1]},terminalRef:ref,settings,visible:true,focused:true,showHeader:false,onFocus(){},onClose(){},onZoom(){}}):React.createElement('p',null,'Terminal unmounted');}
 createRoot(document.getElementById('root')).render(React.createElement(Fixture));
 `;
@@ -24,6 +25,9 @@ interface SubscriptionFixture {
   listeners(): number;
   term(): Terminal;
   holdUnsubscribe: boolean;
+  holdSnapshots: boolean;
+  setReporting(value: boolean): void;
+  fatalSnapshot(): void;
   pending(): number[];
   completeUnsubscribes(): Promise<void>;
   blockImage(): void;
@@ -89,6 +93,202 @@ async function count(page: Page, method: string) {
         (call) => call.method === method,
       ).length,
     method,
+  );
+}
+
+test(
+  "a fatal queued snapshot rejects waiting paste and requires a fresh rendered snapshot before new input",
+  options,
+  async () => {
+    await withBrowserFixture("terminal-fatal-frame", source, async (page) => {
+      await setup(page);
+      await page.evaluate(() => {
+        const f = (window as unknown as FixtureWindow).fixture;
+        f.holdUnsubscribe = true;
+        f.holdSnapshots = true;
+        f.blockImage();
+      });
+      await expect
+        .poll(async () => {
+          await page.clock.runFor(10);
+          return page.evaluate(
+            () => (window as unknown as FixtureWindow).fixture.imageStarted,
+          );
+        })
+        .toBe(true);
+      await page.evaluate(() => {
+        const f = (window as unknown as FixtureWindow).fixture;
+        f.fatalSnapshot();
+        f.pasteStatus = "pending";
+        void f.paste().then(
+          () => {
+            f.pasteStatus = "complete";
+          },
+          (error) => {
+            f.pasteStatus = String(error);
+          },
+        );
+      });
+      await page.evaluate(() =>
+        (window as unknown as FixtureWindow).fixture.releaseImage(""),
+      );
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => (window as unknown as FixtureWindow).fixture.pasteStatus,
+          ),
+        )
+        .toContain("exceeds 24 MiB");
+      assert.equal(await count(page, "paste"), 0);
+      await page.locator(".xterm-helper-textarea").press("x");
+      assert.equal(
+        await count(page, "key"),
+        0,
+        "failed framing cannot leave input admitted",
+      );
+      await page.evaluate(() =>
+        (window as unknown as FixtureWindow).fixture.completeUnsubscribes(),
+      );
+      await page.clock.runFor(250);
+      assert.equal(await count(page, "subscribe"), 2);
+      await page.evaluate(() =>
+        (window as unknown as FixtureWindow).fixture.emit({
+          kind: "output",
+          data: "STALE_OUTPUT",
+        }),
+      );
+      await page.locator(".xterm-helper-textarea").press("y");
+      assert.equal(
+        await count(page, "key"),
+        0,
+        "ordinary output cannot replace the required recovery snapshot",
+      );
+      await page.evaluate(() => {
+        const f = (window as unknown as FixtureWindow).fixture;
+        f.emit({ kind: "snapshot", data: "ready-2 ", cols: 80, rows: 24 });
+        f.pasteStatus = "pending";
+        void f.paste().then(
+          () => {
+            f.pasteStatus = "complete";
+          },
+          (error) => {
+            f.pasteStatus = String(error);
+          },
+        );
+      });
+      assert.equal(await count(page, "paste"), 0);
+      await ready(page, 2);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => (window as unknown as FixtureWindow).fixture.pasteStatus,
+          ),
+        )
+        .toBe("complete");
+      assert.equal(
+        await count(page, "paste"),
+        1,
+        "only the new command is sent, without replaying the rejected paste",
+      );
+      await expect(page.locator(".terminal-error")).toHaveCount(0);
+    });
+  },
+);
+
+for (const shift of [false, true]) {
+  test(
+    `local wheel modes preserve page distances (${shift ? "Shift override" : "reporting disabled"})`,
+    options,
+    async () => {
+      await withBrowserFixture(
+        `terminal-wheel-${shift}`,
+        source,
+        async (page) => {
+          await setup(page);
+          await page.evaluate((shift) => {
+            const f = (window as unknown as FixtureWindow).fixture;
+            f.setReporting(shift);
+            f.emit({
+              kind: "snapshot",
+              data:
+                Array.from({ length: 300 }, (_, i) => `row-${i}\r\n`).join("") +
+                "\x1b[?1000h",
+              cols: 80,
+              rows: 24,
+            });
+          }, shift);
+          await expect
+            .poll(async () => {
+              await page.clock.runFor(20);
+              return page.evaluate(() => {
+                const term = (
+                  window as unknown as FixtureWindow
+                ).fixture.term();
+                return (
+                  term.buffer.active.baseY > 200 &&
+                  term.modes.mouseTrackingMode !== "none"
+                );
+              });
+            })
+            .toBe(true);
+          for (const [deltaMode, deltaY] of [
+            [2, 1],
+            [2, -1],
+            [2, 0.5],
+            [2, -0.5],
+            [1, 2.25],
+            [0, 0.25],
+          ] as const) {
+            const { actual, expected } = await page
+              .locator(".xterm-screen")
+              .evaluate(
+                (screen, { deltaMode, deltaY, shift }) => {
+                  const term = (
+                    window as unknown as FixtureWindow
+                  ).fixture.term();
+                  term.scrollToLine(100);
+                  const before = term.buffer.active.viewportY;
+                  const height =
+                    (screen as HTMLElement).clientHeight / term.rows;
+                  const lines =
+                    deltaMode === 2
+                      ? deltaY * term.rows
+                      : deltaMode === 1
+                        ? deltaY
+                        : deltaY / height;
+                  screen.dispatchEvent(
+                    new WheelEvent("wheel", {
+                      bubbles: true,
+                      cancelable: true,
+                      deltaMode,
+                      deltaY,
+                      shiftKey: shift,
+                    }),
+                  );
+                  return {
+                    actual: term.buffer.active.viewportY,
+                    expected:
+                      before +
+                      Math.sign(lines) *
+                        Math.max(1, Math.round(Math.abs(lines))),
+                  };
+                },
+                { deltaMode, deltaY, shift },
+              );
+            assert.equal(
+              actual,
+              expected,
+              `mode=${deltaMode}, delta=${deltaY}`,
+            );
+          }
+          assert.equal(
+            await count(page, "wheel"),
+            0,
+            "local scrolling must not report server wheel input",
+          );
+        },
+      );
+    },
   );
 }
 

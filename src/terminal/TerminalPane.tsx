@@ -231,20 +231,42 @@ function registerTerminalSubscription(
   onRecovered: (hadFrame: boolean) => void,
   onAcceptedFrame: () => void,
 ) {
-  const subscriptionId = crypto.randomUUID();
+  let subscriptionId = "";
   let disposed = false;
   let sawFrame = false;
+  let recovering = false;
+  let awaitingSnapshot = false;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   const start = () => {
-    if (!disposed && !session.isDisposed)
-      void window.rex
-        .request("subscribe", { ...ref, subscriptionId })
-        .catch(session.fail);
+    if (disposed || session.isDisposed) return;
+    const requestedId = crypto.randomUUID();
+    subscriptionId = requestedId;
+    recovering = false;
+    void window.rex
+      .request("subscribe", { ...ref, subscriptionId })
+      .catch((failure) => {
+        if (!disposed && !recovering && subscriptionId === requestedId)
+          session.fail(failure);
+      });
+  };
+  const recover = (failure: unknown) => {
+    if (disposed || session.isDisposed || recovering) return;
+    recovering = true;
+    awaitingSnapshot = true;
+    session.fail(failure);
+    void window.rex
+      .request("unsubscribe", { subscriptionId })
+      .catch(() => {})
+      .finally(() => {
+        if (!disposed && !session.isDisposed)
+          retryTimer = setTimeout(start, 250);
+      });
   };
   const unsubscribe = window.rex.onTerminal((frame) => {
     if (
       disposed ||
       session.isDisposed ||
+      recovering ||
       frame.subscriptionId !== subscriptionId
     )
       return;
@@ -253,31 +275,31 @@ function registerTerminalSubscription(
       return;
     }
     if (frame.data === undefined && frame.kind !== "resize") return;
+    if (awaitingSnapshot && frame.kind && frame.kind !== "snapshot") return;
+    awaitingSnapshot = false;
     if (session.receiveFrame()) onRecovered(sawFrame);
     sawFrame = true;
     if (!frame.kind || frame.kind === "snapshot") session.beginSnapshot();
     if (!writer.enqueue(frame, session.frameGeneration)) {
-      session.fail(
+      recover(
         "Output exceeded the rendering buffer; resynchronizing with Rex.",
       );
-      void window.rex
-        .request("unsubscribe", { subscriptionId })
-        .catch(() => {})
-        .finally(() => {
-          if (!disposed && !session.isDisposed)
-            retryTimer = setTimeout(start, 250);
-        });
       return;
     }
-    onAcceptedFrame();
+    if (!recovering) onAcceptedFrame();
   });
-  start();
-  return () => {
-    if (disposed) return;
-    disposed = true;
-    clearTimeout(retryTimer);
-    unsubscribe();
-    void window.rex.request("unsubscribe", { subscriptionId }).catch(() => {});
+  return {
+    start,
+    recover,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      clearTimeout(retryTimer);
+      unsubscribe();
+      void window.rex
+        .request("unsubscribe", { subscriptionId })
+        .catch(() => {});
+    },
   };
 }
 
@@ -502,10 +524,9 @@ export function TerminalPane(props: TerminalPaneProps) {
     const writer = new TerminalFrameWriter(runtime, {
       scrollOnOutput: () => settingsRef.current.scrollOnOutput,
       error: (failure, source) => {
-        if (!session.isDisposed)
-          setError(
-            `${source === "image" ? "Image: " : ""}${displayError(failure)}`,
-          );
+        if (source === "frame") subscription.recover(failure);
+        else if (!session.isDisposed)
+          setError(`Image: ${displayError(failure)}`);
       },
       complete: (frame, frameGeneration) => {
         viewport.frameComplete(frame);
@@ -541,7 +562,7 @@ export function TerminalPane(props: TerminalPaneProps) {
       onMenu: setMenu,
     });
     viewport.start();
-    const disposeSubscription = registerTerminalSubscription(
+    const subscription = registerTerminalSubscription(
       ref,
       session,
       writer,
@@ -567,6 +588,8 @@ export function TerminalPane(props: TerminalPaneProps) {
           term.focus();
       },
     );
+    // Assign the recovery owner before subscribe can synchronously deliver data.
+    subscription.start();
     commandRef.current = (command) => {
       void commands.execute(command).catch(() => {});
     };
@@ -611,7 +634,7 @@ export function TerminalPane(props: TerminalPaneProps) {
     return () => {
       session.dispose();
       viewport.dispose();
-      disposeSubscription();
+      subscription.dispose();
       disposePresentation();
       input.dispose();
       titleListener.dispose();
