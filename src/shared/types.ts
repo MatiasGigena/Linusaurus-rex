@@ -48,6 +48,32 @@ export interface Selection {
   windowId: string;
   blockId?: string;
 }
+/** Selection is a snapshot; omitted fields in context updates are independent patches. */
+export interface RendererContext {
+  selection?: Selection | null;
+  visible?: boolean;
+  uiBusy?: boolean;
+}
+export type LayoutActionArgs =
+  | { operation: "moveToTab"; targetWindowId: string; layerId?: never }
+  | {
+      operation: "minimize" | "restore";
+      layerId: string;
+      targetWindowId?: never;
+    }
+  | {
+      operation: "balance" | "float" | "moveToNewTab";
+      targetWindowId?: never;
+      layerId?: never;
+    };
+export type PathPickerArgs =
+  | { save: true; content?: string; directory?: never; defaultPath?: string }
+  | {
+      save?: false;
+      directory?: boolean;
+      content?: never;
+      defaultPath?: string;
+    };
 export interface NotificationChannel {
   tabs: boolean;
   desktop: boolean;
@@ -90,9 +116,6 @@ export interface Settings {
   lastSelection?: Selection;
   interfaceZoom: number;
   theme: "macos" | "macos-light" | "graphite" | "midnight" | "light" | "system";
-  customTheme?: Record<string, string>;
-  customLightTheme?: Record<string, string>;
-  customDarkTheme?: Record<string, string>;
   appearance: "system" | "dark" | "light";
   cursorStyle: "block" | "underline" | "bar";
   cursorBlink: boolean;
@@ -272,6 +295,25 @@ export type ClientEvent =
   | { type: "keymap"; hostId: string; keymap: KeymapResult }
   | { type: "settings"; settings: Settings }
   | { type: "update"; state: UpdateState };
+export interface TailscaleEnableOptions {
+  hostname?: string;
+  control_url?: string;
+  advertise_tags?: string[];
+  allow_tailnet_members?: boolean;
+}
+export type ServerActionArgs =
+  | { action: "tailscale.rename"; args: { hostname: string } }
+  | { action: "tailscale.enable"; args?: TailscaleEnableOptions }
+  | {
+      action: "status" | "tailscale.disable" | "tailscale.login" | "tailscale.logout";
+      args?: never;
+    };
+/** Interactive rename can collect its required hostname before issuing the RPC. */
+export type ServerActionCommand =
+  | [action: "tailscale.rename", args?: { hostname: string }]
+  | [action: "tailscale.enable", args?: TailscaleEnableOptions]
+  | [action: "tailscale.disable" | "tailscale.login" | "tailscale.logout"];
+
 export interface UpdateState {
   phase:
     | "idle"
@@ -351,6 +393,10 @@ export interface TerminalFrame {
 }
 type SessionRef = { hostId: string; sessionId: string };
 type WindowRef = SessionRef & { windowId: string };
+export type KeyModeOperation =
+  | { operation: "enter"; name: string }
+  | { operation: "exit" | "exitAll"; name?: never };
+
 export interface RexMethods {
   previewServerOrigins: {
     args: { hostId: string; origins: string[] };
@@ -366,9 +412,13 @@ export interface RexMethods {
     result: { sessionId: string; windowId: string; blockId: string };
   };
   updateStatus: { args: Record<string, never>; result: UpdateState };
+  /** Check failures return phase="error"; busy check/download operations reject. After cancellation, resolves later to the current published state. */
   checkUpdates: { args: Record<string, never>; result: UpdateState };
+  /** Transfer/verification failures return phase="error"; busy/missing-release and cleanup failures reject. After cancellation, resolves later to the current state following cleanup. */
   downloadUpdate: { args: Record<string, never>; result: UpdateState };
+  /** Missing-download/development/verification/install failures reject. Idle scheduling resolves now; later failures publish phase="error" events. */
   applyUpdate: { args: { whenIdle?: boolean }; result: UpdateState };
+  /** Immediately publishes/returns idle or ready and clears a scheduled install; aborted checks/downloads settle separately afterward. */
   cancelUpdate: { args: Record<string, never>; result: UpdateState };
   serverManagement: { args: { hostId: string }; result: ServerManagementInfo };
   serverLifecycle: {
@@ -431,11 +481,7 @@ export interface RexMethods {
   };
   keymap: { args: { hostId: string }; result: KeymapResult };
   keyMode: {
-    args: {
-      hostId: string;
-      operation: "enter" | "exit" | "exitAll";
-      name?: string;
-    };
+    args: { hostId: string } & KeyModeOperation;
     result: void;
   };
   invokeAction: {
@@ -474,17 +520,7 @@ export interface RexMethods {
   };
   swapPanes: { args: TerminalRef & { otherBlockId: string }; result: void };
   layoutAction: {
-    args: TerminalRef & {
-      operation:
-        | "balance"
-        | "float"
-        | "minimize"
-        | "restore"
-        | "moveToNewTab"
-        | "moveToTab";
-      targetWindowId?: string;
-      layerId?: string;
-    };
+    args: TerminalRef & LayoutActionArgs;
     result: unknown;
   };
   resizeLayer: {
@@ -558,11 +594,7 @@ export interface RexMethods {
   };
   removeCredentials: { args: { hostId: string }; result: void };
   setContext: {
-    args: Partial<Selection> & {
-      blockId?: string;
-      visible?: boolean;
-      uiBusy?: boolean;
-    };
+    args: RendererContext;
     result: void;
   };
   openExternal: { args: { url: string }; result: void };
@@ -573,17 +605,7 @@ export interface RexMethods {
   reloadConfig: { args: { hostId: string }; result: unknown };
   writeConfig: { args: { hostId: string; content: string }; result: void };
   serverAction: {
-    args: {
-      hostId: string;
-      action:
-        | "status"
-        | "tailscale.enable"
-        | "tailscale.disable"
-        | "tailscale.login"
-        | "tailscale.logout"
-        | "tailscale.rename";
-      args?: Record<string, unknown>;
-    };
+    args: { hostId: string } & ServerActionArgs;
     result: unknown;
   };
   diagnostics: { args: { hostId?: string }; result: Record<string, unknown> };
@@ -592,17 +614,20 @@ export interface RexMethods {
     result: Record<string, string> | null;
   };
   pickPath: {
-    args: {
-      directory?: boolean;
-      save?: boolean;
-      content?: string;
-      defaultPath?: string;
-    };
+    args: PathPickerArgs;
     result: string | null;
   };
   resizeWindow: { args: { deltaWidth: number }; result: void };
 }
 export interface RexBridge {
+  /**
+   * Rejects with an Error reconstructed in the renderer from
+   * {@link import("./requestResult").RequestFailure}, preserving its message/name
+   * and optional string code/method metadata (not cross-process object identity).
+   * A name of "RexRequestError" identifies an explicit server RPC rejection;
+   * transport, validation and bridge failures can use other Error names and omit
+   * code/method. Prefer supplied codes to legacy message matching.
+   */
   request<K extends keyof RexMethods>(
     method: K,
     args: RexMethods[K]["args"],
@@ -675,28 +700,28 @@ export const DEFAULT_SETTINGS: Settings = {
   mouseReporting: true,
   confirmClose: true,
   shortcuts: {
-    "command-palette": "Ctrl+Shift+P",
-    "session-switcher": "Ctrl+K",
-    "new-session": "Ctrl+Shift+N",
-    "new-window": "Ctrl+Shift+T",
-    "close-window": "Ctrl+Shift+W",
-    "toggle-sidebar": "Ctrl+Shift+B",
-    "split-right": "Ctrl+Shift+D",
-    "split-below": "Ctrl+Shift+Alt+D",
-    zoom: "Ctrl+Shift+Enter",
-    settings: "Ctrl+Shift+Comma",
-    find: "Ctrl+Shift+F",
-    copy: "Ctrl+Shift+C",
-    paste: "Ctrl+Shift+V",
-    "font-increase": "Ctrl+Equal",
-    "font-decrease": "Ctrl+Minus",
-    "font-reset": "Ctrl+0",
-    "next-tab": "Ctrl+Tab",
-    "previous-tab": "Ctrl+Shift+Tab",
-    "focus-left": "Ctrl+Alt+ArrowLeft",
-    "focus-right": "Ctrl+Alt+ArrowRight",
-    "focus-up": "Ctrl+Alt+ArrowUp",
-    "focus-down": "Ctrl+Alt+ArrowDown",
+    "client.palette.toggle": "Ctrl+Shift+P",
+    "session.switch": "Ctrl+K",
+    "session.new": "Ctrl+Shift+N",
+    "client.tab.new": "Ctrl+Shift+T",
+    "client.tab.close": "Ctrl+Shift+W",
+    "client.sidebar.toggle": "Ctrl+Shift+B",
+    "pane.split.right": "Ctrl+Shift+D",
+    "pane.split.down": "Ctrl+Shift+Alt+D",
+    "pane.zoom": "Ctrl+Shift+Enter",
+    "client.settings": "Ctrl+Shift+Comma",
+    "client.find.open": "Ctrl+Shift+F",
+    "client.copy": "Ctrl+Shift+C",
+    "client.paste": "Ctrl+Shift+V",
+    "client.font.increase": "Ctrl+Equal",
+    "client.font.decrease": "Ctrl+Minus",
+    "client.font.reset": "Ctrl+0",
+    "client.tab.next": "Ctrl+Tab",
+    "client.tab.previous": "Ctrl+Shift+Tab",
+    "pane.focus.left": "Ctrl+Alt+ArrowLeft",
+    "pane.focus.right": "Ctrl+Alt+ArrowRight",
+    "pane.focus.up": "Ctrl+Alt+ArrowUp",
+    "pane.focus.down": "Ctrl+Alt+ArrowDown",
   },
   globalShortcut: "",
   closeToTray: false,

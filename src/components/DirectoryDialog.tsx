@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   File,
@@ -11,19 +11,39 @@ import {
 import { Dialog } from "./Dialog";
 import type { RexMethods, TerminalRef } from "../shared/types";
 import { errorMessage } from "../core/workspace";
-export function DirectoryDialog({
+import { WorkspaceReconciliationError } from "../core/workspaceOperations";
+interface DirectoryDialogProps {
+  terminalRef: TerminalRef;
+  endpoint?: string;
+  mode: "insert" | "directory";
+  recent: string[];
+  onPick(path: string): Promise<void>;
+  onRefresh?(): Promise<void>;
+  onClose(): void;
+}
+export function DirectoryDialog(props: DirectoryDialogProps) {
+  const { hostId, sessionId, blockId } = props.terminalRef;
+  return (
+    <DirectoryBrowser
+      key={JSON.stringify([
+        hostId,
+        sessionId,
+        blockId,
+        props.endpoint,
+        props.mode,
+      ])}
+      {...props}
+    />
+  );
+}
+function DirectoryBrowser({
   terminalRef,
   mode,
   recent,
   onPick,
+  onRefresh,
   onClose,
-}: {
-  terminalRef: TerminalRef;
-  mode: "insert" | "directory";
-  recent: string[];
-  onPick(path: string): Promise<void>;
-  onClose(): void;
-}) {
+}: DirectoryDialogProps) {
   const [directory, setDirectory] =
     useState<RexMethods["listDirectory"]["result"]>();
   const [path, setPath] = useState("");
@@ -31,8 +51,20 @@ export function DirectoryDialog({
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [committedError, setCommittedError] = useState<string>();
   const [error, setError] = useState<string>();
-  const load = async (next: string) => {
+  const mounted = useRef(true);
+  const listingRequest = useRef(0);
+  const pickingRequest = useRef(0);
+  const pickingPhase = useRef<"ready" | "saving" | "committed" | "refreshing">(
+    "ready",
+  );
+  const load = async (next: string): Promise<boolean> => {
+    if (!mounted.current) return false;
+    const request = ++listingRequest.current;
+    const ownsRequest = () =>
+      mounted.current && listingRequest.current === request;
     setLoading(true);
     setError(undefined);
     setSelected("");
@@ -44,6 +76,7 @@ export function DirectoryDialog({
         files: mode === "insert",
         limit: 2000,
       });
+      if (!ownsRequest()) return false;
       setDirectory(result);
       setPath(result.path || next);
       if (result.status !== "ok")
@@ -54,26 +87,64 @@ export function DirectoryDialog({
               ? "This path is not a directory."
               : "The directory does not exist.",
         );
+      return result.status === "ok";
     } catch (failure) {
-      setError(errorMessage(failure));
+      if (ownsRequest()) setError(errorMessage(failure));
+      return false;
     } finally {
-      setLoading(false);
+      if (ownsRequest()) setLoading(false);
     }
   };
   useEffect(() => {
+    mounted.current = true;
     void load("");
-  }, [terminalRef.hostId, terminalRef.sessionId, terminalRef.blockId]);
+    return () => {
+      mounted.current = false;
+      listingRequest.current++;
+      pickingRequest.current++;
+    };
+  }, []);
   const fullPath = (name: string) =>
     `${directory?.path.replace(/\/$/, "") || ""}/${name}` || "/";
   const pick = async (value: string) => {
-    if (saving || !value) return;
+    if (pickingPhase.current !== "ready" || !value) return;
+    const request = ++pickingRequest.current;
+    pickingPhase.current = "saving";
     setSaving(true);
+    setError(undefined);
     try {
       await onPick(value);
-      onClose();
+      if (mounted.current && pickingRequest.current === request) onClose();
     } catch (failure) {
-      setError(errorMessage(failure));
-      setSaving(false);
+      if (mounted.current && pickingRequest.current === request) {
+        if (failure instanceof WorkspaceReconciliationError) {
+          pickingPhase.current = "committed";
+          setCommittedError(errorMessage(failure));
+        } else {
+          pickingPhase.current = "ready";
+          setError(errorMessage(failure));
+        }
+        setSaving(false);
+      }
+    }
+  };
+  const refresh = async () => {
+    if (!onRefresh || pickingPhase.current !== "committed") return;
+    const request = ++pickingRequest.current;
+    pickingPhase.current = "refreshing";
+    setRefreshing(true);
+    setError(undefined);
+    try {
+      await onRefresh();
+      if (mounted.current && pickingRequest.current === request) onClose();
+    } catch (failure) {
+      if (mounted.current && pickingRequest.current === request)
+        setError(errorMessage(failure));
+    } finally {
+      if (mounted.current && pickingRequest.current === request) {
+        pickingPhase.current = "committed";
+        setRefreshing(false);
+      }
     }
   };
   const entries = (directory?.entries || [])
@@ -136,6 +207,7 @@ export function DirectoryDialog({
             <button
               key={value}
               title={value}
+              disabled={mode === "insert" && (saving || !!committedError)}
               onClick={() =>
                 mode === "insert" ? void pick(value) : void load(value)
               }
@@ -183,13 +255,21 @@ export function DirectoryDialog({
             if (entry.file) void pick(fullPath(entry.name));
             else {
               const list = event.currentTarget;
-              void load(fullPath(entry.name)).then(() =>
-                requestAnimationFrame(() =>
-                  list
-                    .querySelector<HTMLButtonElement>('[role="option"]')
-                    ?.focus(),
-                ),
-              );
+              const loaded = load(fullPath(entry.name));
+              const request = listingRequest.current;
+              void loaded.then((applied) => {
+                if (!applied) return;
+                requestAnimationFrame(() => {
+                  if (
+                    mounted.current &&
+                    listingRequest.current === request &&
+                    list.isConnected
+                  )
+                    list
+                      .querySelector<HTMLButtonElement>('[role="option"]')
+                      ?.focus();
+                });
+              });
             }
             return;
           }
@@ -260,15 +340,26 @@ export function DirectoryDialog({
           a large directory.
         </p>
       )}
-      {error && (
+      {(committedError || error) && (
         <p className="form-error" role="alert">
+          {committedError}
+          {committedError && error ? " " : ""}
           {error}
         </p>
       )}
       <div className="dialog-actions">
         <button className="button" onClick={onClose}>
-          Cancel
+          {committedError ? "Dismiss" : "Cancel"}
         </button>
+        {committedError && onRefresh && (
+          <button
+            className="button"
+            disabled={refreshing}
+            onClick={() => void refresh()}
+          >
+            {refreshing ? "Refreshing…" : "Refresh workspace"}
+          </button>
+        )}
         {selected &&
           !directory?.entries.find((entry) => entry.name === selected)
             ?.file && (
@@ -282,7 +373,9 @@ export function DirectoryDialog({
           )}
         <button
           className="button button-primary"
-          disabled={saving || loading || directory?.status !== "ok"}
+          disabled={
+            saving || !!committedError || loading || directory?.status !== "ok"
+          }
           onClick={() =>
             void pick(selected ? fullPath(selected) : directory?.path || "")
           }

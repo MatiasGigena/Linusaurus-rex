@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 import { createRequire } from "node:module";
 const { PNG } = createRequire(import.meta.url)("pngjs") as {
   PNG: {
@@ -11,7 +11,7 @@ const { PNG } = createRequire(import.meta.url)("pngjs") as {
     };
   };
 };
-const source = `import React from'react';import{createRoot}from'react-dom/client';import{TerminalPane}from'/src/terminal/TerminalPane.tsx';import{getCachedTerminal}from'/src/terminal/runtime.ts';import{DEFAULT_SETTINGS}from'/src/shared/types.ts';const ref={hostId:'layers',sessionId:'own',blockId:'test'};let subscription,update;const listeners=new Set();window.rex={request:async(method,args)=>{if(method==='subscribe'){subscription=args.subscriptionId;setTimeout(()=>emit({kind:'snapshot',data:'ready',cols:40,rows:20}),20)}},onTerminal:callback=>{listeners.add(callback);return()=>listeners.delete(callback)},writeClipboard:async()=>{},readClipboard:async()=>''};function emit(frame){for(const callback of listeners)callback({subscriptionId:subscription,...frame})}function Fixture(){const[settings,setSettings]=React.useState({...DEFAULT_SETTINGS,appearance:'dark',fontSize:24,ligatures:false,paddingX:0,paddingY:0,matchProgramBackground:false,cursorEffect:'off',cursorBlink:false,selectionBackground:'#00ff0080',customDarkTheme:{background:'#101010',foreground:'#ffffff',cursor:'#ffff00',cursorAccent:'#000000'}});update=patch=>setSettings(value=>({...value,...patch}));return React.createElement(TerminalPane,{pane:{id:'test',label:'Layers',rect:[0,0,1,1]},terminalRef:ref,settings,visible:true,focused:true,showHeader:false,onFocus(){},onClose(){},onZoom(){}})}createRoot(document.getElementById('root')).render(React.createElement(Fixture));window.fixture={emit,update:patch=>update(patch),runtime:()=>getCachedTerminal(ref)};`;
+const source = `import React from'react';import{createRoot}from'react-dom/client';import{TerminalPane}from'/src/terminal/TerminalPane.tsx';import{getCachedTerminal}from'/src/terminal/runtime.ts';import{DEFAULT_SETTINGS}from'/src/shared/types.ts';const ref={hostId:'layers',sessionId:'own',blockId:'test'};let subscription,update;const listeners=new Set();window.rex={request:async(method,args)=>{if(method==='subscribe'){subscription=args.subscriptionId;setTimeout(()=>emit({kind:'snapshot',data:'ready',cols:40,rows:20}),20)}},onTerminal:callback=>{listeners.add(callback);return()=>listeners.delete(callback)},writeClipboard:async()=>{},readClipboard:async()=>''};function emit(frame){for(const callback of listeners)callback({subscriptionId:subscription,...frame})}function Fixture(){const[settings,setSettings]=React.useState({...DEFAULT_SETTINGS,appearance:'dark',fontSize:24,ligatures:false,paddingX:0,paddingY:0,matchProgramBackground:false,cursorEffect:'off',cursorBlink:false,selectionBackground:'#00ff0080',darkThemeId:'layers',themeLibrary:[{id:'layers',name:'Layers',colors:{background:'#101010',foreground:'#ffffff',cursor:'#ffff00',cursorAccent:'#000000'}}]});update=patch=>setSettings(value=>({...value,...patch}));return React.createElement(TerminalPane,{pane:{id:'test',label:'Layers',rect:[0,0,1,1]},terminalRef:ref,settings,visible:true,focused:true,showHeader:false,onFocus(){},onClose(){},onZoom(){}})}createRoot(document.getElementById('root')).render(React.createElement(Fixture));window.fixture={emit,update:patch=>update(patch),runtime:()=>getCachedTerminal(ref)};`;
 const html =
   '<!doctype html><style>html,body,#root{height:100%;margin:0}.terminal-pane{position:relative;height:100%;display:flex;flex-direction:column}.terminal-container{flex:1;min-height:0}.terminal-emulator,.xterm{height:100%}</style><div id="root"></div><script type="module" src="/fixture.js"></script>';
 
@@ -45,14 +45,7 @@ test(
         host: "127.0.0.1",
         port: 0,
         hmr: false,
-        watch: {
-          ignored: [
-            "**/dist/**",
-            "**/dist-electron/**",
-            "**/release/**",
-            "**/test-results*/**",
-          ],
-        },
+        watch: null,
       },
     });
     await server.listen();
@@ -237,7 +230,16 @@ test(
       await page.evaluate(() =>
         (window as any).fixture.runtime().terminal.select(0, 0, 2),
       );
-      await page.waitForTimeout(30);
+      await expect
+        .poll(
+          async () =>
+            center(await snapshot(), 1).every(
+              (value, channel) =>
+                Math.abs(value - [127, 128, 0, 255][channel]) <= 4,
+            ),
+          { message: "Selection highlight must paint above opaque images" },
+        )
+        .toBe(true);
       png = await snapshot();
       near(
         center(png, 1),
@@ -250,7 +252,16 @@ test(
       );
       await page.locator(".xterm-helper-textarea").focus();
       await emit("\x1b[?25h\x1b[1;2H");
-      await page.waitForTimeout(30);
+      await expect
+        .poll(
+          async () =>
+            center(await snapshot(), 1).every(
+              (value, channel) =>
+                Math.abs(value - [255, 255, 0, 255][channel]) <= 4,
+            ),
+          { message: "Native block cursor must paint above opaque images" },
+        )
+        .toBe(true);
       png = await snapshot();
       near(
         center(png, 1),

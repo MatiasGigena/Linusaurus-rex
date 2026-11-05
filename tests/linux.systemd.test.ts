@@ -19,9 +19,9 @@ import {
   SystemdUserServices,
   originsDropIn,
   quoteSystemdArgument,
-} from "../electron/features/systemd.js";
-import { LinuxServerManager } from "../electron/features/lifecycle.js";
-import { attestLocalRex } from "../electron/features/local-attestation.js";
+} from "../electron/server-management/systemd.js";
+import { LinuxServerManager } from "../electron/server-management/lifecycle.js";
+import { attestLocalRex } from "../electron/server-management/local-attestation.js";
 import { RexService } from "../electron/rex/service.js";
 import { DEFAULT_SETTINGS } from "../src/shared/types.js";
 const execute = promisify(execFile);

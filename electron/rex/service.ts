@@ -1,24 +1,77 @@
 import { existsSync } from 'node:fs';
 import { normalizeView } from './normalize.js';
+import { parseServerVersion } from './server-version.js';
+import { parseSavedHosts, type SavedHost } from './saved-hosts.js';
+export type { SavedHost } from './saved-hosts.js';
+import { parseCreatedSession, parseSessionList } from './session-summary.js';
 import { RexControl, localEndpoint, type RexCredentials } from './control.js';
 import { RexTerminalStream, type FrameKind, type FrameSize } from './stream.js';
-import type { Host as RexHost, SessionSummary, SessionView, ServerStatus } from '../../src/shared/types.js';
+import type { Host as RexHost, SessionSummary, SessionView, ServerStatus, RexMethods, PaneRect } from '../../src/shared/types.js';
 
 export type { Host as RexHost } from '../../src/shared/types.js';
 type Ref = { host: RexHost; sessionId: string; blockId: string };
-type Capture = { content: string; id?: number; total?: number; eof?: boolean };
+type Capture = { content: string; id?: number; total?: number };
 type InputQueue = { tail: Promise<void>; generation: number };
 type Dimensions = Ref & { columns: number; rows: number };
+type ControlConnection = { pending: Promise<RexControl>; control?: RexControl };
+type PaneDirection = RexMethods['movePane']['args']['direction'];
+
+function panePlacement(direction: PaneDirection): { direction: 'horizontal' | 'vertical'; side: 'before' | 'after' } {
+  return {
+    direction: direction === 'above' || direction === 'below' ? 'vertical' : 'horizontal',
+    side: direction === 'left' || direction === 'above' ? 'before' : 'after',
+  };
+}
 
 const MAX_SNAPSHOT = 256 * 1024 * 1024;
+
+function replyRecord(value: unknown, message: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(message);
+  return value as Record<string, unknown>;
+}
+function optionalCount(value: unknown, message: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error(message);
+  return value;
+}
+function captureReply(value: unknown): Capture {
+  const message = 'Rex returned an invalid terminal snapshot.';
+  const result = replyRecord(value, message);
+  if (typeof result.content !== 'string') throw new Error(message);
+  return { content: result.content, id: optionalCount(result.id, message), total: optionalCount(result.total, message) };
+}
+function capturePage(value: unknown): { data: string; eof: boolean } {
+  const message = 'Rex returned an invalid terminal snapshot page.';
+  const result = replyRecord(value, message);
+  if (typeof result.data !== 'string' || (result.eof !== undefined && typeof result.eof !== 'boolean')) throw new Error(message);
+  return { data: result.data, eof: result.eof ?? false };
+}
+
+function terminalSizeReply(value: unknown): { columns: number; rows: number } {
+  const message = 'Rex returned an invalid terminal size.';
+  const result = replyRecord(value, message);
+  const { columns, rows } = result;
+  if (
+    typeof columns !== 'number' ||
+    typeof rows !== 'number' ||
+    !Number.isInteger(columns) ||
+    !Number.isInteger(rows) ||
+    columns < 1 ||
+    columns > 65535 ||
+    rows < 1 ||
+    rows > 65535
+  )
+    throw new Error(message);
+  return { columns, rows };
+}
 
 export interface RexServiceOptions { apiRevisions?: { min: number; max: number }; controlFactory?: (endpoint: string, credentials?: RexCredentials, reconnectToken?: string, revisions?: { min: number; max: number }) => RexControl; credentials?: (host: RexHost) => Promise<RexCredentials | undefined>; onControl?: (host: RexHost, control: RexControl) => void | Promise<void>; onMetadata?: (host: RexHost, sessionId: string, blockId: string, metadata: Record<string, unknown>) => void }
 
 export class RexService {
-  private subscriptions = new Set<() => void>();
+  private subscriptions = new Map<() => void, RexHost>();
   private inputQueues = new Map<string, InputQueue>();
   private disposed = false;
-  private controls = new Map<string, Promise<RexControl>>();
+  private controls = new Map<string, ControlConnection>();
   private dimensions = new Map<string, Dimensions>();
   private visible = new Map<string, number>();
   private options: RexServiceOptions;
@@ -48,15 +101,13 @@ export class RexService {
   async status(host: RexHost): Promise<ServerStatus> {
     try {
       const control = await this.control(host);
-      const result = await control.call<{ version?: string; rex_version?: string }>('server.version', {});
-      return { connected: true, endpoint: control.endpoint, version: result.version || result.rex_version };
+      const version = parseServerVersion(await control.call('server.version', {}));
+      return { connected: true, endpoint: control.endpoint, version };
     } catch (error) { return { connected: false, endpoint: effectiveEndpoint(host.endpoint) || localEndpoint(), error: errorMessage(error) }; }
   }
 
   async sessions(host: RexHost): Promise<SessionSummary[]> {
-    const result = await this.call<{ sessions?: { session_id: string; label?: string }[] }>(host, 'session.list', {});
-    if (!Array.isArray(result.sessions)) throw new Error('Rex returned an invalid session list.');
-    return result.sessions.map(session => ({ id: session.session_id, label: session.label || 'Untitled session' }));
+    return parseSessionList(await this.call(host, 'session.list', {}));
   }
 
   async inspect(host: RexHost, sessionId: string): Promise<SessionView> {
@@ -64,14 +115,47 @@ export class RexService {
   }
 
   async createSession(host: RexHost, label: string, cwd?: string, command?: string): Promise<string> {
-    const response = await this.call<{ session_id: string }>(host, 'session.create', {
+    const response = await this.call(host, 'session.create', {
       label, initial_windows: [{ window_label: 'Shell', layout: shellLayout(cwd, command) }],
     });
-    return response.session_id;
+    return parseCreatedSession(response);
+  }
+
+  async createTutorial(host: RexHost): Promise<{ sessionId: string; windowId: string; blockId: string }> {
+    const sessionId = parseCreatedSession(await this.call(host, 'session.create', {
+      label: 'Rex tutorial',
+      initial_windows: [{ window_label: 'Getting started', layout: { block: { flavor: 'com.superlogical.onboarding.onboarding', options: {} } } }],
+    }));
+    try {
+      const view = await this.inspect(host, sessionId);
+      const first = view.windows[0];
+      const pane = first?.panes[0];
+      if (!first || !pane) throw new Error('The Rex tutorial did not create a usable pane.');
+      return { sessionId, windowId: first.id, blockId: pane.id };
+    } catch (error) {
+      await this.call(host, 'session.destroy', { session_id: sessionId }).catch(() => {});
+      throw error;
+    }
+  }
+
+  async createBlock(host: RexHost, sessionId: string, block: { flavor: string; options?: Record<string, unknown>; windowId?: string }): Promise<unknown> {
+    const layout = { block: { flavor: block.flavor, options: block.options } };
+    if (block.windowId) {
+      const view = await this.inspect(host, sessionId);
+      const window = view.windows.find(window => window.id === block.windowId);
+      const anchor = window?.focusedBlockId || window?.panes[0]?.id;
+      if (!anchor) throw new Error('The destination tab has no pane.');
+      return this.call(host, 'session.new_split', { session_id: sessionId, anchor_id: anchor, direction: 'horizontal', side: 'after', layout, focus: true });
+    }
+    return this.call(host, 'session.new_window', { session_id: sessionId, layout, focus: true });
   }
 
   async renameSession(host: RexHost, sessionId: string, label: string) {
     await this.call(host, 'session.set_label', { session_id: sessionId, label });
+  }
+
+  destroySession(host: RexHost, sessionId: string): Promise<unknown> {
+    return this.call(host, 'session.destroy', { session_id: sessionId });
   }
 
   async createWindow(host: RexHost, sessionId: string, label = 'Shell', cwd?: string, command?: string) {
@@ -86,15 +170,93 @@ export class RexService {
     await this.call(host, 'session.close_window', { session_id: sessionId, window_id: windowId });
   }
 
-  async split(host: RexHost, sessionId: string, blockId: string, direction: 'right' | 'below' | 'left' | 'above', cwd?: string, ratio?: number, command?: string) {
+  reorderWindow(host: RexHost, sessionId: string, windowId: string, beforeWindowId?: string) {
+    return this.call(host, 'session.move_window', {
+      session_id: sessionId, window_id: windowId,
+      ...(beforeWindowId ? { before_window_id: beforeWindowId } : {}),
+    });
+  }
+
+  resizeDivider(host: RexHost, sessionId: string, divider: Pick<RexMethods['resizeDivider']['args'], 'beforeBlockId' | 'afterBlockId' | 'direction' | 'ratio'>) {
+    return this.call(host, 'session.resize_pane', {
+      session_id: sessionId, before_block_id: divider.beforeBlockId,
+      after_block_id: divider.afterBlockId, direction: divider.direction, ratio: divider.ratio,
+    });
+  }
+
+  resizeLayer(host: RexHost, sessionId: string, layerId: string, bounds: PaneRect) {
+    return this.call(host, 'session.resize_layer', { session_id: sessionId, layer_id: layerId, bounds });
+  }
+
+  movePane(host: RexHost, sessionId: string, blockId: string, move: Pick<RexMethods['movePane']['args'], 'anchorBlockId' | 'direction'>) {
+    return this.call(host, 'session.move_block', {
+      session_id: sessionId, block_id: blockId, anchor_block_id: move.anchorBlockId,
+      ...panePlacement(move.direction),
+    });
+  }
+
+  swapPanes(host: RexHost, sessionId: string, blockId: string, otherBlockId: string) {
+    return this.call(host, 'session.swap_blocks', { session_id: sessionId, block_id: blockId, other_block_id: otherBlockId });
+  }
+
+  async split(host: RexHost, sessionId: string, blockId: string, direction: 'right' | 'below' | 'left' | 'above', options: { cwd?: string; ratio?: number; command?: string } = {}) {
+    const { cwd, ratio, command } = options;
     await this.call(host, 'session.new_split', {
-      session_id: sessionId, anchor_id: blockId, direction: ['below', 'above'].includes(direction) ? 'vertical' : 'horizontal',
-      side: ['left', 'above'].includes(direction) ? 'before' : 'after', layout: shellLayout(cwd, command), focus: true, ...(ratio !== undefined ? { ratio } : {}),
+      session_id: sessionId, anchor_id: blockId, ...panePlacement(direction),
+      layout: shellLayout(cwd, command), focus: true, ...(ratio !== undefined ? { ratio } : {}),
     });
   }
 
   async closeBlock(host: RexHost, sessionId: string, blockId: string) {
     await this.call(host, 'block.close', { session_id: sessionId, block_id: blockId });
+  }
+
+  renamePane(
+    host: RexHost,
+    sessionId: string,
+    blockId: string,
+    label: string,
+  ): Promise<unknown> {
+    return this.call(host, 'session.set_block_label', {
+      session_id: sessionId,
+      block_id: blockId,
+      label,
+    });
+  }
+
+  listDirectory(
+    host: RexHost,
+    sessionId: string,
+    blockId: string,
+    options: { path: string; files: boolean; limit: number; prefix?: string },
+  ): Promise<unknown> {
+    return this.block(host, sessionId, blockId, 'list_dir', options);
+  }
+
+  blockInfo(
+    host: RexHost,
+    sessionId: string,
+    blockId: string,
+  ): Promise<unknown> {
+    return this.call(host, 'session.describe_block', {
+      session_id: sessionId,
+      block_id: blockId,
+    });
+  }
+
+  callBlock(
+    host: RexHost,
+    sessionId: string,
+    blockId: string,
+    method: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.call(host, 'block.method', {
+      session_id: sessionId,
+      block_id: blockId,
+      method,
+      args,
+    });
   }
 
   async focusBlock(host: RexHost, sessionId: string, blockId: string) {
@@ -129,7 +291,9 @@ export class RexService {
   }
 
   async terminalSize(host: RexHost, sessionId: string, blockId: string) {
-    return this.block<{ columns: number; rows: number }>(host, sessionId, blockId, 'size', {});
+    return terminalSizeReply(
+      await this.block(host, sessionId, blockId, 'size', {}),
+    );
   }
 
   async input(host: RexHost, sessionId: string, blockId: string, data: string): Promise<void> {
@@ -153,17 +317,17 @@ export class RexService {
   }
 
   async capture(host: RexHost, sessionId: string, blockId: string): Promise<string> {
-    const capture = await this.block<Capture>(host, sessionId, blockId, 'format', {
+    const capture = captureReply(await this.block(host, sessionId, blockId, 'format', {
       format: 'vt', max_bytes: 983040, extra_cursor: true, extra_modes: true,
       extra_style: true, extra_scrolling_region: true, extra_tabstops: true,
-    });
-    if (typeof capture.content !== 'string') throw new Error('Rex returned an invalid terminal snapshot.');
+    }));
     if ((capture.total ?? 0) > MAX_SNAPSHOT) throw new Error('Terminal scrollback exceeds the 256 MiB snapshot limit. Clear its scrollback in Rex before reconnecting.');
     let content = capture.content;
     let offset = Buffer.byteLength(content);
+    if (offset > MAX_SNAPSHOT) throw new Error('Terminal scrollback exceeds the 256 MiB snapshot limit.');
     while (capture.id !== undefined && offset < (capture.total ?? Infinity)) {
-      const part = await this.block<{ data: string; eof: boolean }>(host, sessionId, blockId, 'blob_read', { id: capture.id, offset, max_bytes: 983040 });
-      if (typeof part.data !== 'string' || !part.data.length) throw new Error('Rex returned an incomplete terminal snapshot.');
+      const part = capturePage(await this.block(host, sessionId, blockId, 'blob_read', { id: capture.id, offset, max_bytes: 983040 }));
+      if (!part.data.length) throw new Error('Rex returned an incomplete terminal snapshot.');
       content += part.data;
       offset += Buffer.byteLength(part.data);
       if (offset > MAX_SNAPSHOT) throw new Error('Terminal scrollback exceeds the 256 MiB snapshot limit.');
@@ -189,7 +353,7 @@ export class RexService {
       this.dimensions.delete(key);
       this.release(host, sessionId, blockId);
     };
-    this.subscriptions.add(stop);
+    this.subscriptions.set(stop, host);
     stream = new RexTerminalStream(() => this.control(host), sessionId, blockId, {
         frame: (data, kind, size) => { if (!stopped && !this.disposed) onFrame(data, kind, size); },
         error: error => { if (!stopped && !this.disposed) onError(error); },
@@ -201,11 +365,14 @@ export class RexService {
 
   dispose() {
     this.disposed = true;
-    for (const stop of [...this.subscriptions]) stop();
+    for (const stop of [...this.subscriptions.keys()]) stop();
     this.inputQueues.clear();
     this.dimensions.clear();
     this.visible.clear();
-    for (const pending of this.controls.values()) void pending.then(control => control.dispose()).catch(() => {});
+    for (const connection of this.controls.values()) {
+      connection.control?.dispose();
+      void connection.pending.then(control => control.dispose()).catch(() => {});
+    }
     this.controls.clear();
   }
 
@@ -214,69 +381,109 @@ export class RexService {
     const key = JSON.stringify([host.id, host.endpoint]);
     const existing = this.controls.get(key);
     if (existing) {
-      try { const control = await existing; if (control.connected) return control; }
-      catch { /* A new explicit resize may establish a new connection. */ }
+      try {
+        const control = await existing.pending;
+        this.assertConnectionCurrent(key, existing);
+        if (control.connected) return control;
+      } catch (error) {
+        // A waiter on a revoked attempt must not erase a newer connection or retry old work.
+        if (this.disposed || this.controls.get(key) !== existing) throw error;
+      }
       this.controls.delete(key);
     }
-    const pending = (async () => {
-      const credentials = await this.options.credentials?.(host);
-      const candidates = await this.resolveEndpoints(host);
-      const preferred = this.preferredEndpoints.get(key);
-      const endpoints = preferred && candidates.includes(preferred) ? [preferred, ...candidates.filter(endpoint => endpoint !== preferred)] : candidates;
-      const implicit = !explicitEndpoint(effectiveEndpoint(host.endpoint));
-      const protectedGateway = credentials && (credentials.username !== undefined || Boolean(credentials.password) || Boolean(credentials.token) || Object.keys(credentials.headers || {}).length > 0);
-      let control: RexControl | undefined;
-      let lastError: unknown;
-      for (const endpoint of endpoints) {
-        if (implicit && protectedGateway && /^(http|ws):\/\//.test(endpoint)) continue;
-        const candidate = this.options.controlFactory
-          ? this.options.controlFactory(endpoint, credentials, preferred === endpoint ? this.reconnectTokens.get(key) : undefined, this.options.apiRevisions)
-          : new RexControl(endpoint, credentials, preferred === endpoint ? this.reconnectTokens.get(key) : undefined, this.options.apiRevisions);
-        try {
-          const welcome = await candidate.readyPublic();
-          if (welcome.client?.reconnect_token) this.reconnectTokens.set(key, welcome.client.reconnect_token);
-          this.preferredEndpoints.set(key, endpoint);
-          control = candidate; break;
-        } catch (error) {
-          candidate.dispose(); this.reconnectTokens.delete(key); lastError = error;
-          if (/Unexpected server response: (401|403)/.test(errorMessage(error))) break;
-        }
+    const connection: ControlConnection = {
+      pending: Promise.resolve().then(() => this.connect(host, key, connection)),
+    };
+    this.controls.set(key, connection);
+    return connection.pending;
+  }
+
+  private assertConnectionCurrent(key: string, connection: ControlConnection): void {
+    if (!this.disposed && this.controls.get(key) === connection) return;
+    connection.control?.dispose();
+    throw new Error(this.disposed ? 'Rex client has been closed.' : 'The Rex connection has been replaced or disconnected.');
+  }
+
+  private async connect(host: RexHost, key: string, connection: ControlConnection): Promise<RexControl> {
+    this.assertConnectionCurrent(key, connection);
+    const credentials = await this.options.credentials?.(host);
+    this.assertConnectionCurrent(key, connection);
+    const candidates = await this.resolveEndpoints(host);
+    this.assertConnectionCurrent(key, connection);
+    const preferred = this.preferredEndpoints.get(key);
+    const endpoints = preferred && candidates.includes(preferred) ? [preferred, ...candidates.filter(endpoint => endpoint !== preferred)] : candidates;
+    const implicit = !explicitEndpoint(effectiveEndpoint(host.endpoint));
+    const protectedGateway = credentials && (credentials.username !== undefined || Boolean(credentials.password) || Boolean(credentials.token) || Object.keys(credentials.headers || {}).length > 0);
+    let control: RexControl | undefined;
+    let lastError: unknown;
+    for (const endpoint of endpoints) {
+      this.assertConnectionCurrent(key, connection);
+      if (implicit && protectedGateway && /^(http|ws):\/\//.test(endpoint)) continue;
+      const candidate = this.options.controlFactory
+        ? this.options.controlFactory(endpoint, credentials, preferred === endpoint ? this.reconnectTokens.get(key) : undefined, this.options.apiRevisions)
+        : new RexControl(endpoint, credentials, preferred === endpoint ? this.reconnectTokens.get(key) : undefined, this.options.apiRevisions);
+      connection.control = candidate;
+      try {
+        const welcome = await candidate.readyPublic();
+        this.assertConnectionCurrent(key, connection);
+        if (welcome.client?.reconnect_token) this.reconnectTokens.set(key, welcome.client.reconnect_token);
+        this.preferredEndpoints.set(key, endpoint);
+        control = candidate; break;
+      } catch (error) {
+        candidate.dispose();
+        this.assertConnectionCurrent(key, connection);
+        connection.control = undefined;
+        this.reconnectTokens.delete(key); lastError = error;
+        if (/Unexpected server response: (401|403)/.test(errorMessage(error))) break;
       }
-      if (!control) throw lastError || new Error('No secure Rex endpoint could be reached. Enter an explicit HTTPS address.');
-      await this.options.onControl?.(host, control);
-      if (this.disposed) { control.dispose(); throw new Error('Rex client has been closed.'); }
-      // A reconnect discards the old client's viewport preferences. Restore
-      // visible pane sizes before publishing another snapshot to the renderer.
-      for (const [key, dimensions] of this.dimensions) {
-        if (dimensions.host.id !== host.id || dimensions.host.endpoint !== host.endpoint) continue;
-        try {
-          await control.attach(dimensions.sessionId);
-          if (this.dimensions.get(key) !== dimensions) continue;
-          await control.call('session.own_block', { session_id: dimensions.sessionId, block_ids: [dimensions.blockId], mode: 'take' });
-          await control.call('com.superlogical.terminal.resize', {
-            session_id: dimensions.sessionId, block_id: dimensions.blockId,
-            args: { columns: dimensions.columns, rows: dimensions.rows },
-          });
-        } catch (error) {
-          if (!control.connected) { control.dispose(); throw error; }
-          // A closed pane must not prevent other panes from reconnecting.
-        }
+    }
+    if (!control) throw lastError || new Error('No secure Rex endpoint could be reached. Enter an explicit HTTPS address.');
+    try { await this.options.onControl?.(host, control); }
+    catch (error) { control.dispose(); throw error; }
+    this.assertConnectionCurrent(key, connection);
+    // A reconnect discards the old client's viewport preferences. Restore
+    // visible pane sizes before publishing another snapshot to the renderer.
+    for (const [ref, dimensions] of this.dimensions) {
+      this.assertConnectionCurrent(key, connection);
+      if (dimensions.host.id !== host.id || dimensions.host.endpoint !== host.endpoint) continue;
+      try {
+        await control.attach(dimensions.sessionId);
+        this.assertConnectionCurrent(key, connection);
+        if (this.dimensions.get(ref) !== dimensions) continue;
+        await control.call('session.own_block', { session_id: dimensions.sessionId, block_ids: [dimensions.blockId], mode: 'take' });
+        this.assertConnectionCurrent(key, connection);
+        await control.call('com.superlogical.terminal.resize', {
+          session_id: dimensions.sessionId, block_id: dimensions.blockId,
+          args: { columns: dimensions.columns, rows: dimensions.rows },
+        });
+      } catch (error) {
+        this.assertConnectionCurrent(key, connection);
+        if (!control.connected) { control.dispose(); throw error; }
+        // A closed pane must not prevent other panes from reconnecting.
       }
-      return control;
-    })();
-    this.controls.set(key, pending);
-    return pending;
+    }
+    this.assertConnectionCurrent(key, connection);
+    return control;
   }
 
   reconnectTerminals() { for (const stream of this.streams.keys()) stream.reconnect(); }
+
+  /** A removed or changed saved host must lose streams and control authority permanently. */
+  disconnect(host: RexHost) {
+    for (const [stop, owner] of this.subscriptions) if (owner.id === host.id && owner.endpoint === host.endpoint) stop();
+    this.reconnect(host);
+    this.preferredEndpoints.delete(JSON.stringify([host.id, host.endpoint]));
+  }
 
   reconnect(host?: RexHost) {
     for (const [stream, owner] of this.streams) {
       if (!host || (owner.id === host.id && owner.endpoint === host.endpoint)) stream.reconnect();
     }
-    for (const [key, pending] of this.controls) {
+    for (const [key, connection] of this.controls) {
       if (host && key !== JSON.stringify([host.id, host.endpoint])) continue;
-      void pending.then(control => control.dispose()).catch(() => {}); this.controls.delete(key); this.reconnectTokens.delete(key);
+      this.controls.delete(key); this.reconnectTokens.delete(key);
+      connection.control?.dispose();
+      void connection.pending.then(control => control.dispose()).catch(() => {});
     }
   }
 
@@ -289,7 +496,7 @@ export class RexService {
     // running local server, and this temporary discovery client owns no pane.
     if (existsSync(localEndpoint().slice(7))) {
       const discovery = this.options.controlFactory ? this.options.controlFactory(localEndpoint(), undefined, undefined, this.options.apiRevisions) : new RexControl(localEndpoint(), undefined, undefined, this.options.apiRevisions);
-      try { await discovery.readyPublic(); aliases = (await discovery.call<{ hosts?: SavedHost[] }>('hosts.list', {})).hosts || []; }
+      try { await discovery.readyPublic(); aliases = parseSavedHosts(await discovery.call('hosts.list', {})); }
       catch { /* Try the documented remote hostname addresses below. */ }
       finally { discovery.dispose(); }
     }
@@ -299,23 +506,26 @@ export class RexService {
   /** Stop claiming a hidden pane's grid while retaining its image-bearing live stream. */
   async releaseViewport(host:RexHost,sessionId:string,blockId:string):Promise<void>{
     this.dimensions.delete(refKey({host,sessionId,blockId}));
-    const pending=this.controls.get(JSON.stringify([host.id,host.endpoint]));
-    if(!pending||this.disposed)return;
-    const control=await pending;
+    const key=JSON.stringify([host.id,host.endpoint]);
+    const connection=this.controls.get(key);
+    if(!connection||this.disposed)return;
+    const control=await connection.pending;
+    if(this.controls.get(key)!==connection)return;
     if(control.connected)await control.call('session.disown_block',{session_id:sessionId,block_ids:[blockId]});
   }
 
   private release(host: RexHost, sessionId: string, blockId: string) {
-    const pending = this.controls.get(JSON.stringify([host.id, host.endpoint]));
-    if (!pending || this.disposed) return;
-    void pending.then(async control => {
+    const key = JSON.stringify([host.id, host.endpoint]);
+    const connection = this.controls.get(key);
+    if (!connection || this.disposed) return;
+    void connection.pending.then(async control => {
+      if (this.controls.get(key) !== connection) return;
       if (!control.connected || this.visible.has(refKey({ host, sessionId, blockId }))) return;
       await control.call('session.disown_block', { session_id: sessionId, block_ids: [blockId] });
     }).catch(() => {});
   }
 }
 
-export interface SavedHost { label: string; endpoints?: string[]; endpoint?: string; address?: string; url?: string }
 /** An explicit saved endpoint takes precedence over the process-wide default. */
 export function effectiveEndpoint(endpoint: string): string {
   return endpoint || process.env.REX_SERVER?.trim() || '';

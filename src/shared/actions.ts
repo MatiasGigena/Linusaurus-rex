@@ -841,11 +841,34 @@ export const CLIENT_ACTIONS: ActionDefinition[] = [
   }
 ];
 
-export const SHORTCUT_ACTIONS: Record<string,string> = {
+/** Compatibility for persisted shortcut keys and commands from older clients. */
+export const LEGACY_ACTION_NAMES: Readonly<Record<string,string>> = {
   'command-palette':'client.palette.toggle','session-switcher':'session.switch','new-session':'session.new','new-window':'client.tab.new','close-window':'client.tab.close','toggle-sidebar':'client.sidebar.toggle','split-right':'pane.split.right','split-below':'pane.split.down','zoom':'pane.zoom','settings':'client.settings','find':'client.find.open',
   copy:'client.copy',paste:'client.paste','font-increase':'client.font.increase','font-decrease':'client.font.decrease','font-reset':'client.font.reset',
-  'next-tab':'client.tab.next','previous-tab':'client.tab.previous','focus-left':'pane.focus.left','focus-right':'pane.focus.right','focus-up':'pane.focus.up','focus-down':'pane.focus.down',
+  'next-tab':'client.tab.next','previous-tab':'client.tab.previous','focus-left':'pane.focus.left','focus-right':'pane.focus.right','focus-up':'pane.focus.up','focus-down':'pane.focus.down','close-pane':'pane.close','clear-content-server':'pane.clear_content','reset-terminal':'pane.reset_terminal',
 };
+
+export function canonicalActionName(name: string): string {
+  return Object.hasOwn(LEGACY_ACTION_NAMES, name) ? LEGACY_ACTION_NAMES[name] : name;
+}
+
+/** Canonical overrides, including disabled bindings, take precedence over legacy keys. */
+export function configuredShortcut(
+  action: string,
+  shortcuts: Readonly<Record<string, string>>,
+): string | undefined {
+  if (Object.hasOwn(shortcuts, action)) return shortcuts[action];
+  const legacy = Object.entries(LEGACY_ACTION_NAMES).find(([, value]) => value === action)?.[0];
+  return legacy === undefined ? undefined : shortcuts[legacy];
+}
+
+/** Resolve each saved action once, using the same precedence as palette labels. */
+export function configuredShortcutEntries(
+  shortcuts: Readonly<Record<string, string>>,
+): [string, string][] {
+  const actions = new Set(Object.keys(shortcuts).map(canonicalActionName));
+  return [...actions].map(action => [action, configuredShortcut(action, shortcuts) ?? ""]);
+}
 CLIENT_ACTIONS.push({name:'client.copy',title:'Copy',kind:'client'},{name:'client.paste',title:'Paste',kind:'client'});
 CLIENT_ACTIONS.push({name:'client.pair_device',title:'Pair Device with QR Code…',kind:'client'});
 

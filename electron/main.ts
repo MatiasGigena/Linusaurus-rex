@@ -2,7 +2,8 @@ import { app, BrowserWindow, globalShortcut, Menu, nativeTheme, Tray, type MenuI
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CHANNELS } from './channels.js';
-import { getHostCredentials,registerIpc } from './ipc.js';
+import { registerIpc } from './ipc.js';
+import { hostCredentials } from './features/host-credentials.js';
 import { SettingsStore } from './settings.js';
 import type { Selection, Settings } from '../src/shared/types.js';
 import {RexService} from './rex/service.js';
@@ -37,20 +38,20 @@ function buildMenu(settings:Settings){
   const template:MenuItemConstructorOptions[]=[
     {label:'File',submenu:[
       {label:'New Window',click:()=>void createWindow()},
-      {label:'New Session…',click:command('new-session')},
-      {label:'New Terminal Tab',click:command('new-window')},
-      {label:'Close Tab…',click:command('close-window')},
+      {label:'New Session…',click:command('session.new')},
+      {label:'New Terminal Tab',click:command('client.tab.new')},
+      {label:'Close Tab…',click:command('client.tab.close')},
       {type:'separator'}, {label:'Quit',accelerator:'CmdOrCtrl+Shift+Q',click:()=>app.quit()},
     ]},
-    {label:'Edit',submenu:[{label:'Copy',click:command('copy')},{label:'Paste',click:command('paste')},{label:'Find…',click:command('find')}]},
+    {label:'Edit',submenu:[{label:'Copy',click:command('client.copy')},{label:'Paste',click:command('client.paste')},{label:'Find…',click:command('client.find.open')}]},
     {label:'View',submenu:[
-      {label:'Toggle Sidebar',click:command('toggle-sidebar')},
-      {label:'Command Palette…',click:command('command-palette')},
-      {label:'Switch Session…',click:command('session-switcher')},
+      {label:'Toggle Sidebar',click:command('client.sidebar.toggle')},
+      {label:'Command Palette…',click:command('client.palette.toggle')},
+      {label:'Switch Session…',click:command('session.switch')},
       {type:'separator'},
-      {label:'Split Right',click:command('split-right')},{label:'Split Below',click:command('split-below')},
-      {label:'Zoom Pane',click:command('zoom')},
-      {type:'separator'}, {label:'Settings…',click:command('settings')},
+      {label:'Split Right',click:command('pane.split.right')},{label:'Split Below',click:command('pane.split.down')},
+      {label:'Zoom Pane',click:command('pane.zoom')},
+      {type:'separator'}, {label:'Settings…',click:command('client.settings')},
       {role:'togglefullscreen'},...(!app.isPackaged||settings.developerMode?[{role:'toggleDevTools' as const}]:[]),
     ]},
   ];
@@ -109,7 +110,7 @@ async function launch(options:LaunchOptions){
   if(prepared.changed)await store.set(prepared.settings);
   let initialSelection:Selection|undefined;
   if(options.endpoint||options.session||options.newSession||options.block){
-    const rex=new RexService({credentials:getHostCredentials});
+    const rex=new RexService({credentials:hostCredentials.get});
     try{initialSelection=await resolveLaunchSelection(rex,prepared.host,store.get(),options);}
     finally{rex.dispose();}
     if(initialSelection)await store.set({...store.get(),lastSelection:initialSelection});
@@ -119,10 +120,11 @@ async function launch(options:LaunchOptions){
 let options:LaunchOptions|undefined;
 try{options=parseLaunchArgs(applicationArgs(process.argv));}catch(error){startupError(error);}
 if(options?.help){console.log(LAUNCH_HELP);app.exit(0);}
-else if(options&&!app.requestSingleInstanceLock())app.quit();
+else if(options&&!app.requestSingleInstanceLock({args:applicationArgs(process.argv)}))app.quit();
 else if(options){
-  app.on('second-instance',(_event,argv,cwd)=>{void(async()=>{const requested=parseLaunchArgs(applicationArgs(argv),cwd);if(requested.config&&requested.config!==preferencesPath)throw new Error('Quit the running app before selecting a different --config preferences file.');if(requested.endpoint||requested.session||requested.newSession||requested.block||requested.font||requested.fontSize||requested.windowSize)await launch(requested);else showWindow();})().catch(error=>console.error(`Linusaurus Rex: ${error instanceof Error?error.message:String(error)}`));});
-  app.whenReady().then(async()=>{preferencesPath=options!.config||join(app.getPath('userData'),'settings.json');store=new SettingsStore(preferencesPath);await store.load();store.onChange(applySettings);applySettings(store.get());await launch(options!);}).catch(startupError);
+  const startup=app.whenReady().then(async()=>{preferencesPath=options!.config||join(app.getPath('userData'),'settings.json');store=new SettingsStore(preferencesPath);await store.load();store.onChange(applySettings);applySettings(store.get());await launch(options!);});
+  void startup.catch(startupError);
+  app.on('second-instance',(_event,argv,cwd,data)=>{void(async()=>{await startup;const forwarded=data&&typeof data==='object'&&'args' in data?data.args:undefined;const args=Array.isArray(forwarded)&&forwarded.every(value=>typeof value==='string')?forwarded:applicationArgs(argv);const requested=parseLaunchArgs(args,cwd);if(requested.config&&requested.config!==preferencesPath)throw new Error('Quit the running app before selecting a different --config preferences file.');if(requested.endpoint||requested.session||requested.newSession||requested.block||requested.font||requested.fontSize||requested.windowSize)await launch(requested);else showWindow();})().catch(error=>console.error(`Linusaurus Rex: ${error instanceof Error?error.message:String(error)}`));});
   app.on('window-all-closed',()=>{if(!store?.get().closeToTray)app.quit();});
   app.on('before-quit',()=>{quitting=true;globalShortcut.unregisterAll();tray?.destroy();tray=undefined;for(const dispose of disposers.values())dispose();disposers.clear();});
 }

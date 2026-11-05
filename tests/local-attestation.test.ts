@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
-import { attestLocalRex } from "../electron/features/local-attestation.js";
+import { attestLocalRex } from "../electron/server-management/local-attestation.js";
 
 test("local attestation binds a same-user Rex listener to its actual socket inode and filesystem namespace", async () => {
   const directory = await mkdtemp(join(tmpdir(), "rex-attestation-")),

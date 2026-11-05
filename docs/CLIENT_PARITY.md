@@ -43,7 +43,7 @@ Reviewed against the downloaded official action/settings references and the exam
 
 ## Every documented client action
 
-Registered actions are advertised in [`src/shared/actions.ts`](../src/shared/actions.ts), resolved by [`electron/features/client.ts`](../electron/features/client.ts), and dispatched by [`src/App.tsx`](../src/App.tsx) or native Electron handlers. Argumentless palette entries open forms/pickers where an action requires a target. Server-defined Lua actions are included from the negotiated keymap.
+Registered actions are advertised in [`src/shared/actions.ts`](../src/shared/actions.ts), routed through [`electron/client/client.ts`](../electron/client/client.ts). Renderer command workflows are dispatched by [`createWorkspaceActions`](../src/workspace/actions/createWorkspaceActions.ts), and native window/application actions by `WindowContext` in [`electron/ipc.ts`](../electron/ipc.ts). [`src/App.tsx`](../src/App.tsx) composes the renderer UI and action owners. Argumentless palette entries open forms/pickers where an action requires a target. Server-defined Lua actions are included from the negotiated keymap.
 
 ### Window
 
@@ -192,7 +192,7 @@ Additional client commands include copy/paste, pane rename/swap, floating restor
 
 ## Every documented settings item
 
-These rows describe observable behavior, not merely saved preference fields. Most preferences live in [`SettingsDialog`](../src/components/SettingsDialog.tsx) and [`types.ts`](../src/shared/types.ts); terminal consumers are in [`TerminalPane`](../src/terminal/TerminalPane.tsx) and [`themes.ts`](../src/terminal/themes.ts).
+These rows describe observable behavior, not merely saved preference fields. Most preferences live in [`SettingsDialog`](../src/components/preferences/SettingsDialog.tsx) and [`types.ts`](../src/shared/types.ts); terminal consumers are in [`TerminalPane`](../src/terminal/TerminalPane.tsx) and [`themes.ts`](../src/terminal/themes.ts).
 
 ### Integrations / Coding Agents
 

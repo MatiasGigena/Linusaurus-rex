@@ -2,7 +2,7 @@ import type { ITheme, ITerminalOptions } from '@xterm/xterm';
 import type { Settings } from '../shared/types';
 import { resolvedImportedTheme } from '../core/themeLibrary';
 
-export const TERMINAL_THEMES: Record<'macos' | 'macos-light' | 'graphite' | 'midnight' | 'light', ITheme> = {
+export const TERMINAL_THEMES = {
   // Apple system colors, softened slightly so long-running output stays comfortable to read.
   macos: {
     background: '#1e1e1e', foreground: '#e6e6e6', cursor: '#0a84ff', cursorAccent: '#ffffff', selectionBackground: '#3f638b',
@@ -29,7 +29,7 @@ export const TERMINAL_THEMES: Record<'macos' | 'macos-light' | 'graphite' | 'mid
     black: '#2c363d', red: '#ab3e45', green: '#3f7548', yellow: '#916926', blue: '#356996', magenta: '#8152a0', cyan: '#277f83', white: '#a5b1b6',
     brightBlack: '#677781', brightRed: '#c75257', brightGreen: '#4f8c56', brightYellow: '#aa7c27', brightBlue: '#4b7eb3', brightMagenta: '#9968b6', brightCyan: '#3c9799', brightWhite: '#e5e9e9',
   },
-};
+} satisfies Record<'macos' | 'macos-light' | 'graphite' | 'midnight' | 'light', ITheme>;
 
 const ANSI_NAMES = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white', 'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite'] as const;
 const colorByte = (value: number) => value.toString(16).padStart(2, '0');
@@ -86,13 +86,13 @@ export function terminalOptions(settings: Settings): ITerminalOptions {
 
 export function terminalServerTheme(settings: Settings): { foreground: string; background: string; cursor: string; palette: string[]; scheme: 'dark' | 'light' } {
   const theme = terminalTheme(settings);
-  const hex = (color: string | undefined, fallback: string) => /^#[\da-f]{6}/i.test(color || '') ? color!.slice(0, 7) : fallback;
+  const hex = (color: string | undefined, fallback: string) => typeof color === 'string' && /^#[\da-f]{6}/i.test(color) ? color.slice(0, 7) : fallback;
   const background = hex(theme.background, '#353b41');
   const [r, g, b] = [1, 3, 5].map((offset) => parseInt(background.slice(offset, offset + 2), 16));
   return {
     foreground: hex(theme.foreground, '#c6cfd7'), background, cursor: hex(theme.cursor, '#9bc5ab'),
     palette: [
-      ...ANSI_NAMES.map((name, index) => `${index}=${hex(theme[name], TERMINAL_THEMES.graphite[name]!)}`),
+      ...ANSI_NAMES.map((name, index) => `${index}=${hex(theme[name], TERMINAL_THEMES.graphite[name])}`),
       ...(theme.extendedAnsi || DEFAULT_EXTENDED_ANSI).map((color, index) => `${index + 16}=${hex(color, DEFAULT_EXTENDED_ANSI[index])}`),
     ],
     scheme: r * .299 + g * .587 + b * .114 > 140 ? 'light' : 'dark',

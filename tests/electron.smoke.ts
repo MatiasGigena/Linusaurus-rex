@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import {
   _electron as electron,
+  expect,
   type ElectronApplication,
 } from "@playwright/test";
 import { RexService } from "../electron/rex/service.js";
@@ -78,8 +79,32 @@ try {
     }
     throw new Error(`Terminal did not display ${text}`);
   };
-  await page.waitForTimeout(500);
-  await page.locator(".xterm-helper-textarea").first().focus();
+  const terminal = page.locator(`[data-block-id="${blockId}"] .terminal-pane`);
+  // A single server write proves the shell is running; observing its result in
+  // xterm's accessibility rows proves the renderer has processed terminal output.
+  await service.input(
+    local,
+    sessionId,
+    blockId,
+    "printf '\\nGUI_READY_%s\\n' OK\r",
+  );
+  await expect
+    .poll(
+      async () =>
+        (
+          await terminal.locator(".xterm-accessibility-tree").allTextContents()
+        ).join("\n"),
+      {
+        timeout: 15_000,
+        message:
+          "The connected terminal must render the shell readiness marker",
+      },
+    )
+    .toContain("GUI_READY_OK");
+  await expect(
+    terminal.locator(".terminal-loading,.terminal-error"),
+  ).toHaveCount(0);
+  await terminal.locator(".xterm-helper-textarea").focus();
   await page.keyboard.type("printf '\\nGUI_INPUT_%s\\n' OK");
   await page.keyboard.press("Enter");
   await waitForTerminal("GUI_INPUT_OK");
@@ -360,21 +385,32 @@ try {
   await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setSize(760, 600),
   );
-  await page.waitForTimeout(200);
-  assert.equal(
-    await page
-      .getByRole("button", { name: "Close application" })
-      .evaluate((button) => {
-        const rect = button.getBoundingClientRect();
-        return (
-          rect.x >= 0 &&
-          rect.right <= window.innerWidth &&
-          rect.bottom <= window.innerHeight
-        );
-      }),
-    true,
-    "Window controls must remain reachable at the minimum window size",
-  );
+  await expect
+    .poll(
+      () =>
+        page
+          .getByRole("button", { name: "Close application" })
+          .evaluate((button) => {
+            const rect = button.getBoundingClientRect();
+            return {
+              width: window.innerWidth,
+              height: window.innerHeight,
+              reachable:
+                rect.width > 0 &&
+                rect.height > 0 &&
+                rect.x >= 0 &&
+                rect.y >= 0 &&
+                rect.right <= window.innerWidth &&
+                rect.bottom <= window.innerHeight,
+            };
+          }),
+      {
+        timeout: 10_000,
+        message:
+          "Window controls must remain reachable in the resized viewport",
+      },
+    )
+    .toEqual({ width: 760, height: 600, reachable: true });
   await app.close();
   app = undefined;
   assert.equal(

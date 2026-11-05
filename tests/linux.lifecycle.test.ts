@@ -1,17 +1,94 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+  mkdir,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { LinuxServerManager } from "../electron/server-management/lifecycle.js";
 import {
-  LinuxServerManager,
   originPatterns,
   validateOrigins,
   withOrigins,
-} from "../electron/features/lifecycle.js";
+} from "../electron/server-management/server-origins.js";
 import { RexControl } from "../electron/rex/control.js";
 import { RexService } from "../electron/rex/service.js";
 import { DEFAULT_SETTINGS } from "../src/shared/types.js";
+
+test("corrupt or unreadable launch profiles never authorize a replacement server", async (t) => {
+  const directory = await mkdtemp(
+    join(tmpdir(), "linusaurus-profile-failure-"),
+  );
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const host = {
+    id: "owned",
+    label: "Owned",
+    endpoint: "unix:///owned-profile.sock",
+  };
+  const profile = {
+    endpoint: host.endpoint,
+    executable: "/usr/bin/rex",
+    args: ["server", "run"],
+    env: { PATH: "/usr/bin" },
+  };
+  let running = true,
+    launches = 0;
+  const makeManager = () =>
+    new LinuxServerManager({
+      directory,
+      systemd: null,
+      call: async (_host, method) => {
+        if (!running) throw new Error("ECONNREFUSED");
+        return method === "server.status"
+          ? { pid: 10, session_count: 0 }
+          : { version: "test" };
+      },
+      process: async () => structuredClone(profile),
+      launch: async () => {
+        launches++;
+        throw new Error("Unexpected launch");
+      },
+    });
+  await makeManager().status(host);
+  const path = join(directory, (await readdir(directory))[0]);
+  running = false;
+  for (const content of [
+    "{ invalid JSON",
+    JSON.stringify({ ...profile, args: [42] }),
+    JSON.stringify({ ...profile, env: null }),
+  ]) {
+    await writeFile(path, content);
+    const manager = makeManager();
+    const status = await manager.status(host);
+    assert.equal(status.canManage, false);
+    assert.match(status.reason ?? "", /saved launch profile.*Repair/);
+    await assert.rejects(
+      manager.perform(host, "start"),
+      /saved launch profile/,
+    );
+    assert.equal(await readFile(path, "utf8"), content);
+  }
+  await rm(path);
+  await mkdir(path);
+  const unreadable = makeManager();
+  assert.equal((await unreadable.status(host)).canManage, false);
+  await assert.rejects(
+    unreadable.perform(host, "start"),
+    /saved launch profile/,
+  );
+  assert.equal(launches, 0);
+  await rm(path, { recursive: true });
+  assert.equal(
+    (await makeManager().status(host)).canManage,
+    true,
+    "a genuinely missing profile still permits first-time setup",
+  );
+});
 
 test("origin overrides replace only startup origin flags and reject blanket/control patterns", () => {
   const args = [
@@ -65,7 +142,7 @@ test("lifecycle never force-stops a server with existing sessions and preserves 
   try {
     const manager = new LinuxServerManager({
       directory,
-      call: async (_host, method, payload) => {
+      call: async (_host, method) => {
         calls.push(method);
         if (method === "server.status") return { pid: 100, session_count: 4 };
         throw new Error("Should never stop");
@@ -282,4 +359,107 @@ test("older servers without atomic idle shutdown are never stopped as a fallback
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("malformed server status never authorizes lifecycle actions or process inspection", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "linusaurus-life-status-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const host = { id: "owned", label: "Owned", endpoint: "unix:///owned.sock" };
+  let response: unknown;
+  let inspected = 0;
+  let stopped = 0;
+  const manager = new LinuxServerManager({
+    directory,
+    call: async (_host, method) => {
+      if (method === "server.stop") stopped++;
+      return response;
+    },
+    process: async () => {
+      inspected++;
+      return {
+        endpoint: host.endpoint,
+        executable: "/usr/bin/rex",
+        args: ["server", "run"],
+        env: {},
+      };
+    },
+  });
+  for (const value of [
+    null,
+    [],
+    {},
+    { pid: "10", session_count: 0 },
+    { pid: 0, session_count: 0 },
+    { pid: 10, session_count: "0" },
+    { pid: 10, session_count: -1 },
+    { pid: 10, session_count: null },
+    { pid: 10, session_count: NaN },
+  ]) {
+    response = value;
+    const status = await manager.status(host);
+    assert.equal(status.canManage, false);
+    assert.equal(status.running, false);
+    assert.match(
+      status.reason ?? "",
+      /cannot be inspected safely.*invalid local server/,
+    );
+    await assert.rejects(manager.perform(host, "stop"), /invalid local server/);
+  }
+  assert.equal(inspected, 0);
+  assert.equal(stopped, 0);
+});
+
+test("malformed idle-shutdown advertisement cannot authorize a server stop", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "linusaurus-life-help-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const host = { id: "owned", label: "Owned", endpoint: "unix:///owned.sock" };
+  let help: unknown;
+  let stopped = 0;
+  const manager = new LinuxServerManager({
+    directory,
+    call: async (_host, method) => {
+      if (method === "server.status")
+        return { pid: 10, session_count: 0, future: true };
+      if (method === "server.version") return { version: { malformed: true } };
+      if (method === "help.all") return help;
+      stopped++;
+      throw new Error("Must not stop");
+    },
+    process: async () => ({
+      endpoint: host.endpoint,
+      executable: "/usr/bin/rex",
+      args: ["server", "run"],
+      env: {},
+    }),
+  });
+  for (const value of [
+    null,
+    {},
+    { methods: "server.stop" },
+    { methods: [null] },
+    {
+      methods: [
+        {
+          name: "server.stop",
+          input_schema: { properties: { if_idle: true } },
+        },
+      ],
+    },
+    {
+      methods: [
+        {
+          name: "server.stop",
+          input_schema: { properties: { if_idle: { type: "string" } } },
+        },
+      ],
+    },
+  ]) {
+    help = value;
+    await assert.rejects(
+      manager.perform(host, "stop"),
+      /does not advertise atomic idle shutdown/,
+    );
+  }
+  assert.equal(stopped, 0);
+  assert.equal((await manager.status(host)).version, undefined);
 });

@@ -12,6 +12,17 @@ const MAX_SNAPSHOT = 256 * 1024 * 1024;
 const MAX_QUEUED = 32 * 1024 * 1024;
 let wasm: ReturnType<typeof loadGhosttyVt> | undefined;
 
+function terminalTicket(value: unknown): Buffer {
+  const invalid = () => new Error('Rex returned an invalid terminal ticket.');
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw invalid();
+  const ticket = (value as Record<string, unknown>).ticket;
+  if (typeof ticket !== 'string' || !ticket) throw invalid();
+  const token = Buffer.from(ticket, 'base64url');
+  if (token.length !== 16) throw invalid();
+  return token;
+}
+
 /** Incremental framing only; Ghostty validates all record order, lengths and CRCs. */
 export class SnapshotAssembler {
   private chunks: Buffer[] = [];
@@ -105,7 +116,11 @@ function continuation(terminal: GhosttyTerminal): Buffer {
 }
 
 export async function snapshotToVt(snapshot: Buffer): Promise<{ data: string; size: FrameSize; continuation: Buffer }> {
-  wasm ??= loadGhosttyVt();
+  wasm ??= loadGhosttyVt().catch((error: unknown) => {
+    // A transient load failure must not poison every later reconnect.
+    wasm = undefined;
+    throw error;
+  });
   const module = await wasm;
   const abi = module.abi;
   const source = abi.writeBytes(snapshot);
@@ -158,7 +173,6 @@ export class RexTerminalStream {
   private restored = false;
   private retry?: ReturnType<typeof setTimeout>;
   private failureCount = 0;
-  private attempt?: Promise<void>;
   constructor(private control: () => Promise<RexControl>, readonly sessionId: string, readonly blockId: string, private callbacks: StreamCallbacks) {
     void this.connect();
   }
@@ -172,11 +186,11 @@ export class RexTerminalStream {
   }
   private async run(): Promise<void> {
     const control = await this.control();
-    let ticket: string | undefined;
+    let ticket: Buffer | undefined;
     const resuming = !!this.welcome;
     if (!resuming) {
       await control.attach(this.sessionId);
-      ticket = (await control.call<{ ticket: string }>('data.connect', { session_id: this.sessionId, block_id: this.blockId, data_ref_id: 'terminal', subprotocol: 'rex.data.terminal.v1' })).ticket;
+      ticket = terminalTicket(await control.call('data.connect', { session_id: this.sessionId, block_id: this.blockId, data_ref_id: 'terminal', subprotocol: 'rex.data.terminal.v1' }));
     }
     if (this.stopped) return;
     const socket = openSocket(control.endpoint, '/api/data', 'rex.data.terminal.v1', control.credentials);
@@ -197,9 +211,8 @@ export class RexTerminalStream {
         if (resuming && this.welcome) {
           const hello = Buffer.alloc(25); hello[0] = 2; this.welcome.token.copy(hello, 1); hello.writeBigUInt64LE(this.received, 17); socket.send(hello);
         } else {
-          const token = Buffer.from(ticket || '', 'base64url');
-          if (token.length !== 16) { fail(new Error('Rex returned an invalid terminal ticket.')); socket.terminate(); return; }
-          socket.send(Buffer.concat([Buffer.from([1]), token]));
+          if (!ticket) { fail(new Error('Rex returned an invalid terminal ticket.')); socket.terminate(); return; }
+          socket.send(Buffer.concat([Buffer.from([1]), ticket]));
         }
       });
       socket.on('message', (raw, binary) => {

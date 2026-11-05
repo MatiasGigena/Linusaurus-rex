@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RexService } from "../electron/rex/service.js";
 import { localEndpoint } from "../electron/rex/control.js";
+import { attestLocalRex } from "../electron/server-management/local-attestation.js";
 
 test(
   "installed Rex resolves file, temporary and shared-memory images into direct client payloads",
@@ -38,7 +39,7 @@ test(
       host = {
         id: "local-image-probe",
         label: "Owned image test",
-        endpoint: localEndpoint(),
+        endpoint: process.env.REX_SERVER?.trim() || localEndpoint(),
       };
     let session: string | undefined, stop: (() => void) | undefined;
     const frames: string[] = [],
@@ -57,6 +58,18 @@ test(
       throw new Error("Owned file-image probe timed out.");
     };
     try {
+      const control = await rex.control(host);
+      const status = await control.call("server.status", {});
+      if (
+        !status ||
+        typeof status !== "object" ||
+        !("pid" in status) ||
+        typeof status.pid !== "number"
+      )
+        throw new Error(
+          "The image fixture requires an identifiable local Rex server.",
+        );
+      await attestLocalRex(control.endpoint, status.pid);
       session = await rex.createSession(
         host,
         `kitty-file-lifetime-${randomUUID()}`,

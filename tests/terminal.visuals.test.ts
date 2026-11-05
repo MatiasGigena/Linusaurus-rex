@@ -6,7 +6,10 @@ import {
   contrast,
   displayP3Color,
 } from "../src/terminal/visuals.js";
-import { KittyFramer, parseKittyCommand } from "../src/terminal/kitty.js";
+import {
+  KittyFramer,
+  parseKittyCommand,
+} from "../src/terminal/kitty-protocol.js";
 
 test("theme quantization corrects contrast after nearest-color matching", () => {
   const palette = [

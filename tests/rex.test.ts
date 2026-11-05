@@ -10,18 +10,136 @@ const local = { id: 'local', label: 'This computer', endpoint: '' };
 type Call = { method: string; payload: Record<string, unknown> };
 function mock(invoke: (call: Call) => Promise<unknown>) {
   const calls: Call[] = [];
+  const attachments: string[] = [];
   const factory = () => {
     const control = {
       endpoint: 'unix:///fake/rex.sock', connected: true,
       readyPublic: async () => ({ protocol: 'rex.control.v1', api_revision: 10 }),
-      attach: async (_sessionId: string) => {},
+      attach: async (sessionId: string) => { attachments.push(sessionId); },
       call: async (method: string, payload: Record<string, unknown>) => { const call = { method, payload }; calls.push(call); return invoke(call); },
       dispose: () => { control.connected = false; },
     };
     return control as unknown as RexControl;
   };
-  return { calls, service: new RexService({ controlFactory: factory }) };
+  return { calls, attachments, service: new RexService({ controlFactory: factory }) };
 }
+
+test('session and pane operations own their wire requests and preserve results and failures', async () => {
+  const result = { accepted: true };
+  let failure: Error | undefined;
+  const current = mock(async (call) => {
+    assert.equal(
+      current.attachments.at(-1),
+      call.payload.session_id,
+      'The session must be attached before each operation',
+    );
+    if (failure) throw failure;
+    return result;
+  });
+  try {
+    assert.equal(await current.service.destroySession(local, 's'), result);
+    assert.equal(
+      await current.service.renamePane(local, 's', 'b', 'Named'),
+      result,
+    );
+    assert.equal(
+      await current.service.listDirectory(local, 's', 'b', {
+        path: '/quoted path',
+        files: true,
+        limit: 2000,
+        prefix: 'pre',
+      }),
+      result,
+    );
+    assert.equal(await current.service.blockInfo(local, 's', 'b'), result);
+    assert.equal(
+      await current.service.callBlock(local, 's', 'b', 'plugin.echo', {
+        nested: { value: true },
+      }),
+      result,
+    );
+    assert.deepEqual(current.calls, [
+      { method: 'session.destroy', payload: { session_id: 's' } },
+      {
+        method: 'session.set_block_label',
+        payload: { session_id: 's', block_id: 'b', label: 'Named' },
+      },
+      {
+        method: 'com.superlogical.terminal.list_dir',
+        payload: {
+          session_id: 's',
+          block_id: 'b',
+          args: {
+            path: '/quoted path',
+            files: true,
+            limit: 2000,
+            prefix: 'pre',
+          },
+        },
+      },
+      {
+        method: 'session.describe_block',
+        payload: { session_id: 's', block_id: 'b' },
+      },
+      {
+        method: 'block.method',
+        payload: {
+          session_id: 's',
+          block_id: 'b',
+          method: 'plugin.echo',
+          args: { nested: { value: true } },
+        },
+      },
+    ]);
+    assert.deepEqual(current.attachments, ['s', 's', 's', 's', 's']);
+    failure = Object.assign(new Error('Permission denied'), {
+      code: 'permission_denied',
+      method: 'block.method',
+    });
+    await assert.rejects(
+      current.service.callBlock(local, 's', 'b', 'plugin.echo', {}),
+      (error) => error === failure,
+    );
+  } finally {
+    current.service.dispose();
+  }
+});
+
+test('terminal size decodes unknown dimensions before publishing them', async () => {
+  let response: unknown;
+  const { service } = mock(async () => response);
+  try {
+    for (const value of [
+      null,
+      [],
+      {},
+      { columns: '80', rows: 24 },
+      { columns: 80, rows: '24' },
+      { columns: 1.5, rows: 24 },
+      { columns: 80, rows: NaN },
+      { columns: Infinity, rows: 24 },
+      { columns: 0, rows: 24 },
+      { columns: 80, rows: -1 },
+      { columns: 65536, rows: 24 },
+      { columns: 80, rows: 65536 },
+    ]) {
+      response = value;
+      await assert.rejects(
+        service.terminalSize(local, 's', 'b'),
+        /invalid terminal size/i,
+      );
+    }
+    for (const columns of [1, 65535]) {
+      response = { columns, rows: columns, future: { enabled: true } };
+      assert.deepEqual(await service.terminalSize(local, 's', 'b'), {
+        columns,
+        rows: columns,
+      });
+    }
+  } finally {
+    service.dispose();
+  }
+});
 
 test('terminal input bytes go in a single control request without invoking a shell', async () => {
   const { calls, service } = mock(async () => ({}));
@@ -108,4 +226,70 @@ test('integration command runner bounds lifetime and reports timeout', async () 
   const runner = new RexCommandRunner(process.execPath, 35);
   try { await assert.rejects(runner.run(['-e', 'setInterval(() => {}, 1000)']), /did not respond in time/); }
   finally { runner.dispose(); }
+});
+
+
+test('session lists validate every record before publishing identifiers', async () => {
+  let response: unknown;
+  const { service } = mock(async () => response);
+  try {
+    for (const value of [null, [], {}, { sessions: null }, { sessions: [null] }, { sessions: [{}] }, { sessions: [{ session_id: '' }] }, { sessions: [{ session_id: 42 }] }, { sessions: [{ session_id: 's', label: {} }] }]) {
+      response = value;
+      await assert.rejects(service.sessions(local), /invalid session list/);
+    }
+    response = { sessions: [{ session_id: 'one', label: '', future: 1 }, { session_id: 'two', label: 'Named' }, { session_id: 'three' }], future: {} };
+    assert.deepEqual(await service.sessions(local), [{ id: 'one', label: 'Untitled session' }, { id: 'two', label: 'Named' }, { id: 'three', label: 'Untitled session' }]);
+  } finally { service.dispose(); }
+});
+
+test('session creation rejects missing or malformed identifiers without poisoning later responses', async () => {
+  let response: unknown;
+  const { service } = mock(async () => response);
+  try {
+    for (const value of [null, [], {}, { session_id: null }, { session_id: '' }, { session_id: 42 }, { session_id: 's', label: false }]) {
+      response = value;
+      await assert.rejects(service.createSession(local, 'New session'), /invalid session creation response/);
+    }
+    response = { session_id: 'created', label: '', future: { flag: true } };
+    assert.equal(await service.createSession(local, 'New session'), 'created');
+  } finally { service.dispose(); }
+});
+
+test('server status validates published version strings and accepts future fields', async () => {
+  let response: unknown;
+  const { service } = mock(async () => response);
+  try {
+    for (const value of [null, [], { version: 1 }, { version: {} }, { rex_version: false }, { version: 'valid', rex_version: [] }]) {
+      response = value;
+      const status = await service.status(local);
+      assert.equal(status.connected, false);
+      assert.match(status.error ?? '', /invalid server version/);
+      assert.equal(status.version, undefined);
+    }
+    response = { version: '', rex_version: 'fallback-version', future: { enabled: true } };
+    assert.equal((await service.status(local)).version, 'fallback-version');
+    response = { version: 'current-version' };
+    assert.equal((await service.status(local)).version, 'current-version');
+    response = { future: true };
+    assert.equal((await service.status(local)).connected, true);
+  } finally { service.dispose(); }
+});
+
+test('snapshot pagination rejects malformed counters and completion markers', async () => {
+  let response: unknown;
+  let page: unknown;
+  const { service } = mock(async call => call.method.endsWith('.format') ? response : page);
+  try {
+    for (const value of [null, [], { content: 'partial', id: {} }, { content: 'partial', id: -1 }, { content: 'partial', total: NaN }, { content: 'partial', total: -1 }, { content: 'partial', total: 'ten' }]) {
+      response = value;
+      await assert.rejects(service.capture(local, 's', 'b'), /invalid terminal snapshot/);
+    }
+    response = { content: 'first', id: 12, total: 10 };
+    for (const value of [null, { data: 'last', eof: 'false' }, { data: 'last', eof: 0 }, { data: [], eof: true }]) {
+      page = value;
+      await assert.rejects(service.capture(local, 's', 'b'), /invalid terminal snapshot page/);
+    }
+    page = { data: 'last!', eof: true, future: true };
+    assert.equal(await service.capture(local, 's', 'b'), 'firstlast!');
+  } finally { service.dispose(); }
 });

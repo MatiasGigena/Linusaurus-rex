@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULT_SETTINGS } from "../src/shared/types.js";
 import {
+  migrateThemeLibrary,
+  selectLibraryTheme,
+} from "../src/core/themeLibrary.js";
+import {
   DEFAULT_EXTENDED_ANSI,
   terminalServerTheme,
   terminalTheme,
@@ -46,7 +50,7 @@ test("new installs follow the system between the macOS dark and light palettes",
 });
 
 test("extended theme colors round-trip to Xterm and the server palette protocol", () => {
-  const settings = {
+  const settings = migrateThemeLibrary({
     ...DEFAULT_SETTINGS,
     useExtendedPalette: true,
     customTheme: {
@@ -54,7 +58,7 @@ test("extended theme colors round-trip to Xterm and the server palette protocol"
       "palette.255": "#abcdef",
       palette1: "#fedcba",
     },
-  };
+  });
   const local = terminalTheme(settings);
   const server = terminalServerTheme(settings);
   assert.equal(local.red, "#fedcba");
@@ -78,12 +82,13 @@ test("extended theme colors round-trip to Xterm and the server palette protocol"
 });
 
 test("independent light and dark imports take precedence over a legacy shared import", () => {
-  const settings = {
+  const legacy = {
     ...DEFAULT_SETTINGS,
     customTheme: { foreground: "#111111", palette16: "#101010" },
     customLightTheme: { foreground: "#222222", palette16: "#202020" },
     customDarkTheme: { foreground: "#eeeeee", palette16: "#303030" },
   };
+  const settings = migrateThemeLibrary(legacy);
   assert.equal(
     terminalTheme({ ...settings, appearance: "light" }).foreground,
     "#222222",
@@ -102,25 +107,30 @@ test("independent light and dark imports take precedence over a legacy shared im
       "16=#303030",
     ),
   );
+  assert.notEqual(
+    terminalTheme(
+      selectLibraryTheme({ ...settings, appearance: "light" }, "light", ""),
+    ).foreground,
+    "#111111",
+  );
   assert.equal(
     terminalTheme({
-      ...settings,
+      ...migrateThemeLibrary({ ...legacy, customLightTheme: undefined }),
       appearance: "light",
-      customLightTheme: undefined,
     }).foreground,
     "#111111",
   );
 });
 
 test("extended imports can be enabled independently for light and dark appearances", () => {
-  const settings = {
+  const settings = migrateThemeLibrary({
     ...structuredClone(DEFAULT_SETTINGS),
     useExtendedPalette: true,
     useExtendedLightPalette: false,
     useExtendedDarkPalette: true,
     customLightTheme: { palette200: "#112233" },
     customDarkTheme: { palette200: "#445566" },
-  };
+  });
   const light = terminalTheme({ ...settings, appearance: "light" });
   const dark = terminalTheme({ ...settings, appearance: "dark" });
   assert.equal(light.extendedAnsi![184], DEFAULT_EXTENDED_ANSI[184]);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 import { deflateSync } from "node:zlib";
 const source = `import React from 'react';import{createRoot}from'react-dom/client';import{TerminalPane,dispatchTerminalCommandAsync}from'/src/terminal/TerminalPane.tsx';import{getCachedTerminal}from'/src/terminal/runtime.ts';import{DEFAULT_SETTINGS}from'/src/shared/types.ts';
 const ref={hostId:'graphics',sessionId:'test',blockId:'test'};let subscription,update,show;const listeners=new Set(),requests=[];window.rex={request:async(method,args)=>{requests.push({method,args});if(method==='subscribe'){subscription=args.subscriptionId;setTimeout(()=>emit({kind:'snapshot',data:'ready> ',cols:80,rows:24}),20)}},onTerminal:callback=>{listeners.add(callback);return()=>listeners.delete(callback)},writeClipboard:async()=>{},readClipboard:async()=>''};function emit(frame){for(const callback of listeners)callback({subscriptionId:subscription,...frame})}
@@ -40,14 +40,7 @@ test(
         host: "127.0.0.1",
         port: 0,
         hmr: false,
-        watch: {
-          ignored: [
-            "**/dist/**",
-            "**/dist-electron/**",
-            "**/release/**",
-            "**/test-results*/**",
-          ],
-        },
+        watch: null,
       },
     });
     await server.listen();
@@ -66,6 +59,7 @@ test(
         if (["error", "warn"].includes(message.type()))
           console.log("graphics browser", message.text());
       });
+      await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
       await page.goto(`http://127.0.0.1:${address.port}/graphics`);
       await page
         .waitForFunction(
@@ -182,7 +176,7 @@ test(
       await page
         .locator('canvas[data-kitty-image="9"]')
         .waitFor({ state: "attached" });
-      await page.waitForTimeout(120);
+      await page.clock.fastForward(120);
       assert.equal(
         await page.evaluate(
           () =>
@@ -211,7 +205,12 @@ test(
         .locator('canvas[data-kitty-image="7"]')
         .waitFor({ state: "detached" });
       // The released official addon handles Sixel and IIP; it does not generate duplicate program replies.
-      await page.waitForTimeout(200);
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            (window as any).fixture.runtime().terminal.write("", resolve),
+          ),
+      );
       await emit('\x1b[1;1H\x1bPq"1;1;8;6#0;2;100;0;0#0!8~\x1b\\');
       await page.waitForFunction(
         () => (window as any).fixture.runtime().images.storageUsage > 0,
@@ -295,10 +294,7 @@ test(
         );
         return span && getComputedStyle(span).color === "rgb(254, 1, 2)";
       });
-      assert.equal(
-        await rgb.evaluate((span) => getComputedStyle(span).color),
-        original,
-      );
+      await expect(rgb).toHaveCSS("color", original);
       await page.evaluate(() => {
         const media = window.matchMedia.bind(window);
         window.matchMedia = (query: string) =>
@@ -458,6 +454,7 @@ test(
       await emit("\x1b_Ga=d,d=I,i=201;\x1b\\");
       await relative.waitFor({ state: "detached" });
       // Animation patches, explicit frame selection, clipped replacement, finite loops and stop.
+      await page.clock.pauseAt(new Date("2026-01-02T00:00:00Z"));
       await emit(
         "\x1b_Ga=T,f=32,s=2,v=1,i=301,p=1,c=4,r=2,C=1;" +
           Buffer.from([255, 0, 0, 255, 255, 0, 0, 255]).toString("base64") +
@@ -488,6 +485,7 @@ test(
         [255, 0, 0, 255, 0, 255, 0, 255],
       );
       await emit("\x1b_Ga=a,i=301,c=1,r=1,z=25,s=3,v=2;\x1b\\");
+      await page.clock.runFor(50);
       await page.waitForFunction(() => {
         const canvas = document.querySelector('canvas[data-kitty-image="301"]');
         return (
@@ -495,18 +493,21 @@ test(
           canvas?.getAttribute("data-kitty-animation") === "1"
         );
       });
-      await page.waitForTimeout(80);
+      await page.clock.runFor(200);
       assert.equal(await animated.getAttribute("data-kitty-frame"), "2");
       await emit("\x1b_Ga=a,i=301,c=1,s=3,v=1;\x1b\\");
-      await page.waitForTimeout(60);
-      await emit("\x1b_Ga=a,i=301,c=1,s=1;\x1b\\");
+      await page.clock.runFor(25);
+      assert.equal(await animated.getAttribute("data-kitty-frame"), "2");
+      await page.clock.runFor(25);
+      assert.equal(await animated.getAttribute("data-kitty-frame"), "1");
+      await emit("\x1b_Ga=a,i=301,s=1;\x1b\\");
       await page.waitForFunction(
         () =>
           document
             .querySelector('canvas[data-kitty-image="301"]')
             ?.getAttribute("data-kitty-animation") === "1",
       );
-      await page.waitForTimeout(80);
+      await page.clock.runFor(200);
       assert.equal(await animated.getAttribute("data-kitty-frame"), "1");
       await emit("\x1b_Ga=c,i=301,r=2,c=1,X=1,Y=0,x=0,y=0,w=1,h=1,C=1;\x1b\\");
       await page.waitForFunction(() => {
@@ -530,6 +531,61 @@ test(
       await emit("\x1b_Ga=d,d=f,i=301,r=2;\x1b\\");
       await emit("\x1b_Ga=d,d=I,i=301;\x1b\\");
       await animated.waitFor({ state: "detached" });
+      // Gapless frames share the same wrap/stop boundary as timed frames.
+      await emit(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=302,p=1,c=1,r=1,C=1;" +
+          Buffer.from([255, 0, 0, 255]).toString("base64") +
+          "\x1b\\\x1b_Ga=f,f=32,s=1,v=1,i=302,z=-1;" +
+          Buffer.from([0, 255, 0, 255]).toString("base64") +
+          "\x1b\\\x1b_Ga=f,f=32,s=1,v=1,i=302,z=25;" +
+          Buffer.from([0, 0, 255, 255]).toString("base64") +
+          "\x1b\\",
+      );
+      const gapless = page.locator('canvas[data-kitty-image="302"]');
+      await gapless.waitFor();
+      await emit("\x1b_Ga=a,i=302,c=1,s=3,v=3;\x1b\\");
+      await page.clock.runFor(8);
+      assert.equal(await gapless.getAttribute("data-kitty-frame"), "3");
+      assert.deepEqual(
+        await gapless.evaluate((canvas) =>
+          Array.from((canvas as HTMLCanvasElement).getContext("2d")!.getImageData(0, 0, 1, 1).data),
+        ),
+        [0, 0, 255, 255],
+      );
+      await page.clock.runFor(25);
+      assert.equal(await gapless.getAttribute("data-kitty-frame"), "3");
+      assert.equal(await gapless.getAttribute("data-kitty-animation"), "3");
+      await page.clock.runFor(25);
+      assert.equal(await gapless.getAttribute("data-kitty-animation"), "1");
+      await page.clock.runFor(200);
+      assert.equal(await gapless.getAttribute("data-kitty-frame"), "3");
+      await emit("\x1b_Ga=a,i=302,c=1,s=2;\x1b\\");
+      await page.clock.runFor(33);
+      assert.equal(await gapless.getAttribute("data-kitty-frame"), "3");
+      assert.equal(await gapless.getAttribute("data-kitty-animation"), "2");
+      await emit(
+        "\x1b_Ga=f,f=32,s=1,v=1,i=302,z=25;" +
+          Buffer.from([255, 255, 0, 255]).toString("base64") +
+          "\x1b\\",
+      );
+      await page.clock.runFor(25);
+      assert.equal(await gapless.getAttribute("data-kitty-frame"), "4");
+      assert.deepEqual(
+        await gapless.evaluate((canvas) =>
+          Array.from((canvas as HTMLCanvasElement).getContext("2d")!.getImageData(0, 0, 1, 1).data),
+        ),
+        [255, 255, 0, 255],
+      );
+      await page.clock.runFor(100);
+      assert.equal(await gapless.getAttribute("data-kitty-frame"), "4");
+      assert.equal(await gapless.getAttribute("data-kitty-animation"), "2");
+      await emit("\x1b_Ga=a,i=302,s=1,r=3,z=-1;\x1b\\\x1b_Ga=a,i=302,r=4,z=-1;\x1b\\\x1b_Ga=a,i=302,c=1,s=3;\x1b\\");
+      await page.clock.runFor(200);
+      assert.equal(await gapless.getAttribute("data-kitty-frame"), "1", "all-gapless images must not schedule playback");
+      assert.equal(await gapless.getAttribute("data-kitty-animation"), "3");
+      await emit("\x1b_Ga=d,d=I,i=302;\x1b\\");
+      await gapless.waitFor({ state: "detached" });
+      await page.clock.resume();
       // Public buffer glyphs drive virtual placements, including omitted column diacritics.
       const quadrants = Buffer.from([
         255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
@@ -580,11 +636,14 @@ test(
             ox = (2 * cw - 2 * scale) / 2,
             oy = 9 * ch + (2 * ch - 2 * scale) / 2,
             context = (canvas as HTMLCanvasElement).getContext("2d")!;
+          // Bilinear upscaling blends neighbouring texels between their
+          // centres, so sample each quadrant's outer half, where filtering
+          // clamps to the pure texel colour regardless of subpixel metrics.
           return [
-            [0.5, 0.5],
-            [1.5, 0.5],
-            [0.5, 1.5],
-            [1.5, 1.5],
+            [0.25, 0.25],
+            [1.75, 0.25],
+            [0.25, 1.75],
+            [1.75, 1.75],
           ].map(([x, y]) =>
             Array.from(
               context.getImageData(
@@ -610,6 +669,89 @@ test(
             ) <= 12,
             "Bilinear-scaled placeholder tiles must preserve their quadrant color",
           );
+      // A nonzero image row is invalid for this one-cell placement. The next
+      // unmarked glyph must start at row/column zero after an ordinary cell or
+      // a screen-row boundary, rather than inheriting that invalid image row.
+      await emit(
+        "\x1b_Ga=t,f=24,s=1,v=1,i=501;/wD/\x1b\\\x1b_Ga=p,U=1,i=501,p=1,c=1,r=1;\x1b\\",
+      );
+      const resetColumns = await page.evaluate(
+        () => (window as any).fixture.runtime().terminal.cols,
+      );
+      await emit(
+        "\x1b[12;1H\x1b[38;2;0;1;245m\x1b[58;2;0;0;1m" +
+          placeholder +
+          one +
+          zero +
+          "X" +
+          placeholder +
+          `\x1b[12;${resetColumns}H` +
+          placeholder +
+          one +
+          zero +
+          "\x1b[13;1H" +
+          placeholder +
+          "\x1b[0m",
+      );
+      await page.waitForFunction(() => {
+        const buffer = (window as any).fixture.runtime().terminal.buffer.active;
+        return (
+          buffer.getLine(11)?.getCell(1)?.getChars() === "X" &&
+          buffer.getLine(12)?.getCell(0)?.getChars().startsWith("\u{10eeee}")
+        );
+      });
+      const resetPixels = await page.evaluate(async () => {
+        const term = (window as any).fixture.runtime().terminal;
+        await new Promise<void>((resolve) => term.write("", resolve));
+        await new Promise<void>((resolve) => {
+          const listener = term.onRender(() => {
+            listener.dispose();
+            resolve();
+          });
+          term.refresh(0, term.rows - 1);
+        });
+        const screen = document.querySelector<HTMLElement>(".xterm-screen")!;
+        const canvas = document.querySelector<HTMLCanvasElement>(
+          'canvas[data-kitty-virtual="true"]',
+        )!;
+        const context = canvas.getContext("2d")!;
+        const cw = screen.clientWidth / term.cols,
+          ch = screen.clientHeight / term.rows;
+        return [
+          [0, 11],
+          [1, 11],
+          [2, 11],
+          [0, 12],
+        ].map(([x, y]) =>
+          Array.from(
+            context.getImageData(
+              Math.floor((x + 0.5) * cw),
+              Math.floor((y + 0.5) * ch),
+              1,
+              1,
+            ).data,
+          ),
+        );
+      });
+      assert.deepEqual(
+        resetPixels.slice(0, 2),
+        [
+          [0, 0, 0, 0],
+          [0, 0, 0, 0],
+        ],
+        "an invalid placeholder and ordinary text must not paint an image",
+      );
+      assert.deepEqual(
+        resetPixels[2],
+        [255, 0, 255, 255],
+        "an ordinary-cell gap must reset placeholder continuation",
+      );
+      assert.deepEqual(
+        resetPixels[3],
+        [255, 0, 255, 255],
+        "a new screen row must reset placeholder continuation",
+      );
+      await emit("\x1b_Ga=d,d=I,i=501;\x1b\\");
       await emit(
         "\x1b_Ga=T,f=24,s=1,v=1,i=402,p=1,c=1,r=1,P=401,Q=9,H=3,V=1;////\x1b\\",
       );

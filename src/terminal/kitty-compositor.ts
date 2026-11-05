@@ -1,4 +1,4 @@
-import type { IBufferCell, ITheme, Terminal } from "@xterm/xterm";
+import type { IBufferCell, Terminal } from "@xterm/xterm";
 import {
   cellBackground,
   displayP3Color,

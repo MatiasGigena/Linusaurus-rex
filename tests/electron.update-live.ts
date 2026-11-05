@@ -16,7 +16,7 @@ import {
   checksumFor,
   sha256,
   newerVersion,
-} from "../electron/features/updates.js";
+} from "../electron/updates/updates.js";
 import { DEFAULT_SETTINGS } from "../src/shared/types.js";
 
 // Explicitly opt in: updates only an owned COPY, never an installed application.

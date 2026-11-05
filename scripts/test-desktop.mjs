@@ -1,6 +1,13 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -8,7 +15,10 @@ import { fileURLToPath } from "node:url";
 
 const fixtures = [
   "smoke",
+  "boundary",
+  "rex-integration",
   "actions",
+  "startup",
   "services",
   "graphics",
   "layers",
@@ -16,14 +26,22 @@ const fixtures = [
   "accessibility",
   "update-live",
 ];
-const names = process.argv.slice(2);
-const usage = `Usage: node scripts/test-desktop.mjs ${fixtures.join("|")} [fixture ...]`;
+const arguments_ = process.argv.slice(2);
+const isolatedRex = arguments_[0] === "--isolated-rex";
+const names = arguments_.slice(isolatedRex ? 1 : 0);
+const usage = `Usage: node scripts/test-desktop.mjs [--isolated-rex] ${fixtures.join("|")} [fixture ...]`;
 if (names.length === 1 && names[0] === "--help") {
   console.log(usage);
   process.exit(0);
 }
 if (!names.length || names.some((name) => !fixtures.includes(name))) {
   console.error(`${usage}\nChoose one or more named desktop fixtures.`);
+  process.exit(1);
+}
+if (names.includes("rex-integration") && !isolatedRex) {
+  console.error(
+    "rex-integration requires --isolated-rex to own its test server.",
+  );
   process.exit(1);
 }
 if (
@@ -42,6 +60,7 @@ const owned = new Map();
 let interrupted = false;
 let directory;
 let server;
+let rexServer;
 let active;
 
 // Playwright can create a separate process group for Electron. Record only
@@ -106,6 +125,7 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     void Promise.all([
       active && remember(active.pid),
       server && remember(server.pid),
+      rexServer && remember(rexServer.pid),
     ]).then(() => signalOwned("SIGTERM"));
   });
 }
@@ -222,25 +242,101 @@ try {
   };
   delete environment.WAYLAND_DISPLAY;
   delete environment.WAYLAND_SOCKET;
+  let rexStopped;
+  if (isolatedRex) {
+    const runtime = join(directory, "runtime");
+    await mkdir(join(runtime, "rex"), { recursive: true, mode: 0o700 });
+    environment.XDG_RUNTIME_DIR = runtime;
+    const socket = join(runtime, "rex", "server.sock");
+    environment.REX_SERVER = `unix://${socket}`;
+    const config = join(directory, "rex.lua");
+    await writeFile(config, "", { mode: 0o600 });
+    rexServer = spawn(
+      process.env.REX_EXECUTABLE || "rex",
+      [
+        "server",
+        "run",
+        "--listen",
+        environment.REX_SERVER,
+        "--restore=false",
+        "--state-dir",
+        join(directory, "rex-state"),
+        "--config",
+        config,
+      ],
+      { env: environment, stdio: ["ignore", "ignore", "pipe"], detached: true },
+    );
+    let rexLog = "",
+      rexFailure;
+    rexServer.stderr.on("data", (bytes) => {
+      rexLog = (rexLog + bytes).slice(-8000);
+    });
+    rexStopped = new Promise((_, reject) => {
+      rexServer.once("error", (error) => {
+        rexFailure = new Error(`Private Rex could not start: ${error.message}`);
+        reject(rexFailure);
+      });
+      rexServer.once("exit", (code, signal) => {
+        rexFailure = new Error(
+          `Private Rex stopped (${signal || code}). ${rexLog.trim()}`,
+        );
+        reject(rexFailure);
+      });
+    });
+    void rexStopped.catch(() => {});
+    await remember(rexServer.pid);
+    let ready = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (rexFailure) throw rexFailure;
+      if (
+        await stat(socket).then(
+          (value) => value.isSocket(),
+          () => false,
+        )
+      ) {
+        ready = true;
+        break;
+      }
+      await delay(50);
+    }
+    if (!ready)
+      throw new Error(`Private Rex did not become ready. ${rexLog.trim()}`);
+    console.log(
+      "Desktop fixtures use a temporary Rex server with persistence disabled.",
+    );
+  }
   // D-Bus remains the user's bus for owned systemd and AT-SPI verification.
   console.log(
     `Desktop fixtures use an authenticated private display ${display}.`,
   );
   watcher = setInterval(() => {
     if (active?.pid) void remember(active.pid);
+    if (rexServer?.pid) void remember(rexServer.pid);
   }, 100);
   for (const name of names) {
     if (interrupted) break;
     console.log(`RUN desktop:${name}`);
-    active = spawn(
-      process.execPath,
-      [tsx, join(root, `tests/electron.${name}.ts`)],
-      { cwd: root, env: environment, stdio: "inherit", detached: true },
-    );
+    active =
+      name === "rex-integration"
+        ? spawn("npm", ["run", "test:integration"], {
+            cwd: root,
+            env: environment,
+            stdio: "inherit",
+            detached: true,
+          })
+        : spawn(
+            process.execPath,
+            [tsx, join(root, `tests/electron.${name}.ts`)],
+            { cwd: root, env: environment, stdio: "inherit", detached: true },
+          );
     const completion = exited(active, `desktop:${name}`);
     void completion.catch(() => {});
     await remember(active.pid);
-    await Promise.race([completion, stopped]);
+    await Promise.race([
+      completion,
+      stopped,
+      ...(rexStopped ? [rexStopped] : []),
+    ]);
     active = undefined;
     console.log(`PASS desktop:${name}`);
   }
@@ -251,6 +347,7 @@ try {
   clearInterval(watcher);
   if (active?.pid) await remember(active.pid);
   if (server?.pid) await remember(server.pid);
+  if (rexServer?.pid) await remember(rexServer.pid);
   await signalOwned("SIGTERM");
   await delay(250);
   await signalOwned("SIGKILL");

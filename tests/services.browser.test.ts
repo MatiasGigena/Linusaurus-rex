@@ -4,7 +4,7 @@ import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { chromium } from "@playwright/test";
 
-const source = `import React from 'react';import{createRoot}from'react-dom/client';import{NativeServicesDialog}from'/src/components/NativeServicesDialog.tsx';import{DEFAULT_SETTINGS}from'/src/shared/types.ts';
+const source = `import React from 'react';import{createRoot}from'react-dom/client';import{NativeServicesDialog}from'/src/components/services/NativeServicesDialog.tsx';import{DEFAULT_SETTINGS}from'/src/shared/types.ts';
 const service={unit:'owned-rex.service',scope:'user',activeState:'active',restart:'always',dropInPaths:[],configuredOrigins:['old.example'],canManage:true};
 let state={local:true,running:true,canManage:true,pid:1234,sessionCount:4,endpoint:'unix:///owned.sock',arguments:[],origins:['old.example'],service};const requests=[];
 window.fixture={requests,state};window.rex={onClientEvent:()=>()=>{},request:async(method,args)=>{requests.push({method,args});if(method==='serverManagement')return structuredClone(state);if(method==='updateStatus')return{currentVersion:'0.3.0',installKind:'development',phase:'idle',canApply:false};if(method==='previewServerOrigins')return{previewId:'single-use-review',unit:service.unit,path:'/owned/90-linusaurus.conf',before:'[Service]\\nExecStart=old',after:'[Service]\\nExecStart=new '+args.origins.join(','),restartRequired:true};if(method==='applyServerOrigins'){state.service.configuredOrigins=['new.example'];state.pendingOrigins=['new.example'];return structuredClone(state)};throw Error('Unexpected '+method)}};
@@ -42,14 +42,7 @@ test(
         host: "127.0.0.1",
         port: 0,
         hmr: false,
-        watch: {
-          ignored: [
-            "**/dist/**",
-            "**/dist-electron/**",
-            "**/release/**",
-            "**/test-results*/**",
-          ],
-        },
+        watch: null,
       },
     });
     await server.listen();

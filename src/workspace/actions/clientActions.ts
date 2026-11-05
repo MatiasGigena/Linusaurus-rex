@@ -1,0 +1,292 @@
+import { DEFAULT_SETTINGS, type Settings } from "../../shared/types";
+import { saveLibraryTheme, uniqueThemeName } from "../../core/themeLibrary";
+import type { WorkspaceOperations } from "../../core/workspaceOperations";
+import {
+  UNHANDLED,
+  type ClientActionsDependencies,
+  type ClientActionsTarget,
+} from "./context";
+
+export async function persistSidebarWidth(
+  workspace: Pick<WorkspaceOperations, "saveSettings">,
+  settings: Settings,
+  width: number,
+): Promise<void> {
+  if (!settings.preserveWindowWidth)
+    await window.rex.request("resizeWindow", {
+      deltaWidth: width - settings.sidebarWidth,
+    });
+  await workspace.saveSettings({ ...settings, sidebarWidth: width });
+}
+
+export function createClientActions(dependencies: ClientActionsDependencies) {
+  return async function clientActions(
+    context: ClientActionsTarget,
+  ): Promise<unknown> {
+    const {
+      workspace,
+      settings,
+      hosts,
+      interfaceTheme,
+      setActivityOnly,
+      setActivityOpen,
+      setActivityGroup,
+      dialogs,
+    } = dependencies;
+    const { name, args, hostId, sourceHostId, assertCurrentHost } = context;
+    switch (name) {
+      case "client.palette.toggle": {
+        const current = dialogs.snapshot.primary;
+        if (current?.dialog.kind === "palette") dialogs.close(current);
+        else dialogs.open({ kind: "palette", scope: "all" });
+        return;
+      }
+      case "client.settings":
+        dialogs.open({
+          kind: "settings",
+          tab:
+            (
+              [
+                "appearance",
+                "terminal",
+                "notifications",
+                "hosts",
+                "integrations",
+                "shortcuts",
+                "server",
+              ] as const
+            ).find((tab) => tab === args.tab) ?? "appearance",
+        });
+        return;
+      case "client.shortcuts.edit":
+        dialogs.open({ kind: "settings", tab: "shortcuts" });
+        return;
+      case "client.agents.setup":
+        dialogs.open({ kind: "settings", tab: "integrations" });
+        return;
+      case "client.diagnostics":
+        dialogs.open({ kind: "diagnostics", hostId });
+        return;
+      case "client.pair_device":
+        dialogs.open({ kind: "pairing", hostId });
+        return;
+      case "client.onboarding": {
+        const { result: tutorial } = await workspace.mutateSession(
+          { hostId, sessionId: (created) => created.sessionId },
+          () => window.rex.request("createTutorial", { hostId }),
+        );
+        workspace.select(
+          hostId,
+          tutorial.sessionId,
+          tutorial.windowId,
+          tutorial.blockId,
+        );
+        return tutorial;
+      }
+      case "client.update.accept":
+        return window.rex.request("applyUpdate", {});
+      case "client.update.accept_when_idle":
+        return window.rex.request("applyUpdate", { whenIdle: true });
+      case "client.server.restart":
+        return workspace.mutateHostAndRefresh(hostId, () =>
+          window.rex.request("serverLifecycle", {
+            hostId,
+            operation: "restart",
+          }),
+        );
+      case "client.notice.dismiss":
+        workspace.dismissNotices();
+        return;
+      case "client.host.add":
+        dialogs.open({ kind: "host", host: null });
+        return;
+      case "client.host.remove": {
+        const host = settings.hosts.find((host) => host.id === hostId);
+        if (!host || host.id === "local")
+          throw new Error(
+            "The local host is retained. Edit its endpoint in Settings.",
+          );
+        dialogs.open({
+          kind: "confirmation",
+          confirmation: {
+            title: `Forget ${host.label}?`,
+            description:
+              "The saved connection and its stored credentials will be removed. Server sessions keep running.",
+            label: "Forget host",
+            submit: async () => {
+              assertCurrentHost();
+              await window.rex.request("removeCredentials", { hostId });
+              assertCurrentHost();
+              const current = workspace.getSettings();
+              if (!current)
+                throw new Error("Workspace settings are not available.");
+              await workspace.saveSettings({
+                ...current,
+                hosts: current.hosts.filter((item) => item.id !== hostId),
+              });
+              await workspace.refresh();
+            },
+          },
+        });
+        return;
+      }
+      case "client.host.switch": {
+        const next = settings.hosts.find(
+          (host) =>
+            host.id === String(args.host_id || args.host || "") ||
+            host.label === String(args.host || ""),
+        );
+        if (next) {
+          if (sourceHostId !== undefined && next.id !== sourceHostId)
+            throw new Error(
+              "A server-originated action cannot navigate to another host.",
+            );
+          const first = hosts.find((host) => host.id === next.id)?.sessions[0];
+          if (first) workspace.select(next.id, first.id);
+          else dialogs.open({ kind: "host", host: next });
+        } else dialogs.open({ kind: "palette", scope: "sessions" });
+        return;
+      }
+      case "client.font.increase":
+        return workspace.saveSettings({
+          ...settings,
+          fontSize: Math.min(48, settings.fontSize + 1),
+        });
+      case "client.font.decrease":
+        return workspace.saveSettings({
+          ...settings,
+          fontSize: Math.max(8, settings.fontSize - 1),
+        });
+      case "client.font.reset":
+        return workspace.saveSettings({
+          ...settings,
+          fontSize: DEFAULT_SETTINGS.fontSize,
+        });
+      case "client.sidebar.toggle":
+        if (!settings.preserveWindowWidth)
+          await window.rex.request("resizeWindow", {
+            deltaWidth: settings.sidebarCollapsed
+              ? settings.sidebarWidth
+              : -settings.sidebarWidth,
+          });
+        return workspace.saveSettings({
+          ...settings,
+          sidebarCollapsed: !settings.sidebarCollapsed,
+        });
+      case "client.sidebar.activity.toggle":
+        setActivityOnly((previous) => !previous);
+        setActivityOpen(true);
+        return;
+      case "client.sidebar.activity.by_session":
+        setActivityGroup("session");
+        setActivityOpen(true);
+        return;
+      case "client.sidebar.activity.by_priority":
+        setActivityGroup("priority");
+        setActivityOpen(true);
+        return;
+      case "client.sidebar.filter.focus":
+        if (settings.sidebarCollapsed)
+          await workspace.saveSettings({
+            ...settings,
+            sidebarCollapsed: false,
+          });
+        setTimeout(
+          () => window.dispatchEvent(new Event("rex-sidebar-filter")),
+          0,
+        );
+        return;
+      case "client.tab_style.toggle":
+        return workspace.saveSettings({
+          ...settings,
+          tabStyle:
+            settings.tabStyle === "left"
+              ? "top"
+              : settings.tabStyle === "top"
+                ? "right"
+                : "left",
+        });
+      case "client.theme.change":
+        dialogs.open({ kind: "settings", tab: "appearance" });
+        return;
+      case "client.theme.import": {
+        const light =
+          settings.appearance === "light" ||
+          (settings.appearance === "system" &&
+            matchMedia("(prefers-color-scheme: light)").matches);
+        const imported = await window.rex.request("importTheme", {});
+        if (imported) {
+          const current = workspace.getSettings();
+          if (!current)
+            throw new Error("Workspace settings are not available.");
+          return workspace.saveSettings(
+            saveLibraryTheme(
+              current,
+              uniqueThemeName(
+                current.themeLibrary,
+                `Imported ${light ? "light" : "dark"}`,
+              ),
+              imported,
+              light ? "light" : "dark",
+            ),
+          );
+        }
+        return;
+      }
+      case "client.appearance.switch_mode": {
+        const current =
+          settings.theme === "system" ? interfaceTheme : settings.theme;
+        const opposite: Partial<Record<string, Settings["theme"]>> = {
+          macos: "macos-light",
+          "macos-light": "macos",
+          light: "graphite",
+        };
+        return workspace.saveSettings({
+          ...settings,
+          theme: opposite[current ?? ""] ?? "light",
+        });
+      }
+      case "client.config.copy_path": {
+        const info = await window.rex.request("configInfo", { hostId });
+        return window.rex.writeClipboard(info.path);
+      }
+      case "client.config.reload":
+        await window.rex.request("reloadConfig", { hostId });
+        await workspace.refresh();
+        return;
+      case "client.mode.enter":
+        if (!args.name) {
+          dialogs.open({
+            kind: "form",
+            form: {
+              title: "Enter key mode",
+              description: "Choose a mode declared in the resolved Rex keymap.",
+              fields: [{ name: "name", label: "Mode name", required: true }],
+              submit: async (values) => {
+                assertCurrentHost();
+                await window.rex.request("keyMode", {
+                  hostId,
+                  operation: "enter",
+                  name: values.name,
+                });
+              },
+            },
+          });
+          return;
+        }
+        return window.rex.request("keyMode", {
+          hostId,
+          operation: "enter",
+          name: String(args.name),
+        });
+      case "client.mode.exit":
+      case "client.mode.exit_all":
+        return window.rex.request("keyMode", {
+          hostId,
+          operation: name.endsWith("exit_all") ? "exitAll" : "exit",
+        });
+      default:
+        return UNHANDLED;
+    }
+  };
+}
