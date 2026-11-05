@@ -7,6 +7,7 @@ import {
 } from "../core/workspaceOperations";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWorkspaceContext } from "./useWorkspaceContext";
+import { useWorkspaceEvents } from "./useWorkspaceEvents";
 import type {
   ClientEvent,
   Host,
@@ -17,11 +18,10 @@ import type {
   Settings,
   TerminalRef,
 } from "../shared/types";
-import { errorMessage, paneKey, viewKey } from "../core/workspace";
+import { errorMessage, viewKey } from "../core/workspace";
 import {
   type HostState,
   type HostSnapshot,
-  type PaneMetadata,
   type SessionViews,
   collectHostSnapshot,
   reconcileSelection,
@@ -33,17 +33,11 @@ export function useWorkspace() {
   const [views, setViews] = useState<SessionViews>({});
   const [selection, setSelection] = useState<Selection>();
   const [focusedPane, setFocusedPane] = useState<string>();
-  const [metadata, setMetadata] = useState<
-    Partial<Record<string, PaneMetadata>>
-  >({});
   const [keymaps, setKeymaps] = useState<Partial<Record<string, KeymapResult>>>(
     {},
   );
-  const [keyHints, setKeyHints] =
-    useState<Extract<ClientEvent, { type: "keys" }>>();
-  const [notices, setNotices] = useState<
-    Extract<ClientEvent, { type: "notification" }>[]
-  >([]);
+  const { metadata, keyHints, notices, setNotices, handleWorkspaceEvent } =
+    useWorkspaceEvents();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -521,23 +515,15 @@ export function useWorkspace() {
               errorMessage(failure),
             ),
           );
-      } else if (event.type === "activity") {
-        setMetadata((previous) => ({
-          ...previous,
-          [paneKey(event.hostId, event.sessionId, event.blockId)]: {
-            ...previous[paneKey(event.hostId, event.sessionId, event.blockId)],
-            activities: event.activities,
-            ...(event.title !== undefined ? { title: event.title } : {}),
-            ...(event.program !== undefined ? { program: event.program } : {}),
-            ...(event.cwd !== undefined ? { cwd: event.cwd } : {}),
-          },
-        }));
-      } else if (event.type === "select")
+      } else if (
+        event.type === "activity" ||
+        event.type === "keys" ||
+        event.type === "notification"
+      )
+        handleWorkspaceEvent(event);
+      else if (event.type === "select")
         select(event.hostId, event.sessionId, event.windowId, event.blockId);
-      else if (event.type === "notification")
-        setNotices((previous) => [...previous.slice(-4), event]);
       else if (event.type === "layout") scheduleRefresh();
-      else if (event.type === "keys") setKeyHints(event);
       else if (event.type === "keymap")
         setKeymaps((previous) => ({
           ...previous,
@@ -570,7 +556,7 @@ export function useWorkspace() {
       clearTimeout(delayedRefresh.current);
       unsubscribe();
     };
-  }, [refreshInBackground, scheduleRefresh, select]);
+  }, [handleWorkspaceEvent, refreshInBackground, scheduleRefresh, select]);
   useEffect(() => {
     if (!selection || !settingsRef.current) return;
     const timer = setTimeout(() => {
@@ -582,14 +568,6 @@ export function useWorkspace() {
     }, 400);
     return () => clearTimeout(timer);
   }, [selection, saveSettings]);
-  useEffect(() => {
-    if (!notices.length) return;
-    const timer = setTimeout(
-      () => setNotices((previous) => previous.slice(1)),
-      8000,
-    );
-    return () => clearTimeout(timer);
-  }, [notices]);
   const operations: WorkspaceOperations = {
     mutateHostAndRefresh,
     mutateSession,
