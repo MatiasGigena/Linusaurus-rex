@@ -126,6 +126,11 @@ test(
       );
       await page.evaluate("window.fixture.menu(20,20)");
       await expect(menu).toBeVisible();
+      // The outside-pointer listener is installed by the same post-paint
+      // effect that focuses the first item; visibility alone can precede it.
+      await expect(
+        page.getByRole("menuitem", { name: "Rename" }),
+      ).toBeFocused();
       await page.mouse.click(2, 2);
       await expect(menu).toHaveCount(0);
       const closeCount = await page.evaluate<number>(
